@@ -1,0 +1,6 @@
+{
+  "dslVersion": "0.1",
+  "type": "invoke",
+  "id": "camera.capture",
+  "args": {}
+}

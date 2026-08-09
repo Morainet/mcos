@@ -1,0 +1,9 @@
+{
+  "dslVersion": "0.1",
+  "type": "invoke",
+  "id": "photo.compress",
+  "args": {
+    "quality": 80,
+    "uris": ["content://1", "content://2"]
+  }
+}

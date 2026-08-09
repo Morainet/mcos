@@ -1,0 +1,8 @@
+{
+  "ok": false,
+  "error": {
+    "code": "PARSE_ERROR",
+    "message": "Positional arguments are not allowed in DSL v0.1 — all arguments must be named (protocol §6.1).",
+    "location": { "line": 1, "column": 16 }
+  }
+}

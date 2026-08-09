@@ -1,0 +1,8 @@
+{
+  "dslVersion": "0.1",
+  "type": "invoke",
+  "id": "hello.world",
+  "args": {
+    "name": "Tom"
+  }
+}

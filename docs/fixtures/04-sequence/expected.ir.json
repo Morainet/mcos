@@ -1,0 +1,8 @@
+{
+  "dslVersion": "0.1",
+  "type": "sequence",
+  "steps": [
+    { "type": "invoke", "id": "camera.capture", "args": {} },
+    { "type": "invoke", "id": "photo.compress", "args": { "quality": 80 } }
+  ]
+}

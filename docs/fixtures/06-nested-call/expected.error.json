@@ -1,0 +1,8 @@
+{
+  "ok": false,
+  "error": {
+    "code": "PARSE_ERROR",
+    "message": "Nested command invocations are forbidden in DSL v0.1 — use Workflow IR for output binding (protocol §6.2).",
+    "location": { "line": 1, "column": 26 }
+  }
+}

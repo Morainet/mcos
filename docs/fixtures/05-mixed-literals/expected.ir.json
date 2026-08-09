@@ -1,0 +1,11 @@
+{
+  "dslVersion": "0.1",
+  "type": "invoke",
+  "id": "home.light.set",
+  "args": {
+    "brightness": 0.8,
+    "id": "living-room",
+    "meta": null,
+    "on": true
+  }
+}
