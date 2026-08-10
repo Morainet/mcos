@@ -1,9 +1,9 @@
 package com.mcos.runtime.parse
 
 import com.mcos.runtime.ir.*
-import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonNamingStrategy
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * Main entry point for DSL parsing.

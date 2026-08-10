@@ -2,6 +2,8 @@ package com.mcos.plugin.hello
 
 import com.mcos.sdk.*
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * Reference sample plugin implementing hello.world.
