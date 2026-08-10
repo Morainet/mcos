@@ -1,6 +1,7 @@
 package com.mcos.sdk
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
 
 /**
  * Plugin manifest as loaded from plugin.json.
@@ -81,7 +82,9 @@ data class CommandManifestEntry(
     val examples: List<String> = emptyList(),
     val tags: List<String> = emptyList(),
     val deprecated: Boolean = false,
-    val replacedBy: String? = null
+    val replacedBy: String? = null,
+    val inputSchema: JsonObject = JsonObject(emptyMap()),
+    val outputSchema: JsonObject? = null
 )
 
 /**

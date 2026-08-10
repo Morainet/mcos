@@ -172,8 +172,8 @@ class CommandRegistry {
                     pluginId = pluginId,
                     title = manifestEntry.title,
                     description = manifestEntry.description,
-                    inputSchema = JsonObject(emptyMap()), // MVP: schema not yet loaded from plugin.json
-                    outputSchema = null,
+                    inputSchema = manifestEntry.inputSchema,
+                    outputSchema = manifestEntry.outputSchema,
                     permissions = manifestEntry.permissions + manifest.permissions,
                     sideEffectClass = manifestEntry.sideEffectClass,
                     idempotent = manifestEntry.idempotent,
