@@ -177,7 +177,7 @@ class ExecutorTest {
         job.join()
 
         assertIs<CommandResult.Err>(result)
-        assertEquals(McosErrorCode.CANCELLED.name, result!!.code)
+        assertEquals(McosErrorCode.CANCELLED.name, (result as CommandResult.Err).code)
     }
 
     // ═══════════════════════════════════════════════════════════════
