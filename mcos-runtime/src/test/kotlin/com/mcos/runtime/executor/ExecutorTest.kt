@@ -1,6 +1,7 @@
 package com.mcos.runtime.executor
 
 import com.mcos.runtime.error.McosErrorCode
+import com.mcos.runtime.permission.PermissionKernel
 import com.mcos.runtime.registry.CommandRegistry
 import com.mcos.sdk.*
 import kotlinx.coroutines.*
@@ -409,6 +410,61 @@ class ExecutorTest {
     }
 
     // ═══════════════════════════════════════════════════════════════
+    // E16-E17: PermissionKernel integration (Stage 6)
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `E16-PERMISSION_DENIED when required permission missing`() = runBlocking {
+        val permKernel = PermissionKernel()
+        val executorWithPerm = Executor(registry, services, permKernel)
+
+        val plugin = createPlugin("test.perm", "1.0.0", mapOf(
+            "camera.capture" to EchoHandler("photo")
+        ))
+        // Plugin has no explicit permissions, but we need to test denial
+        // Register a descriptor with a required permission
+        registry.register(plugin)
+
+        // Re-register with a perm-requiring descriptor by using manifest entries
+        val permPlugin = createPluginWithPerms(
+            id = "test.perm2",
+            version = "1.0.0",
+            commandId = "camera.capture",
+            permissions = listOf(PermissionEntry("android", "android.permission.CAMERA")),
+            handler = EchoHandler("photo")
+        )
+        registry.register(permPlugin)
+
+        val result = executorWithPerm.execute("camera.capture")
+        assertIs<CommandResult.Err>(result)
+        assertEquals(McosErrorCode.PERMISSION_DENIED.name, result.code)
+        assertTrue(result.retryable)
+    }
+
+    @Test
+    fun `E17-permission granted allows execution`() = runBlocking {
+        val permKernel = PermissionKernel()
+        // Grant required permission
+        permKernel.grant("test.perm3", "android.permission.CAMERA")
+
+        val executorWithPerm = Executor(registry, services, permKernel)
+
+        val plugin = createPluginWithPerms(
+            id = "test.perm3",
+            version = "1.0.0",
+            commandId = "camera.capture",
+            permissions = listOf(PermissionEntry("android", "android.permission.CAMERA")),
+            handler = EchoHandler("photo taken")
+        )
+        registry.register(plugin)
+
+        val result = executorWithPerm.execute("camera.capture")
+        // AlwaysConfirm is off, but sideEffectClass=read → authorization passes
+        assertIs<CommandResult.Ok>(result)
+        assertEquals("photo taken", result.value.jsonPrimitive.content)
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     // Helpers
     // ═══════════════════════════════════════════════════════════════
 
@@ -507,6 +563,35 @@ class ExecutorTest {
                     title = commandId,
                     description = "Command with input schema",
                     sideEffectClass = SideEffectClass.read
+                )
+            )
+        )
+        override suspend fun onLoad(services: HostServices) {}
+        override suspend fun onUnload() {}
+        override fun handlers(): Map<String, CommandHandler> = mapOf(commandId to handler)
+    }
+
+    private fun createPluginWithPerms(
+        id: String,
+        version: String,
+        commandId: String,
+        permissions: List<PermissionEntry>,
+        handler: CommandHandler
+    ): McosPlugin = object : McosPlugin {
+        override val manifest = PluginManifest(
+            id = id, name = id, version = version,
+            minRuntimeVersion = "0.1.0",
+            description = "Test plugin with permissions",
+            provider = ProviderInfo("Test", "https://test.local"),
+            entry = "com.mcos.plugin.test.TestPlugin",
+            commands = listOf(
+                CommandManifestEntry(
+                    id = commandId,
+                    version = version,
+                    title = commandId,
+                    description = "Command with permissions",
+                    sideEffectClass = SideEffectClass.read,
+                    permissions = permissions
                 )
             )
         )
