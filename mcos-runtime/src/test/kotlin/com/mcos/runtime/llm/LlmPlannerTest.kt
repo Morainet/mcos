@@ -21,7 +21,7 @@ class LlmPlannerTest {
     // ---- buildSystemPrompt -----------------------------------------------
 
     @Test
-    fun `buildSystemPrompt with no commands`() {
+    fun `buildSystemPrompt with no commands`() = runBlocking {
         val planner = LlmPlanner(FakeLlmProvider(emptyList()), registry)
         val prompt = planner.buildSystemPrompt()
 
@@ -30,7 +30,7 @@ class LlmPlannerTest {
     }
 
     @Test
-    fun `buildSystemPrompt with registered commands includes command info`() {
+    fun `buildSystemPrompt with registered commands includes command info`() = runBlocking {
         registerCameraPlugin()
 
         val planner = LlmPlanner(FakeLlmProvider(emptyList()), registry)
@@ -43,7 +43,7 @@ class LlmPlannerTest {
     }
 
     @Test
-    fun `buildSystemPrompt includes required markers`() {
+    fun `buildSystemPrompt includes required markers`() = runBlocking {
         registerSystemPlugin()
 
         val planner = LlmPlanner(FakeLlmProvider(emptyList()), registry)
@@ -51,6 +51,21 @@ class LlmPlannerTest {
 
         // sys.notify has title + body as required
         assertTrue(prompt.contains("[required]"), "should mark required params")
+    }
+
+    @Test
+    fun `buildSystemPrompt includes memory context when MemoryStore is provided`() = runBlocking {
+        registerCameraPlugin()
+        val memory = com.mcos.runtime.memory.MemoryStore()
+        memory.putString("prefs.theme", "dark", tags = setOf("preference"))
+        memory.putString("prefs.language", "zh-CN", tags = setOf("preference"))
+
+        val planner = LlmPlanner(FakeLlmProvider(emptyList()), registry, memory)
+        val prompt = planner.buildSystemPrompt()
+
+        assertTrue(prompt.contains("Memory Context"), "should have memory section")
+        assertTrue(prompt.contains("prefs.theme"), "should list prefs.theme")
+        assertTrue(prompt.contains("dark"), "should show prefs value")
     }
 
     // ---- parseResponse: valid DSL ----------------------------------------

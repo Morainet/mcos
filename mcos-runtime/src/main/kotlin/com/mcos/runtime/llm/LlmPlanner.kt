@@ -3,6 +3,7 @@ package com.mcos.runtime.llm
 import com.mcos.runtime.executor.Command
 import com.mcos.runtime.ir.ExecutionIr
 import com.mcos.runtime.ir.ParseResult
+import com.mcos.runtime.memory.MemoryStore
 import com.mcos.runtime.parse.DslParser
 import com.mcos.runtime.registry.CommandRegistry
 import com.mcos.sdk.CommandDescriptor
@@ -17,13 +18,13 @@ import kotlinx.serialization.json.jsonPrimitive
  * ## Pipeline
  *
  * ```
- * NL input -> buildSystemPrompt() -> LLM chat -> response DSL -> DslParser.parse() -> List<Command>
+ * NL input -> buildSystemPrompt(+memory) -> LLM chat -> response DSL -> DslParser.parse() -> List<Command>
  * ```
  *
  * ## Usage
  *
  * ```kotlin
- * val planner = LlmPlanner(OpenAiLlmProvider(config), registry)
+ * val planner = LlmPlanner(OpenAiLlmProvider(config), registry, memoryStore)
  * val plan = planner.plan("take a photo and share it")
  * if (plan.isSuccess) {
  *     executor.executeSequence(plan.commands)
@@ -33,11 +34,14 @@ import kotlinx.serialization.json.jsonPrimitive
  * @param provider The LLM backend (e.g. [OpenAiLlmProvider]).
  * @param registry The [CommandRegistry] used to build the system prompt with
  *        available commands and their input schemas.
+ * @param memory Optional [MemoryStore] for injecting user context (preferences,
+ *        places, devices) into the system prompt.
  * @param parser The DSL parser; defaults to [DslParser].
  */
 class LlmPlanner(
     private val provider: LlmProvider,
     private val registry: CommandRegistry,
+    private val memory: MemoryStore? = null,
     private val parser: DslParser = DslParser,
 ) {
 
@@ -47,7 +51,7 @@ class LlmPlanner(
      * Build the system prompt that tells the LLM which commands are available
      * and how to format the DSL output.
      */
-    fun buildSystemPrompt(): String {
+    suspend fun buildSystemPrompt(): String {
         val commands = registry.allCommands()
         return buildString {
             appendLine("You are MCOS Agent -- a mobile command operating system assistant.")
@@ -56,6 +60,7 @@ class LlmPlanner(
             appendLine()
             appendLine(buildCommandsSection(commands))
             appendLine()
+            appendLine(buildMemorySection())
             appendLine("## DSL Format (v0.1)")
             appendLine()
             appendLine("Output valid MCOS DSL. Every command uses named parameters:")
@@ -113,6 +118,41 @@ class LlmPlanner(
                 }
             }
         }
+        return sb.toString()
+    }
+
+    /**
+     * Build a memory context section from the [MemoryStore].
+     * Injects user facts (preferences, places, devices) so the LLM can
+     * use them to disambiguate references like "导航回公司" → resolve "公司".
+     */
+    private suspend fun buildMemorySection(): String {
+        val store = memory ?: return ""
+        val paths = store.list()
+        if (paths.isEmpty()) return ""
+
+        val sb = StringBuilder()
+        sb.appendLine("## Memory Context (User Facts)")
+        sb.appendLine()
+        sb.appendLine("The following facts are known about the user. Use them to disambiguate references.")
+        sb.appendLine()
+
+        for (path in paths.sorted()) {
+            val value = store.get(path) ?: continue
+            val displayValue = when {
+                value.jsonObject.isNotEmpty() -> value.toString()
+                else -> value.jsonPrimitive.content
+            }
+            sb.appendLine("- $path: $displayValue")
+        }
+
+        // Also include semantic tags
+        val tags = store.tags()
+        if (tags.isNotEmpty()) {
+            sb.appendLine()
+            sb.appendLine("Semantic tags: ${tags.joinToString(", ")}")
+        }
+
         return sb.toString()
     }
 
