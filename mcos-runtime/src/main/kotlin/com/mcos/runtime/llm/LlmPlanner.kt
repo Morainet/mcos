@@ -1,0 +1,246 @@
+package com.mcos.runtime.llm
+
+import com.mcos.runtime.executor.Command
+import com.mcos.runtime.ir.ExecutionIr
+import com.mcos.runtime.ir.ParseResult
+import com.mcos.runtime.parse.DslParser
+import com.mcos.runtime.registry.CommandRegistry
+import com.mcos.sdk.CommandDescriptor
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+
+/**
+ * Natural-language planner that uses an LLM to translate user intent
+ * into executable MCOS DSL commands.
+ *
+ * ## Pipeline
+ *
+ * ```
+ * NL input -> buildSystemPrompt() -> LLM chat -> response DSL -> DslParser.parse() -> List<Command>
+ * ```
+ *
+ * ## Usage
+ *
+ * ```kotlin
+ * val planner = LlmPlanner(OpenAiLlmProvider(config), registry)
+ * val plan = planner.plan("take a photo and share it")
+ * if (plan.isSuccess) {
+ *     executor.executeSequence(plan.commands)
+ * }
+ * ```
+ *
+ * @param provider The LLM backend (e.g. [OpenAiLlmProvider]).
+ * @param registry The [CommandRegistry] used to build the system prompt with
+ *        available commands and their input schemas.
+ * @param parser The DSL parser; defaults to [DslParser].
+ */
+class LlmPlanner(
+    private val provider: LlmProvider,
+    private val registry: CommandRegistry,
+    private val parser: DslParser = DslParser,
+) {
+
+    // ---- System prompt ---------------------------------------------------
+
+    /**
+     * Build the system prompt that tells the LLM which commands are available
+     * and how to format the DSL output.
+     */
+    fun buildSystemPrompt(): String {
+        val commands = registry.allCommands()
+        return buildString {
+            appendLine("You are MCOS Agent -- a mobile command operating system assistant.")
+            appendLine()
+            appendLine("Your job: convert the user's natural language request into MCOS DSL commands.")
+            appendLine()
+            appendLine(buildCommandsSection(commands))
+            appendLine()
+            appendLine("## DSL Format (v0.1)")
+            appendLine()
+            appendLine("Output valid MCOS DSL. Every command uses named parameters:")
+            appendLine()
+            appendLine("  command.id(param1=\"value\", param2=123)")
+            appendLine()
+            appendLine("Multiple commands execute in sequence (one per line):")
+            appendLine()
+            appendLine("  command.one(param=\"x\")")
+            appendLine("  command.two(param=\"y\")")
+            appendLine()
+            appendLine("## Critical Rules")
+            appendLine()
+            appendLine("1. ONLY use commands listed above. Never invent new command IDs.")
+            appendLine("2. ALL parameters must use named syntax (name=value).")
+            appendLine("3. Output ONLY the DSL. No explanations, no markdown fences, no extra text.")
+            appendLine("4. If a request is impossible with the available commands, output an empty response.")
+            appendLine("5. Use correct parameter types: strings must be quoted, numbers/bools unquoted.")
+        }
+    }
+
+    private fun buildCommandsSection(commands: List<CommandDescriptor>): String {
+        if (commands.isEmpty()) return "## Available Commands\n\n(None registered yet)"
+
+        val sb = StringBuilder()
+        sb.appendLine("## Available Commands")
+
+        for (cmd in commands) {
+            sb.appendLine()
+            sb.appendLine("### ${cmd.id}")
+            if (cmd.description.isNotEmpty()) {
+                sb.appendLine("  ${cmd.description}")
+            }
+
+            val params = cmd.inputSchema.jsonObject["properties"]?.jsonObject
+            val required = cmd.inputSchema.jsonObject["required"]?.jsonArray
+                ?.map { it.jsonPrimitive.content }
+                ?.toSet() ?: emptySet()
+
+            if (params != null && params.isNotEmpty()) {
+                sb.appendLine("  Parameters:")
+                for ((name, schema) in params) {
+                    val type = schema.jsonObject["type"]?.jsonPrimitive?.content ?: "any"
+                    val desc = schema.jsonObject["description"]?.jsonPrimitive?.content ?: ""
+                    val req = if (name in required) " [required]" else ""
+                    val descStr = if (desc.isNotEmpty()) " -- $desc" else ""
+                    sb.appendLine("    - $name ($type)$req$descStr")
+                }
+            }
+
+            if (cmd.examples.isNotEmpty()) {
+                sb.appendLine("  Examples:")
+                for (ex in cmd.examples) {
+                    sb.appendLine("    ${ex}")
+                }
+            }
+        }
+        return sb.toString()
+    }
+
+    // ---- Planning --------------------------------------------------------
+
+    /**
+     * Translate natural language into a plan of executable commands.
+     *
+     * @param naturalLanguage The user's request, e.g. "take a photo and share it".
+     * @return [LlmPlan] with parsed commands or error details.
+     */
+    suspend fun plan(naturalLanguage: String): LlmPlan {
+        val systemPrompt = buildSystemPrompt()
+        val messages = listOf(
+            ChatMessage("system", systemPrompt),
+            ChatMessage("user", naturalLanguage)
+        )
+
+        val response = provider.chat(messages)
+        return when (response) {
+            is LlmResponse.Ok -> parseResponse(response.content)
+            is LlmResponse.Err -> LlmPlan(
+                commands = emptyList(),
+                rawDsl = "",
+                thoughts = "LLM call failed: ${response.message}",
+                error = response
+            )
+        }
+    }
+
+    // ---- Response parsing ------------------------------------------------
+
+    /**
+     * Parse the LLM's text response into executable [Command]s.
+     *
+     * Handles common LLM output artifacts:
+     * - Code fences (```mcos, ```dsl, ```)
+     * - Leading/trailing whitespace
+     * - Explanatory text (best-effort: tries to extract DSL block)
+     */
+    internal fun parseResponse(raw: String): LlmPlan {
+        var dsl = raw.trim()
+
+        // Extract code block if LLM wrapped output in markdown fences
+        val fenced = extractFencedBlock(dsl)
+        if (fenced != null) {
+            dsl = fenced
+        } else {
+            // If no fences, try to strip non-DSL lines (keep lines that look like commands)
+            val commandLines = dsl.lines().filter { line ->
+                val trimmed = line.trim()
+                trimmed.isNotEmpty() && !trimmed.startsWith("#") &&
+                    (trimmed.contains("(") || trimmed.contains("="))
+            }
+            if (commandLines.isNotEmpty()) {
+                dsl = commandLines.joinToString("\n").trim()
+            }
+        }
+
+        // Empty or whitespace-only
+        if (dsl.isBlank()) {
+            return LlmPlan(
+                commands = emptyList(),
+                rawDsl = raw,
+                thoughts = "LLM returned empty response -- request may be out of scope for available commands",
+                error = null
+            )
+        }
+
+        val result = parser.parse(dsl)
+        return when (result) {
+            is ParseResult.Ok -> {
+                val commands = extractCommands(result.ir)
+                if (commands.isEmpty()) {
+                    LlmPlan(
+                        commands = emptyList(),
+                        rawDsl = raw,
+                        thoughts = "Parsed DSL contains no executable commands",
+                        error = null
+                    )
+                } else {
+                    LlmPlan(
+                        commands = commands,
+                        rawDsl = raw,
+                        thoughts = "Parsed ${commands.size} command(s) from LLM output",
+                        error = null
+                    )
+                }
+            }
+            is ParseResult.Err -> LlmPlan(
+                commands = emptyList(),
+                rawDsl = raw,
+                thoughts = null,
+                error = LlmResponse.Err(
+                    "LLM_PARSE_ERROR",
+                    "Failed to parse LLM DSL output: ${result.message}",
+                    true
+                )
+            )
+        }
+    }
+
+    /**
+     * Extract the content of a fenced code block (```mcos, ```dsl, or plain ```).
+     */
+    private fun extractFencedBlock(text: String): String? {
+        val fenceRegex = Regex("```(?:mcos|dsl)?\\s*\\n(.*?)```", RegexOption.DOT_MATCHES_ALL)
+        val match = fenceRegex.find(text)
+        return match?.groupValues?.get(1)?.trim()
+    }
+
+    // ---- IR -> Command conversion ----------------------------------------
+
+    /**
+     * Convert parsed [ExecutionIr] into a flat list of [Command]s.
+     */
+    private fun extractCommands(ir: ExecutionIr): List<Command> {
+        return when (ir) {
+            is ExecutionIr.Invoke -> {
+                val args = ir.invoke.args
+                listOf(Command(ir.invoke.id, args))
+            }
+            is ExecutionIr.Sequence -> {
+                ir.sequence.steps.map { step ->
+                    Command(step.id, step.args)
+                }
+            }
+            is ExecutionIr.Workflow -> emptyList() // Workflow IR not yet supported
+        }
+    }
+}
