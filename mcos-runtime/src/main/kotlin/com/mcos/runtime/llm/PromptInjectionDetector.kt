@@ -1,6 +1,8 @@
 package com.mcos.runtime.llm
 
 import com.mcos.runtime.executor.Command
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * Detection result for the prompt injection detection chain.
@@ -176,8 +178,9 @@ class PromptInjectionDetector {
         if (!isNetworkCommand(cmd.id)) return null
 
         val args = cmd.args
-        val url = args["url"]?.let { it.jsonPrimitive.content } ?:
-                  args["uri"]?.let { it.jsonPrimitive.content } ?: return null
+        val url: String = args["url"]?.let { it.jsonPrimitive.content }
+            ?: args["uri"]?.let { it.jsonPrimitive.content }
+            ?: return null
 
         val lower = url.lowercase()
         // Flag non-HTTPS URLs as suspicious (unless localhost for dev)
