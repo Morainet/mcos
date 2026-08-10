@@ -12,7 +12,7 @@ import kotlin.test.*
 
 /**
  * Conformance tests for Executor v0.1.
- * Matches [03-runtime.md §9].
+ * Matches [03-runtime.md 9].
  */
 class ExecutorTest {
 

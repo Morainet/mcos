@@ -8,7 +8,7 @@ import kotlin.test.*
 
 /**
  * Conformance tests for SchemaValidator v0.1.
- * Matches [03-runtime.md §5], [02-command-protocol.md §5].
+ * Matches [03-runtime.md 5], [02-command-protocol.md 5].
  */
 class SchemaValidatorTest {
 

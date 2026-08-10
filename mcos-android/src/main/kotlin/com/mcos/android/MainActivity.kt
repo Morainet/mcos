@@ -16,7 +16,7 @@ import com.mcos.runtime.parse.DslParser
 
 /**
  * MCOS Android shell — MVP Compose UI.
- * Matches [01-architecture.md §6.1].
+ * Matches [01-architecture.md 6.1].
  */
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {

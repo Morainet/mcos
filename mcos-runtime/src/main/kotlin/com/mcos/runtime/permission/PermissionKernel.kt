@@ -28,7 +28,7 @@ sealed class AuthorizationResult {
 /**
  * Permission Kernel — enforces command authorization before execution.
  *
- * Implements MCOS Runtime spec [03-runtime.md §7], [08-security.md].
+ * Implements MCOS Runtime spec [03-runtime.md 7], [08-security.md].
  *
  * MVP features:
  * - In-memory grant cache (persisted by pluginId + permission name)

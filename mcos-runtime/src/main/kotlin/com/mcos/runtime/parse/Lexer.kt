@@ -2,7 +2,7 @@ package com.mcos.runtime.parse
 
 /**
  * Hand-written lexer for MCOS DSL v0.1.
- * Matches [02-command-protocol.md §6.6] token specification.
+ * Matches [02-command-protocol.md 6.6] token specification.
  */
 class Lexer(private val input: String) {
 

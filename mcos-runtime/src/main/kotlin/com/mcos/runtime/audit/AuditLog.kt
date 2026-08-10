@@ -31,7 +31,7 @@ data class ArtifactRecord(
 
 /**
  * Complete run audit record.
- * Matches [03-runtime.md §13.1].
+ * Matches [03-runtime.md 13.1].
  */
 @Serializable
 data class RunRecord(
@@ -51,7 +51,7 @@ data class RunRecord(
  * MVP implementation: in-memory storage with single-writer coroutine.
  * Production upgrade path: Room + SQLCipher with the same append semantics.
  *
- * Matches [03-runtime.md §13].
+ * Matches [03-runtime.md 13].
  */
 class AuditLog {
 

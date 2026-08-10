@@ -8,7 +8,7 @@ import kotlinx.serialization.json.jsonPrimitive
 /**
  * System commands plugin — sys.notify, sys.share, sys.clipboard, sys.openUrl, sys.intent.start, sys.vibrate,
  * plus sys.device.battery, sys.device.wifi, sys.device.screen, sys.device.volume, sys.device.location, sys.device.brightness.
- * Matches [04-plugin-sdk.md §17].
+ * Matches [04-plugin-sdk.md 17].
  */
 class SystemPlugin : McosPlugin {
 

@@ -6,7 +6,7 @@ import kotlinx.serialization.json.JsonObject
 
 /**
  * Sealed result type for command execution.
- * Matches [04-plugin-sdk.md §5].
+ * Matches [04-plugin-sdk.md 5].
  */
 sealed class CommandResult {
 
@@ -25,7 +25,7 @@ sealed class CommandResult {
      * @param code A McosErrorCode or plugin-namespaced code.
      * @param message Human-readable error description.
      * @param retryable Whether a retry may succeed without changes.
-     * @param details Structured context per [02-command-protocol.md §8.3] shape B.
+     * @param details Structured context per [02-command-protocol.md 8.3] shape B.
      */
     data class Err(
         val code: String,
@@ -37,7 +37,7 @@ sealed class CommandResult {
 
 /**
  * An output artifact produced by a command, e.g. a URI, file reference, or media.
- * Matches [01-architecture.md §11.3].
+ * Matches [01-architecture.md 11.3].
  */
 @Serializable
 data class Artifact(

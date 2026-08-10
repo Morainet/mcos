@@ -4,7 +4,7 @@ import com.mcos.runtime.ir.*
 import kotlinx.serialization.json.*
 
 /**
- * Canonicalizes IR per [02-command-protocol.md §7.5].
+ * Canonicalizes IR per [02-command-protocol.md 7.5].
  * Object keys are sorted lexicographically; IDs are lowercased;
  * numbers are normalized per schema type.
  */

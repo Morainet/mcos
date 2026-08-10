@@ -12,7 +12,7 @@ import kotlin.test.*
 
 /**
  * Conformance tests for WorkflowEngine v0.1.
- * Matches [01-architecture.md §Workflow Engine].
+ * Matches [01-architecture.md Workflow Engine].
  */
 class WorkflowEngineTest {
 

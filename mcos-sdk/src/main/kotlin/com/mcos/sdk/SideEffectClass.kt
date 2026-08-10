@@ -2,7 +2,7 @@ package com.mcos.sdk
 
 /**
  * Side-effect classification for command permission policy.
- * Matches [02-command-protocol.md §8.1].
+ * Matches [02-command-protocol.md 8.1].
  */
 enum class SideEffectClass {
     /** No lasting change — e.g. weather.today, camera.scan */

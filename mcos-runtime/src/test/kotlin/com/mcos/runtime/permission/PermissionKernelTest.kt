@@ -6,7 +6,7 @@ import kotlin.test.*
 
 /**
  * Conformance tests for PermissionKernel v0.1.
- * Matches [03-runtime.md §7], [08-security.md].
+ * Matches [03-runtime.md 7], [08-security.md].
  */
 class PermissionKernelTest {
 

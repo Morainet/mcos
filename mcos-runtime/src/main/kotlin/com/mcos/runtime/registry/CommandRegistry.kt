@@ -107,7 +107,7 @@ data class SemanticVersion(
  * Command registry — the central index that maps command IDs to their
  * descriptors, handlers, and owning plugins.
  *
- * Implements MCOS Runtime spec [03-runtime.md §6]:
+ * Implements MCOS Runtime spec [03-runtime.md 6]:
  * - Exact-match resolution by ID
  * - Alias resolution
  * - Namespace prefix queries

@@ -9,7 +9,7 @@ import kotlinx.serialization.json.*
 /**
  * Recursive-descent parser for MCOS DSL v0.1.
  * Converts token stream to ExecutionIr AST.
- * Matches [02-command-protocol.md §6, §18].
+ * Matches [02-command-protocol.md 6, 18].
  */
 class Parser(private val tokens: List<Token>) {
 
@@ -126,7 +126,7 @@ class Parser(private val tokens: List<Token>) {
                     throw ParseException(
                         error(
                             "positional_arg",
-                            "Positional arguments are not allowed in DSL v0.1 — all arguments must be named (protocol §6.1).",
+                            "Positional arguments are not allowed in DSL v0.1 — all arguments must be named (protocol 6.1).",
                             token = t.lexeme
                         )
                     )
@@ -152,7 +152,7 @@ class Parser(private val tokens: List<Token>) {
             throw ParseException(
                 error(
                     "unterminated_invocation",
-                    "Unterminated invocation — expected ')' before end of input (protocol §18)."
+                    "Unterminated invocation — expected ')' before end of input (protocol 18)."
                 )
             )
         }
@@ -198,7 +198,7 @@ class Parser(private val tokens: List<Token>) {
                     throw ParseException(
                         error(
                             "nested_call",
-                            "Nested command invocations are forbidden in DSL v0.1 — use Workflow IR for output binding (protocol §6.2)."
+                            "Nested command invocations are forbidden in DSL v0.1 — use Workflow IR for output binding (protocol 6.2)."
                         )
                     )
                 }

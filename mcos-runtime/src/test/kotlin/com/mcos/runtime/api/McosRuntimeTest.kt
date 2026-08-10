@@ -12,7 +12,7 @@ import kotlin.test.*
 
 /**
  * Tests for [McosRuntime] — the top-level runtime facade.
- * Matches [03-runtime.md §4].
+ * Matches [03-runtime.md 4].
  */
 class McosRuntimeTest {
 

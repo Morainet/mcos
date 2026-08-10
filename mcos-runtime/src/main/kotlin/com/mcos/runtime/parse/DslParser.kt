@@ -8,7 +8,7 @@ import kotlinx.serialization.json.jsonPrimitive
 /**
  * Main entry point for DSL parsing.
  * Converts DSL text to ExecutionIr, applying canonicalization.
- * Matches [02-command-protocol.md §6] and the golden test fixtures.
+ * Matches [02-command-protocol.md 6] and the golden test fixtures.
  *
  * Usage:
  * ```kotlin

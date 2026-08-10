@@ -5,7 +5,7 @@ import kotlinx.serialization.json.JsonObject
 
 /**
  * Command Descriptor — the registry entry that describes an invocable command.
- * Matches [02-command-protocol.md §8].
+ * Matches [02-command-protocol.md 8].
  */
 @Serializable
 data class CommandDescriptor(

@@ -7,7 +7,7 @@ import kotlin.test.*
 
 /**
  * Conformance tests for CameraPlugin.
- * Matches [04-plugin-sdk.md §17].
+ * Matches [04-plugin-sdk.md 17].
  */
 class CameraPluginTest {
 

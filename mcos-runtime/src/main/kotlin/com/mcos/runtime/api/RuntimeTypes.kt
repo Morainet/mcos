@@ -4,7 +4,7 @@ import kotlinx.serialization.json.JsonElement
 
 /**
  * Core runtime types for the MCOS execution pipeline.
- * Matches [01-architecture.md §11], [03-runtime.md §4].
+ * Matches [01-architecture.md 11], [03-runtime.md 4].
  */
 
 // ─── Execution Request ──────────────────────────────────────────────────
@@ -55,7 +55,7 @@ data class ExecuteHandle(
 
 /**
  * Event stream produced by [McosRuntime.observe].
- * 11-variant sealed class per [01-architecture.md §11.5].
+ * 11-variant sealed class per [01-architecture.md 11.5].
  */
 sealed class RuntimeEvent {
     /** A new run has started. */

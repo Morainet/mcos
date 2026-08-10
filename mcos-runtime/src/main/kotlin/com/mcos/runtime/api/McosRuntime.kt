@@ -24,7 +24,7 @@ import java.util.concurrent.ConcurrentHashMap
  * Minimal event bus stub for P1. Enables [McosRuntime.observe] to work
  * without requiring the full P2 EventBus subsystem.
  *
- * Upgrade path: replace with full typed pub/sub in P2 ([03-runtime.md §11]).
+ * Upgrade path: replace with full typed pub/sub in P2 ([03-runtime.md 11]).
  */
 interface EventBus {
     /** Publish an event for a specific run. */
@@ -63,7 +63,7 @@ class SimpleEventBus : EventBus {
 /**
  * Top-level runtime facade that wires all subsystems together.
  *
- * Implements the logical [McosRuntime] contract defined in [03-runtime.md §4].
+ * Implements the logical [McosRuntime] contract defined in [03-runtime.md 4].
  * In P1 (single-process MVP), the App holds a direct reference to this class.
  *
  * ## Usage
@@ -109,7 +109,7 @@ class McosRuntime internal constructor(
 
     private val activeRuns = ConcurrentHashMap<String, Job>()
 
-    // ─── Public API (matching 03-runtime.md §4) ─────────────────────────
+    // ─── Public API (matching 03-runtime.md 4) ─────────────────────────
 
     /**
      * Execute a request. Parses the payload, resolves commands, and runs

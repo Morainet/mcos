@@ -7,7 +7,7 @@ import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * Camera plugin — camera.capture, camera.scan.
- * Matches [04-plugin-sdk.md §17].
+ * Matches [04-plugin-sdk.md 17].
  */
 class CameraPlugin : McosPlugin {
 

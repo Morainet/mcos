@@ -39,7 +39,7 @@ data class ValidationError(
  *
  * Unsupported keywords are silently ignored (not an error).
  *
- * Matches [03-runtime.md §5 Schema validation], [02-command-protocol.md §5].
+ * Matches [03-runtime.md 5 Schema validation], [02-command-protocol.md 5].
  */
 class SchemaValidator {
 

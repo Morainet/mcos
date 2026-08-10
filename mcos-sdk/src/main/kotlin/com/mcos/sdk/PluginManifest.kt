@@ -5,7 +5,7 @@ import kotlinx.serialization.json.JsonObject
 
 /**
  * Plugin manifest as loaded from plugin.json.
- * Matches [04-plugin-sdk.md §4.2].
+ * Matches [04-plugin-sdk.md 4.2].
  */
 @Serializable
 data class PluginManifest(

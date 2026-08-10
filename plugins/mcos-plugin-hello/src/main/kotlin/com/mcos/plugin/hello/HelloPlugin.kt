@@ -7,7 +7,7 @@ import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * Reference sample plugin implementing hello.world.
- * Matches [04-plugin-sdk.md §16].
+ * Matches [04-plugin-sdk.md 16].
  */
 class HelloPlugin : McosPlugin {
 

@@ -2,7 +2,7 @@ package com.mcos.runtime.parse
 
 /**
  * Token types produced by the DSL lexer.
- * Matches [02-command-protocol.md §6.6].
+ * Matches [02-command-protocol.md 6.6].
  */
 enum class TokenType {
     HEADER,

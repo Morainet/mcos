@@ -23,7 +23,7 @@ import kotlin.coroutines.cancellation.CancellationException
  * Executor — invokes [CommandHandler]s with timeout, cancellation, and
  * structured error mapping.
  *
- * Implements MCOS Runtime spec [03-runtime.md §9].
+ * Implements MCOS Runtime spec [03-runtime.md 9].
  *
  * Pipeline: Stage 3 (Resolve) → Stage 5 (Validate) → Stage 6 (Authorize) → Stage 8 (Invoke) → Stage 10 (Audit)
  *

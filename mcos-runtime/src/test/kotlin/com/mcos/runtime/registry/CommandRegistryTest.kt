@@ -7,7 +7,7 @@ import kotlin.test.*
 
 /**
  * Conformance tests for CommandRegistry v0.1.
- * Matches [03-runtime.md §6].
+ * Matches [03-runtime.md 6].
  */
 class CommandRegistryTest {
 

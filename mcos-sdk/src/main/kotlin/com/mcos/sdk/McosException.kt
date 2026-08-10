@@ -9,7 +9,7 @@ import kotlinx.serialization.json.JsonObject
  *
  * This is the ONLY channel for a plugin to emit error codes other than PLUGIN_ERROR.
  *
- * Matches [03-runtime.md §9.5], [01-architecture.md §10.3].
+ * Matches [03-runtime.md 9.5], [01-architecture.md 10.3].
  */
 data class McosException(
     /** MUST be a valid [com.mcos.runtime.error.McosErrorCode] or plugin-namespaced code. */

@@ -8,7 +8,7 @@ import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * Files plugin — file.list, file.search, photo.search, photo.compress.
- * Matches [04-plugin-sdk.md §17].
+ * Matches [04-plugin-sdk.md 17].
  */
 class FilesPlugin : McosPlugin {
 

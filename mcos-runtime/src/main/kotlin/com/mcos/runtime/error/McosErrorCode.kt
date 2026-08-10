@@ -2,7 +2,7 @@ package com.mcos.runtime.error
 
 /**
  * Unified error code enum for the entire MCOS system.
- * This is the single source of truth — [01-architecture.md §15.1].
+ * This is the single source of truth — [01-architecture.md 15.1].
  */
 enum class McosErrorCode(val retryable: Boolean) {
     // ─── Parse / Compile ──────────────────────────────────

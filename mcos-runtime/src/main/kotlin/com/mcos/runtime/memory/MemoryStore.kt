@@ -21,7 +21,7 @@ import kotlinx.serialization.json.put
  *
  * Upgrade path to persistent storage: Room + SQLCipher with same API surface.
  *
- * Matches [01-architecture.md §Memory], [03-runtime.md §12].
+ * Matches [01-architecture.md Memory], [03-runtime.md 12].
  */
 class MemoryStore : MemoryFacade {
 

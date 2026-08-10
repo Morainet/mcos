@@ -15,7 +15,7 @@ import java.util.UUID
  * Built on top of [Executor]. Supports sequential, parallel, conditional,
  * loop, retry, and try/compensation steps.
  *
- * Matches [01-architecture.md §Workflow Engine].
+ * Matches [01-architecture.md Workflow Engine].
  *
  * @param executor The [Executor] to invoke individual commands.
  * @param auditLog Optional [AuditLog] for recording workflow run records.

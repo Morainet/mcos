@@ -5,7 +5,7 @@ import kotlinx.coroutines.*
 
 /**
  * Conformance tests for AuditLog v0.1.
- * Matches [03-runtime.md §13].
+ * Matches [03-runtime.md 13].
  */
 class AuditLogTest {
 

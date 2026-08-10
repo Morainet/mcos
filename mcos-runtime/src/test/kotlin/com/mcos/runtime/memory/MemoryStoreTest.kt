@@ -10,7 +10,7 @@ import kotlin.test.*
 
 /**
  * Conformance tests for MemoryStore v0.1.
- * Matches [01-architecture.md §Memory], [03-runtime.md §12].
+ * Matches [01-architecture.md Memory], [03-runtime.md 12].
  */
 class MemoryStoreTest {
 

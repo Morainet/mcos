@@ -13,7 +13,7 @@ import kotlin.test.assertTrue
 /**
  * Conformance tests for DslParser v0.1.
  * Verifies all golden fixtures under docs/fixtures/.
- * Matches [02-command-protocol.md §16].
+ * Matches [02-command-protocol.md 16].
  */
 class DslParserTest {
 
@@ -115,7 +115,7 @@ class DslParserTest {
         assertEquals("PARSE_ERROR", result.code)
         assertTrue(result.message!!.contains("Nested"))
         // Column: 'p' in photo.compress is at column 26
-        assertTrue(result.column == 26 || result.column == 27) // ±1 tolerance per §6.7 rule 6
+        assertTrue(result.column == 26 || result.column == 27) // ±1 tolerance per 6.7 rule 6
         assertEquals(1, result.line)
         assertEquals("nested_call", result.reason)
     }
@@ -144,7 +144,7 @@ class DslParserTest {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // Additional suggested tests (from §16.1)
+    // Additional suggested tests (from 16.1)
     // ═══════════════════════════════════════════════════════════════
 
     @Test

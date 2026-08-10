@@ -7,7 +7,7 @@ import kotlinx.serialization.json.JsonObject
 
 /**
  * Plugin entry point. One instance per plugin process.
- * Matches [04-plugin-sdk.md §5].
+ * Matches [04-plugin-sdk.md 5].
  */
 interface McosPlugin {
     val manifest: PluginManifest
@@ -37,7 +37,7 @@ interface CommandHandler {
 
 /**
  * Facade providing controlled access to Runtime services.
- * Matches [01-architecture.md §11.1], [04-plugin-sdk.md §6].
+ * Matches [01-architecture.md 11.1], [04-plugin-sdk.md 6].
  */
 interface HostServices {
     val files: FileService
@@ -86,7 +86,7 @@ interface JsonService {
 }
 
 /**
- * Read-only Memory view for plugins — same as [03-runtime.md §12].
+ * Read-only Memory view for plugins — same as [03-runtime.md 12].
  */
 interface MemoryFacade {
     suspend fun get(path: String): kotlinx.serialization.json.JsonElement?

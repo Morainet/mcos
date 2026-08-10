@@ -6,7 +6,7 @@ import kotlinx.serialization.json.JsonObject
 
 /**
  * IR node types for the execution engine.
- * Matches [02-command-protocol.md §7], [03-runtime.md §5.1].
+ * Matches [02-command-protocol.md 7], [03-runtime.md 5.1].
  */
 
 /** A single command invocation */

@@ -9,7 +9,7 @@ import kotlinx.serialization.json.JsonObject
  *
  * Supports: sequential, parallel, conditional, loop, retry, try/compensation.
  *
- * Matches [01-architecture.md §Workflow Engine].
+ * Matches [01-architecture.md Workflow Engine].
  */
 
 /** A single step in a workflow graph */
