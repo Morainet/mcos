@@ -9,6 +9,10 @@ import com.mcos.runtime.permission.PermissionKernel
 import com.mcos.runtime.registry.CommandRegistry
 import com.mcos.runtime.registry.RegistryEntry
 import com.mcos.runtime.registry.ResolveResult
+import com.mcos.runtime.security.EgressDecision
+import com.mcos.runtime.security.NetworkEgressPolicy
+import com.mcos.runtime.security.RateLimitResult
+import com.mcos.runtime.security.RateLimiter
 import com.mcos.runtime.validate.SchemaValidator
 import com.mcos.runtime.validate.ValidationError as ValError
 import com.mcos.runtime.validate.ValidationResult
@@ -16,6 +20,7 @@ import com.mcos.sdk.*
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.*
+import kotlinx.serialization.json.jsonPrimitive
 import java.util.UUID
 import kotlin.coroutines.cancellation.CancellationException
 
@@ -25,19 +30,25 @@ import kotlin.coroutines.cancellation.CancellationException
  *
  * Implements MCOS Runtime spec [03-runtime.md 9].
  *
- * Pipeline: Stage 3 (Resolve) → Stage 5 (Validate) → Stage 6 (Authorize) → Stage 8 (Invoke) → Stage 10 (Audit)
+ * Pipeline: Stage 3 (Resolve) → Stage 5 (Validate) → Stage 5.5 (Rate Limit) → Stage 5.6 (Egress) → Stage 6 (Authorize) → Stage 8 (Invoke) → Stage 10 (Audit)
  *
  * @param registry The [CommandRegistry] to resolve command IDs.
  * @param hostServices The [HostServices] facade injected into each [ExecutionContext].
  * @param permissionKernel Optional [PermissionKernel] for Stage 6 authorization.
  *        If null, all commands execute without permission checks (permissive mode).
  * @param auditLog Optional [AuditLog] for Stage 10 audit recording.
+ * @param rateLimiter Optional [RateLimiter] for Stage 5.5 rate limiting.
+ *        If null, no rate limiting is applied.
+ * @param egressPolicy Optional [NetworkEgressPolicy] for Stage 5.6 egress checks.
+ *        If null, no egress validation is performed.
  */
 class Executor(
     private val registry: CommandRegistry,
     private val hostServices: HostServices,
     private val permissionKernel: PermissionKernel? = null,
-    private val auditLog: AuditLog? = null
+    private val auditLog: AuditLog? = null,
+    private val rateLimiter: RateLimiter? = null,
+    private val egressPolicy: NetworkEgressPolicy? = null,
 ) {
 
     private val schemaValidator = SchemaValidator()
@@ -111,6 +122,47 @@ class Executor(
                     retryable = false,
                     details = details
                 )
+            }
+        }
+
+        // Stage 5.5 — Rate limiting (if RateLimiter is configured)
+        val limiter = rateLimiter
+        if (limiter != null) {
+            when (val limitResult = limiter.tryConsume(entry.descriptor.pluginId, entry.descriptor.sideEffectClass)) {
+                is RateLimitResult.Limited -> {
+                    return CommandResult.Err(
+                        code = McosErrorCode.RATE_LIMITED.name,
+                        message = "Rate limited for '${entry.descriptor.id}' (${limitResult.kind.key}): retry after ${limitResult.retryAfterMs}ms",
+                        retryable = true,
+                        details = buildJsonObject {
+                            put("retryAfterMs", JsonPrimitive(limitResult.retryAfterMs))
+                            put("kind", JsonPrimitive(limitResult.kind.key))
+                        }
+                    )
+                }
+                is RateLimitResult.Allowed -> { /* proceed */ }
+            }
+        }
+
+        // Stage 5.6 — Network egress check (if EgressPolicy is configured)
+        val policy = egressPolicy
+        if (policy != null && entry.descriptor.sideEffectClass == SideEffectClass.network) {
+            val urlArg = args["url"]?.jsonPrimitive?.contentOrNull
+            if (urlArg != null) {
+                when (val egress = policy.decideEgress(urlArg, auth)) {
+                    is EgressDecision.Deny -> {
+                        return CommandResult.Err(
+                            code = McosErrorCode.PERMISSION_DENIED.name,
+                            message = "Network egress denied for '${entry.descriptor.id}': ${egress.reason}",
+                            retryable = false,
+                            details = buildJsonObject {
+                                put("egressReason", JsonPrimitive(egress.reason))
+                                egress.missingDomain?.let { put("missingDomain", JsonPrimitive(it)) }
+                            }
+                        )
+                    }
+                    is EgressDecision.Allow -> { /* proceed */ }
+                }
             }
         }
 

@@ -17,32 +17,37 @@ import kotlinx.coroutines.launch
  * ## Pipeline
  *
  * ```
- * NL input → LlmPlanner.plan() → parsed Commands → McosRuntime.execute() → ChatResult
+ * NL input → LlmPlanner.plan() → parsed Commands → [PromptInjectionDetector] → McosRuntime.execute() → ChatResult
  * ```
  *
  * ## Usage
  *
  * ```kotlin
- * val orchestrator = ChatOrchestrator(planner, runtime)
+ * val orchestrator = ChatOrchestrator(planner, runtime, injectionDetector = PromptInjectionDetector())
  * val result = orchestrator.chat("take a photo and share it")
  * if (result.isSuccess) {
- *     println("Ran ${result.commands.size} command(s)")
- *     println("Results: ${result.results}")
+ *     println("Ran ${result.plan.commands.size} command(s)")
  * }
  * ```
  *
  * @param planner The [LlmPlanner] for NL → DSL translation.
  * @param runtime The [McosRuntime] for executing the generated commands.
+ * @param injectionDetector Optional [PromptInjectionDetector] that runs between
+ *        planning and execution. If omitted, no injection checks are performed.
  */
 class ChatOrchestrator(
     private val planner: LlmPlanner,
     private val runtime: McosRuntime,
+    private val injectionDetector: PromptInjectionDetector? = null,
 ) {
     /**
      * Process a natural language request end-to-end.
      *
+     * If an [injectionDetector] is configured, the plan is checked for prompt injection
+     * patterns before execution. Detected injections return an unsuccessful [ChatResult]
+     * without executing any commands.
+     *
      * @param naturalLanguage The user's utterance, e.g. "打开客厅的灯".
-     * @param memory Optional [MemoryStore] to query before planning (for resolveRef).
      * @return [ChatResult] with the plan, execution results, and diagnostic info.
      */
     suspend fun chat(naturalLanguage: String): ChatResult {
@@ -57,6 +62,24 @@ class ChatOrchestrator(
                 success = false,
                 summary = "Planning failed: ${plan.thoughts ?: plan.error?.message ?: "unknown reason"}",
             )
+        }
+
+        // Step 1.5: Security — prompt injection detection (P1)
+        val detector = injectionDetector
+        if (detector != null) {
+            val detection = detector.detect(
+                utterance = naturalLanguage,
+                commands = plan.commands,
+            )
+            if (detection is InjectionDetection.Suspected) {
+                return ChatResult(
+                    plan = plan,
+                    results = emptyList(),
+                    events = emptyList(),
+                    success = false,
+                    summary = "Security: prompt injection detected (${detection.reason}) — ${detection.evidence}",
+                )
+            }
         }
 
         // Step 2: Execute (Commands → Results)

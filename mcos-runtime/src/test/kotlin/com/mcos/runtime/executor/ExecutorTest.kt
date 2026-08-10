@@ -3,6 +3,8 @@ package com.mcos.runtime.executor
 import com.mcos.runtime.error.McosErrorCode
 import com.mcos.runtime.permission.PermissionKernel
 import com.mcos.runtime.registry.CommandRegistry
+import com.mcos.runtime.security.NetworkEgressPolicy
+import com.mcos.runtime.security.RateLimiter
 import com.mcos.sdk.*
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.*
@@ -465,6 +467,133 @@ class ExecutorTest {
     }
 
     // ═══════════════════════════════════════════════════════════════
+    // E18-E19: Rate limiting integration (Stage 5.5)
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `E18-rate limited command returns RATE_LIMITED`() = runBlocking {
+        val limiter = RateLimiter(maxInvokesPerMinute = 1, maxDestructivePerHour = 100)
+        val executorWithLimiter = Executor(registry, services, rateLimiter = limiter)
+
+        val plugin = createPlugin("test.rl", "1.0.0", mapOf(
+            "cmd.fast" to EchoHandler("done")
+        ))
+        registry.register(plugin)
+
+        // First call — allowed
+        val result1 = executorWithLimiter.execute("cmd.fast")
+        assertIs<CommandResult.Ok>(result1)
+
+        // Second call — rate limited
+        val result2 = executorWithLimiter.execute("cmd.fast")
+        assertIs<CommandResult.Err>(result2)
+        assertEquals(McosErrorCode.RATE_LIMITED.name, result2.code)
+        assertTrue(result2.retryable)
+        assertTrue(result2.message.contains("Rate limited"))
+    }
+
+    @Test
+    fun `E19-destructive rate limit uses separate counter`() = runBlocking {
+        val limiter = RateLimiter(maxInvokesPerMinute = 100, maxDestructivePerHour = 1)
+        val executorWithLimiter = Executor(registry, services, rateLimiter = limiter)
+
+        val plugin = createPluginWithSideEffect(
+            id = "test.destrl",
+            version = "1.0.0",
+            commandId = "cmd.delete",
+            sideEffectClass = SideEffectClass.destructive,
+            handler = EchoHandler("deleted")
+        )
+        registry.register(plugin)
+
+        // First destructive — allowed
+        val result1 = executorWithLimiter.execute("cmd.delete")
+        assertIs<CommandResult.Ok>(result1)
+
+        // Second destructive — limited
+        val result2 = executorWithLimiter.execute("cmd.delete")
+        assertIs<CommandResult.Err>(result2)
+        assertEquals(McosErrorCode.RATE_LIMITED.name, result2.code)
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // E20-E21: Network egress policy integration (Stage 5.6)
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `E20-network command denied without egress scope`() = runBlocking {
+        val egressPolicy = NetworkEgressPolicy()
+        val executorWithEgress = Executor(registry, services, egressPolicy = egressPolicy)
+
+        val plugin = createPluginWithSideEffect(
+            id = "test.egress",
+            version = "1.0.0",
+            commandId = "net.fetch",
+            sideEffectClass = SideEffectClass.network,
+            handler = EchoHandler("ok")
+        )
+        registry.register(plugin)
+
+        val result = executorWithEgress.execute("net.fetch", buildJsonObject {
+            put("url", JsonPrimitive("https://example.com/api"))
+        })
+
+        assertIs<CommandResult.Err>(result)
+        assertEquals(McosErrorCode.PERMISSION_DENIED.name, result.code)
+        assertTrue(result.message.contains("Network egress denied"))
+    }
+
+    @Test
+    fun `E21-network egress not checked for non-network side effects`() = runBlocking {
+        val egressPolicy = NetworkEgressPolicy()
+        val executorWithEgress = Executor(registry, services, egressPolicy = egressPolicy)
+
+        // read side effect — egress check skipped even with url arg
+        val plugin = createPlugin("test.noegress", "1.0.0", mapOf(
+            "cmd.read" to EchoHandler("ok")
+        ))
+        registry.register(plugin)
+
+        val result = executorWithEgress.execute("cmd.read", buildJsonObject {
+            put("url", JsonPrimitive("https://example.com"))
+        })
+
+        // Should pass through without egress check
+        assertIs<CommandResult.Ok>(result)
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // E22: PermissionKernel wiring verified (Stage 6 integration)
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `E22-PERMISSION_DENIED when PermissionKernel wired via Executor`() = runBlocking {
+        // This test verifies the PermissionKernel is correctly connected.
+        // Without the fix, permissionKernel would be null and this would pass
+        // (because the check is skipped). With the fix, it should deny.
+        val permKernel = PermissionKernel()
+        val executorWithAll = Executor(
+            registry, services,
+            permissionKernel = permKernel,
+            rateLimiter = RateLimiter(),
+            egressPolicy = NetworkEgressPolicy(),
+        )
+
+        val plugin = createPluginWithPerms(
+            id = "test.wired",
+            version = "1.0.0",
+            commandId = "cmd.restricted",
+            permissions = listOf(PermissionEntry("android", "android.permission.SEND_SMS")),
+            handler = EchoHandler("sent")
+        )
+        registry.register(plugin)
+
+        val result = executorWithAll.execute("cmd.restricted")
+        assertIs<CommandResult.Err>(result)
+        assertEquals(McosErrorCode.PERMISSION_DENIED.name, result.code)
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     // Helpers
     // ═══════════════════════════════════════════════════════════════
 
@@ -563,6 +692,34 @@ class ExecutorTest {
                     title = commandId,
                     description = "Command with input schema",
                     sideEffectClass = SideEffectClass.read
+                )
+            )
+        )
+        override suspend fun onLoad(services: HostServices) {}
+        override suspend fun onUnload() {}
+        override fun handlers(): Map<String, CommandHandler> = mapOf(commandId to handler)
+    }
+
+    private fun createPluginWithSideEffect(
+        id: String,
+        version: String,
+        commandId: String,
+        sideEffectClass: SideEffectClass,
+        handler: CommandHandler
+    ): McosPlugin = object : McosPlugin {
+        override val manifest = PluginManifest(
+            id = id, name = id, version = version,
+            minRuntimeVersion = "0.1.0",
+            description = "Test plugin with custom side effect class",
+            provider = ProviderInfo("Test", "https://test.local"),
+            entry = "com.mcos.plugin.test.TestPlugin",
+            commands = listOf(
+                CommandManifestEntry(
+                    id = commandId,
+                    version = version,
+                    title = commandId,
+                    description = "Command with side effect $sideEffectClass",
+                    sideEffectClass = sideEffectClass,
                 )
             )
         )

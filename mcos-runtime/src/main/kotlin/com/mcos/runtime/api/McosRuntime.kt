@@ -9,6 +9,8 @@ import com.mcos.runtime.parse.DslParser
 import com.mcos.runtime.permission.PermissionKernel
 import com.mcos.runtime.registry.CommandRegistry
 import com.mcos.runtime.registry.ResolveResult as RegistryResolveResult
+import com.mcos.runtime.security.NetworkEgressPolicy
+import com.mcos.runtime.security.RateLimiter
 import com.mcos.sdk.CommandResult
 import com.mcos.sdk.MemoryFacade
 import kotlinx.coroutines.*
@@ -306,7 +308,12 @@ class McosRuntime internal constructor(
         fun build(): McosRuntime {
             val reg = registry ?: CommandRegistry()
             val perm = permissionKernel ?: PermissionKernel()
-            val exec = executor ?: Executor(reg, StubHostServices(memory))
+            val exec = executor ?: Executor(
+                reg, StubHostServices(memory),
+                permissionKernel = perm,
+                rateLimiter = RateLimiter(),
+                egressPolicy = NetworkEgressPolicy(),
+            )
 
             return McosRuntime(
                 parser = parser,
