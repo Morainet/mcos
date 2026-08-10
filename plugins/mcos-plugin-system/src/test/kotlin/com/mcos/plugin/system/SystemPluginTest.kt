@@ -38,22 +38,30 @@ class SystemPluginTest {
     }
 
     @Test
-    fun `S2-manifest declares all 6 system commands`() {
+    fun `S2-manifest declares all 12 system commands`() {
         val commands = plugin.manifest.commands.map { it.id }.toSet()
-        assertEquals(6, commands.size)
+        assertEquals(12, commands.size)
         assertTrue(commands.contains("sys.notify"))
         assertTrue(commands.contains("sys.share"))
         assertTrue(commands.contains("sys.clipboard"))
         assertTrue(commands.contains("sys.openUrl"))
         assertTrue(commands.contains("sys.intent.start"))
         assertTrue(commands.contains("sys.vibrate"))
+        assertTrue(commands.contains("sys.device.battery"))
+        assertTrue(commands.contains("sys.device.wifi"))
+        assertTrue(commands.contains("sys.device.screen"))
+        assertTrue(commands.contains("sys.device.volume"))
+        assertTrue(commands.contains("sys.device.location"))
+        assertTrue(commands.contains("sys.device.brightness"))
     }
 
     @Test
-    fun `S3-manifest requires VIBRATE and POST_NOTIFICATIONS`() {
+    fun `S3-manifest declares required system permissions`() {
         val perms = plugin.manifest.permissions.map { it.name }.toSet()
         assertTrue(perms.any { it.contains("VIBRATE") })
         assertTrue(perms.any { it.contains("POST_NOTIFICATIONS") })
+        assertTrue(perms.any { it.contains("ACCESS_FINE_LOCATION") })
+        assertTrue(perms.any { it.contains("WRITE_SETTINGS") })
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -61,22 +69,28 @@ class SystemPluginTest {
     // ═══════════════════════════════════════════════════════════════
 
     @Test
-    fun `S4-handlers returns all 6 command handlers`() {
+    fun `S4-handlers returns all 12 command handlers`() {
         val handlers = plugin.handlers()
-        assertEquals(6, handlers.size)
+        assertEquals(12, handlers.size)
         assertTrue(handlers.containsKey("sys.notify"))
         assertTrue(handlers.containsKey("sys.share"))
         assertTrue(handlers.containsKey("sys.clipboard"))
         assertTrue(handlers.containsKey("sys.openUrl"))
         assertTrue(handlers.containsKey("sys.intent.start"))
         assertTrue(handlers.containsKey("sys.vibrate"))
+        assertTrue(handlers.containsKey("sys.device.battery"))
+        assertTrue(handlers.containsKey("sys.device.wifi"))
+        assertTrue(handlers.containsKey("sys.device.screen"))
+        assertTrue(handlers.containsKey("sys.device.volume"))
+        assertTrue(handlers.containsKey("sys.device.location"))
+        assertTrue(handlers.containsKey("sys.device.brightness"))
     }
 
     @Test
     fun `S5-each handler is a unique instance`() {
         val handlers = plugin.handlers()
         val instances = handlers.values.toSet()
-        assertEquals(6, instances.size, "each handler should be a distinct instance")
+        assertEquals(12, instances.size, "each handler should be a distinct instance")
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -301,6 +315,181 @@ class SystemPluginTest {
     @Test
     fun `S24-thread hint is main`() {
         assertEquals("main", plugin.manifest.threadHint)
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // S25-S26: sys.device.battery
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `S25-sys_device_battery returns battery info`() = runBlocking {
+        val handler = plugin.handlers()["sys.device.battery"]!!
+        val ctx = execCtx("sys.device.battery", JsonObject(emptyMap()))
+
+        val result = handler.invoke(ctx)
+
+        assertTrue(result is CommandResult.Ok)
+        val value = (result as CommandResult.Ok).value!!.jsonObject
+        assertTrue(value.containsKey("level"))
+        assertTrue(value.containsKey("charging"))
+        assertTrue(value.containsKey("temperature"))
+        assertEquals(true, value["charging"]!!.jsonPrimitive.boolean)
+    }
+
+    @Test
+    fun `S26-sys_device_battery has read sideEffectClass`() {
+        val cmd = plugin.manifest.commands.find { it.id == "sys.device.battery" }!!
+        assertEquals(SideEffectClass.read, cmd.sideEffectClass)
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // S27-S28: sys.device.wifi
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `S27-sys_device_wifi returns wifi info`() = runBlocking {
+        val handler = plugin.handlers()["sys.device.wifi"]!!
+        val ctx = execCtx("sys.device.wifi", JsonObject(emptyMap()))
+
+        val result = handler.invoke(ctx)
+
+        assertTrue(result is CommandResult.Ok)
+        val value = (result as CommandResult.Ok).value!!.jsonObject
+        assertTrue(value.containsKey("connected"))
+        assertTrue(value.containsKey("ssid"))
+        assertTrue(value.containsKey("signalStrength"))
+        assertEquals("MCOS-Network", value["ssid"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `S28-sys_device_wifi has read sideEffectClass`() {
+        val cmd = plugin.manifest.commands.find { it.id == "sys.device.wifi" }!!
+        assertEquals(SideEffectClass.read, cmd.sideEffectClass)
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // S29-S30: sys.device.screen
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `S29-sys_device_screen returns display metrics`() = runBlocking {
+        val handler = plugin.handlers()["sys.device.screen"]!!
+        val ctx = execCtx("sys.device.screen", JsonObject(emptyMap()))
+
+        val result = handler.invoke(ctx)
+
+        assertTrue(result is CommandResult.Ok)
+        val value = (result as CommandResult.Ok).value!!.jsonObject
+        assertEquals(1080, value["width"]!!.jsonPrimitive.int)
+        assertEquals(2400, value["height"]!!.jsonPrimitive.int)
+        assertEquals("portrait", value["orientation"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `S30-sys_device_screen has read sideEffectClass`() {
+        val cmd = plugin.manifest.commands.find { it.id == "sys.device.screen" }!!
+        assertEquals(SideEffectClass.read, cmd.sideEffectClass)
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // S31-S32: sys.device.volume
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `S31-sys_device_volume returns volume levels`() = runBlocking {
+        val handler = plugin.handlers()["sys.device.volume"]!!
+        val ctx = execCtx("sys.device.volume", JsonObject(emptyMap()))
+
+        val result = handler.invoke(ctx)
+
+        assertTrue(result is CommandResult.Ok)
+        val value = (result as CommandResult.Ok).value!!.jsonObject
+        assertTrue(value.containsKey("media"))
+        assertTrue(value.containsKey("ring"))
+        assertTrue(value.containsKey("alarm"))
+        assertEquals(10, value["media"]!!.jsonPrimitive.int)
+    }
+
+    @Test
+    fun `S32-sys_device_volume has read sideEffectClass`() {
+        val cmd = plugin.manifest.commands.find { it.id == "sys.device.volume" }!!
+        assertEquals(SideEffectClass.read, cmd.sideEffectClass)
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // S33-S34: sys.device.location
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `S33-sys_device_location returns location data`() = runBlocking {
+        val handler = plugin.handlers()["sys.device.location"]!!
+        val ctx = execCtx("sys.device.location", JsonObject(emptyMap()))
+
+        val result = handler.invoke(ctx)
+
+        assertTrue(result is CommandResult.Ok)
+        val value = (result as CommandResult.Ok).value!!.jsonObject
+        assertTrue(value.containsKey("latitude"))
+        assertTrue(value.containsKey("longitude"))
+        assertTrue(value.containsKey("accuracy"))
+        assertTrue(value.containsKey("provider"))
+        assertEquals("gps", value["provider"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `S34-sys_device_location manifest declares fine location permission`() {
+        val cmd = plugin.manifest.commands.find { it.id == "sys.device.location" }!!
+        assertTrue(cmd.permissions.isNotEmpty(), "should declare permissions")
+        assertTrue(cmd.permissions.any { it.name.contains("ACCESS_FINE_LOCATION") })
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // S35-S36: sys.device.brightness
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `S35-sys_device_brightness query mode returns current level`() = runBlocking {
+        val handler = plugin.handlers()["sys.device.brightness"]!!
+        val ctx = execCtx("sys.device.brightness", JsonObject(emptyMap()))
+
+        val result = handler.invoke(ctx)
+
+        assertTrue(result is CommandResult.Ok)
+        val value = (result as CommandResult.Ok).value!!.jsonObject
+        assertEquals("query", value["mode"]!!.jsonPrimitive.content)
+        assertEquals(128, value["level"]!!.jsonPrimitive.int)
+    }
+
+    @Test
+    fun `S36-sys_device_brightness set mode updates level`() = runBlocking {
+        val handler = plugin.handlers()["sys.device.brightness"]!!
+        val args = buildJsonObject { put("level", JsonPrimitive(200)) }
+        val ctx = execCtx("sys.device.brightness", args)
+
+        val result = handler.invoke(ctx)
+
+        assertTrue(result is CommandResult.Ok)
+        val value = (result as CommandResult.Ok).value!!.jsonObject
+        assertEquals("set", value["mode"]!!.jsonPrimitive.content)
+        assertEquals(200, value["level"]!!.jsonPrimitive.int)
+    }
+
+    @Test
+    fun `S37-sys_device_brightness set mode rejects out-of-range level`() = runBlocking {
+        val handler = plugin.handlers()["sys.device.brightness"]!!
+        val args = buildJsonObject { put("level", JsonPrimitive(300)) }
+        val ctx = execCtx("sys.device.brightness", args)
+
+        assertFailsWith<McosException> {
+            handler.invoke(ctx)
+        }
+    }
+
+    @Test
+    fun `S38-sys_device_brightness manifest declares write settings permission`() {
+        val cmd = plugin.manifest.commands.find { it.id == "sys.device.brightness" }!!
+        assertTrue(cmd.permissions.isNotEmpty(), "should declare permissions")
+        assertTrue(cmd.permissions.any { it.name.contains("WRITE_SETTINGS") })
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────

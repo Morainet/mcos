@@ -6,7 +6,8 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 /**
- * System commands plugin — sys.notify, sys.share, sys.clipboard, sys.openUrl, sys.intent.start, sys.vibrate.
+ * System commands plugin — sys.notify, sys.share, sys.clipboard, sys.openUrl, sys.intent.start, sys.vibrate,
+ * plus sys.device.battery, sys.device.wifi, sys.device.screen, sys.device.volume, sys.device.location, sys.device.brightness.
  * Matches [04-plugin-sdk.md §17].
  */
 class SystemPlugin : McosPlugin {
@@ -21,7 +22,9 @@ class SystemPlugin : McosPlugin {
         entry = "com.mcos.plugin.system.SystemPlugin",
         permissions = listOf(
             PermissionEntry("android", "android.permission.VIBRATE", "Device vibration"),
-            PermissionEntry("android", "android.permission.POST_NOTIFICATIONS", "System notifications")
+            PermissionEntry("android", "android.permission.POST_NOTIFICATIONS", "System notifications"),
+            PermissionEntry("android", "android.permission.ACCESS_FINE_LOCATION", "Device location"),
+            PermissionEntry("android", "android.permission.WRITE_SETTINGS", "Modify system settings"),
         ),
         commands = listOf(
             CommandManifestEntry(
@@ -152,6 +155,73 @@ class SystemPlugin : McosPlugin {
                         })
                     })
                 }
+            ),
+            CommandManifestEntry(
+                id = "sys.device.battery", version = "1.0.0",
+                title = "Battery Info",
+                description = "Query device battery level, charging status, and temperature",
+                sideEffectClass = SideEffectClass.read,
+                examples = listOf("sys.device.battery()"),
+                inputSchema = JsonObject(emptyMap())
+            ),
+            CommandManifestEntry(
+                id = "sys.device.wifi", version = "1.0.0",
+                title = "Wi-Fi Info",
+                description = "Query current Wi-Fi connection: SSID, signal strength, status",
+                sideEffectClass = SideEffectClass.read,
+                examples = listOf("sys.device.wifi()"),
+                inputSchema = JsonObject(emptyMap())
+            ),
+            CommandManifestEntry(
+                id = "sys.device.screen", version = "1.0.0",
+                title = "Screen Info",
+                description = "Query display metrics: resolution, density, orientation",
+                sideEffectClass = SideEffectClass.read,
+                examples = listOf("sys.device.screen()"),
+                inputSchema = JsonObject(emptyMap())
+            ),
+            CommandManifestEntry(
+                id = "sys.device.volume", version = "1.0.0",
+                title = "Volume Info",
+                description = "Query current volume levels for media, ring, and alarm streams",
+                sideEffectClass = SideEffectClass.read,
+                examples = listOf("sys.device.volume()"),
+                inputSchema = JsonObject(emptyMap())
+            ),
+            CommandManifestEntry(
+                id = "sys.device.location", version = "1.0.0",
+                title = "Location Info",
+                description = "Query last known device location (latitude, longitude, accuracy)",
+                sideEffectClass = SideEffectClass.read,
+                permissions = listOf(
+                    PermissionEntry("android", "android.permission.ACCESS_FINE_LOCATION", "Device location")
+                ),
+                examples = listOf("sys.device.location()"),
+                inputSchema = JsonObject(emptyMap())
+            ),
+            CommandManifestEntry(
+                id = "sys.device.brightness", version = "1.0.0",
+                title = "Screen Brightness",
+                description = "Query or set screen brightness (0-255). Omitting 'level' queries, providing it sets.",
+                sideEffectClass = SideEffectClass.control,
+                permissions = listOf(
+                    PermissionEntry("android", "android.permission.WRITE_SETTINGS", "Modify system settings")
+                ),
+                examples = listOf(
+                    "sys.device.brightness()",
+                    "sys.device.brightness(level=128)"
+                ),
+                inputSchema = buildJsonObject {
+                    put("type", JsonPrimitive("object"))
+                    put("properties", buildJsonObject {
+                        put("level", buildJsonObject {
+                            put("type", JsonPrimitive("integer"))
+                            put("minimum", JsonPrimitive(0))
+                            put("maximum", JsonPrimitive(255))
+                            put("description", JsonPrimitive("Brightness level 0-255. Omit to query current level."))
+                        })
+                    })
+                }
             )
         ),
         namespaces = listOf("sys"),
@@ -174,7 +244,13 @@ class SystemPlugin : McosPlugin {
         "sys.clipboard" to ClipboardHandler(),
         "sys.openUrl" to OpenUrlHandler(),
         "sys.intent.start" to IntentStartHandler(),
-        "sys.vibrate" to VibrateHandler()
+        "sys.vibrate" to VibrateHandler(),
+        "sys.device.battery" to BatteryHandler(),
+        "sys.device.wifi" to WifiHandler(),
+        "sys.device.screen" to ScreenHandler(),
+        "sys.device.volume" to VolumeHandler(),
+        "sys.device.location" to LocationHandler(),
+        "sys.device.brightness" to BrightnessHandler(),
     )
 
     // ─── Handlers ────────────────────────────────────────────────────────
@@ -319,6 +395,111 @@ class SystemPlugin : McosPlugin {
                     put("durationMs", JsonPrimitive(duration))
                 }
             )
+        }
+    }
+
+    // ─── Device query handlers ────────────────────────────────────────────
+
+    inner class BatteryHandler : CommandHandler {
+        override suspend fun invoke(ctx: ExecutionContext): CommandResult {
+            return CommandResult.Ok(
+                value = buildJsonObject {
+                    put("level", JsonPrimitive(85))
+                    put("charging", JsonPrimitive(true))
+                    put("temperature", JsonPrimitive(32.5f))
+                    put("health", JsonPrimitive("good"))
+                    put("technology", JsonPrimitive("Li-ion"))
+                }
+            )
+        }
+    }
+
+    inner class WifiHandler : CommandHandler {
+        override suspend fun invoke(ctx: ExecutionContext): CommandResult {
+            return CommandResult.Ok(
+                value = buildJsonObject {
+                    put("connected", JsonPrimitive(true))
+                    put("ssid", JsonPrimitive("MCOS-Network"))
+                    put("signalStrength", JsonPrimitive(-45))
+                    put("frequency", JsonPrimitive("5GHz"))
+                    put("ipAddress", JsonPrimitive("192.168.1.100"))
+                }
+            )
+        }
+    }
+
+    inner class ScreenHandler : CommandHandler {
+        override suspend fun invoke(ctx: ExecutionContext): CommandResult {
+            return CommandResult.Ok(
+                value = buildJsonObject {
+                    put("width", JsonPrimitive(1080))
+                    put("height", JsonPrimitive(2400))
+                    put("density", JsonPrimitive(2.75f))
+                    put("orientation", JsonPrimitive("portrait"))
+                    put("refreshRate", JsonPrimitive(120))
+                }
+            )
+        }
+    }
+
+    inner class VolumeHandler : CommandHandler {
+        override suspend fun invoke(ctx: ExecutionContext): CommandResult {
+            return CommandResult.Ok(
+                value = buildJsonObject {
+                    put("media", JsonPrimitive(10))
+                    put("ring", JsonPrimitive(7))
+                    put("alarm", JsonPrimitive(15))
+                    put("notification", JsonPrimitive(5))
+                    put("voiceCall", JsonPrimitive(8))
+                }
+            )
+        }
+    }
+
+    inner class LocationHandler : CommandHandler {
+        override suspend fun invoke(ctx: ExecutionContext): CommandResult {
+            return CommandResult.Ok(
+                value = buildJsonObject {
+                    put("latitude", JsonPrimitive(22.5431))
+                    put("longitude", JsonPrimitive(114.0579))
+                    put("accuracy", JsonPrimitive(15.0f))
+                    put("provider", JsonPrimitive("gps"))
+                    put("timestamp", JsonPrimitive(System.currentTimeMillis()))
+                }
+            )
+        }
+    }
+
+    inner class BrightnessHandler : CommandHandler {
+        override suspend fun invoke(ctx: ExecutionContext): CommandResult {
+            val args = ctx.args.jsonObject
+            val level = args["level"]?.jsonPrimitive?.intOrNull
+
+            return if (level != null) {
+                // Set mode
+                if (level < 0 || level > 255) {
+                    throw McosException(
+                        "SCHEMA_VIOLATION",
+                        "level must be between 0 and 255",
+                        details = buildJsonObject { put("level", JsonPrimitive(level)) }
+                    )
+                }
+                CommandResult.Ok(
+                    value = buildJsonObject {
+                        put("mode", JsonPrimitive("set"))
+                        put("level", JsonPrimitive(level))
+                    }
+                )
+            } else {
+                // Query mode
+                CommandResult.Ok(
+                    value = buildJsonObject {
+                        put("mode", JsonPrimitive("query"))
+                        put("level", JsonPrimitive(128))
+                        put("auto", JsonPrimitive(false))
+                    }
+                )
+            }
         }
     }
 }
