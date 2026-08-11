@@ -5,6 +5,7 @@ package com.mcos.runtime.parse
  * Matches [02-command-protocol.md 6.6].
  */
 enum class TokenType {
+    ERROR,
     HEADER,
     COMMENT,
     IDENT,

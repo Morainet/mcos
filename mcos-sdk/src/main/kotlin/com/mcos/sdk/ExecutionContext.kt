@@ -42,7 +42,15 @@ data class AuthStamp(
     val pluginId: String,
     val grantsUsed: Set<String>,
     val issuedAt: Long,
-    val expiresAt: Long
+    val expiresAt: Long,
+    /**
+     * HMAC-SHA256 signature over (runId, commandId, pluginId, grantsUsed,
+     * issuedAt, expiresAt), computed by the runtime. Empty string means
+     * "unsigned" — only the runtime should produce unsigned stamps; plugins
+     * must treat unsigned stamps as untrusted.
+     * Matches [08-security.md 5.2].
+     */
+    val signature: String = ""
 )
 
 /**

@@ -2,6 +2,7 @@ package com.mcos.runtime.audit
 
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.*
@@ -32,6 +33,18 @@ data class ArtifactRecord(
 )
 
 /**
+ * Outcome of a run. Serialized with lowercase names to keep the
+ * audit JSON wire format ("ok" | "failed" | "cancelled" | "timeout").
+ */
+@Serializable
+enum class RunOutcome {
+    @SerialName("ok") OK,
+    @SerialName("failed") FAILED,
+    @SerialName("cancelled") CANCELLED,
+    @SerialName("timeout") TIMEOUT
+}
+
+/**
  * Complete run audit record.
  * Matches [03-runtime.md 13.1].
  */
@@ -44,7 +57,7 @@ data class RunRecord(
     val ir: String? = null,
     val steps: List<StepRecord> = emptyList(),
     val totalDurationMs: Long = 0,
-    val outcome: String = "ok" // "ok" | "failed" | "cancelled" | "timeout"
+    val outcome: RunOutcome = RunOutcome.OK
 )
 
 /**
@@ -222,7 +235,7 @@ class AuditLog {
         return try {
             val element = Json.parseToJsonElement(irJson)
             val redacted = redactElement(element)
-            Json { prettyPrint = false }.encodeToString(JsonElement.serializer(), redacted)
+            REDACT_JSON.encodeToString(JsonElement.serializer(), redacted)
         } catch (_: Exception) {
             // If the IR is not valid JSON (e.g. raw DSL text), fall back to
             // regex-based redaction on quoted key-value pairs.
@@ -271,6 +284,9 @@ class AuditLog {
     }
 
     companion object {
+        /** Reusable Json encoder for redaction output. */
+        private val REDACT_JSON = Json { prettyPrint = false }
+
         /** Regex to catch `"secretField": "value"` pairs in raw (non-JSON) text. */
         private val REGEX_SECRET_PAIR = Regex(
             """(?i)(["']?(?:password|token|secret|apikey|api_key|credential)[^"':]*["']?\s*[:=]\s*["'])[^"']*(["'])"""

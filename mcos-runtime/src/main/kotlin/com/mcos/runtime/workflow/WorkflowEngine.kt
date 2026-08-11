@@ -1,6 +1,7 @@
 package com.mcos.runtime.workflow
 
 import com.mcos.runtime.audit.AuditLog
+import com.mcos.runtime.audit.RunOutcome
 import com.mcos.runtime.audit.RunRecord
 import com.mcos.runtime.audit.StepRecord
 import com.mcos.runtime.error.McosErrorCode
@@ -77,7 +78,11 @@ class WorkflowEngine(
                     )
                 },
                 totalDurationMs = totalDurationMs,
-                outcome = outcome.name.lowercase()
+                outcome = when (outcome) {
+                    WorkflowOutcome.COMPLETED -> RunOutcome.OK
+                    WorkflowOutcome.FAILED -> RunOutcome.FAILED
+                    WorkflowOutcome.CANCELLED -> RunOutcome.CANCELLED
+                }
             )
         )
 

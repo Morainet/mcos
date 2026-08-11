@@ -36,7 +36,7 @@ class AuditLogTest {
                 StepRecord("hello.world", "example.hello", ok = true, durationMs = 50)
             ),
             totalDurationMs = 50,
-            outcome = "ok"
+            outcome = RunOutcome.OK
         )
         auditLog.append(record)
         auditLog.flush() // ensure writer has processed all records
@@ -45,7 +45,7 @@ class AuditLogTest {
         val retrieved = auditLog.getRun("run_001")
         assertNotNull(retrieved)
         assertEquals("hello.world", retrieved.commandId)
-        assertEquals("ok", retrieved.outcome)
+        assertEquals(RunOutcome.OK, retrieved.outcome)
     }
 
     @Test
@@ -57,7 +57,7 @@ class AuditLogTest {
                     timestamp = System.currentTimeMillis() - (5 - i) * 1000L,
                     commandId = "cmd.$i",
                     totalDurationMs = 10,
-                    outcome = "ok"
+                    outcome = RunOutcome.OK
                 )
             )
         }
@@ -77,7 +77,7 @@ class AuditLogTest {
                     timestamp = System.currentTimeMillis() + i * 1000,
                     commandId = "cmd.$i",
                     totalDurationMs = 10,
-                    outcome = "ok"
+                    outcome = RunOutcome.OK
                 )
             )
         }
@@ -110,7 +110,7 @@ class AuditLogTest {
                 )
             ),
             totalDurationMs = 120,
-            outcome = "failed"
+            outcome = RunOutcome.FAILED
         )
         auditLog.append(record)
         auditLog.flush()
@@ -140,7 +140,7 @@ class AuditLogTest {
                 )
             ),
             totalDurationMs = 900,
-            outcome = "ok"
+            outcome = RunOutcome.OK
         )
         auditLog.append(record)
         auditLog.flush()
@@ -167,7 +167,7 @@ class AuditLogTest {
                     timestamp = System.currentTimeMillis() + i * 1000,
                     commandId = "cmd.$i",
                     totalDurationMs = 10,
-                    outcome = "ok"
+                    outcome = RunOutcome.OK
                 )
             )
         }
@@ -192,7 +192,7 @@ class AuditLogTest {
                 timestamp = now - 5000, // 5 seconds ago
                 commandId = "old.cmd",
                 totalDurationMs = 10,
-                outcome = "ok"
+                outcome = RunOutcome.OK
             )
         )
         auditLog.append(
@@ -201,7 +201,7 @@ class AuditLogTest {
                 timestamp = now,
                 commandId = "new.cmd",
                 totalDurationMs = 10,
-                outcome = "ok"
+                outcome = RunOutcome.OK
             )
         )
         auditLog.flush()
@@ -223,7 +223,7 @@ class AuditLogTest {
                 timestamp = System.currentTimeMillis(),
                 commandId = "cmd.a",
                 totalDurationMs = 50,
-                outcome = "ok"
+                outcome = RunOutcome.OK
             )
         )
         auditLog.append(
@@ -232,7 +232,7 @@ class AuditLogTest {
                 timestamp = System.currentTimeMillis(),
                 commandId = "cmd.b",
                 totalDurationMs = 80,
-                outcome = "failed"
+                outcome = RunOutcome.FAILED
             )
         )
         auditLog.flush()
@@ -255,7 +255,7 @@ class AuditLogTest {
 
     @Test
     fun `A10-outcome values`() = runBlocking {
-        val outcomes = listOf("ok", "failed", "cancelled", "timeout")
+        val outcomes = listOf(RunOutcome.OK, RunOutcome.FAILED, RunOutcome.CANCELLED, RunOutcome.TIMEOUT)
         for ((i, outcome) in outcomes.withIndex()) {
             auditLog.append(
                 RunRecord(
