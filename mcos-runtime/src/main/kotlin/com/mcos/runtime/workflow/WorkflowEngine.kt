@@ -223,13 +223,30 @@ class WorkflowEngine(
         step: WorkflowStep.Retry,
         collector: MutableList<WorkflowStepResult>
     ): Boolean {
+        // Safety gate: non-idempotent commands are never retried.
+        // Retrying a non-idempotent operation (e.g. files.delete) that
+        // failed partway through could apply the side effect twice.
+        if (!step.idempotent) {
+            return executeStep(step.step, collector)
+        }
+
         var attempts = 0
         while (attempts <= step.maxRetries) {
             attempts++
+            // Snapshot collector size to detect if the step added an error result
+            val sizeBefore = collector.size
             val ok = executeStep(step.step, collector)
             if (ok) return true
-            // Remove failed attempt from collector for retry tracking?
-            // Keep all attempts visible in the result for diagnostics.
+
+            // Check error code filter: if retryOnCodes is specified and the
+            // last error code is not in the set, do not retry.
+            if (step.retryOnCodes.isNotEmpty()) {
+                val lastError = collector.lastOrNull()
+                if (lastError?.code == null || lastError.code !in step.retryOnCodes) {
+                    return false
+                }
+            }
+
             if (attempts <= step.maxRetries) {
                 delay(step.backoffMs)
             }
