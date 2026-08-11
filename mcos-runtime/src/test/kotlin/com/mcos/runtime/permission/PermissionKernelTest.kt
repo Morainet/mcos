@@ -209,8 +209,10 @@ class PermissionKernelTest {
     // ═══════════════════════════════════════════════════════════════
 
     @Test
-    fun `P14-network sideEffectClass implies mcos_network permission`() {
-        kernel.grant("example.net", "mcos:network")
+    fun `P14-network sideEffectClass implies network_scope permission`() {
+        // Network commands now require a network.* scope (aligned with
+        // NetworkEgressPolicy which expects network.<domain> grants).
+        kernel.grant("example.net", "network.*")
 
         val descriptor = createDescriptor(
             id = "net.fetch",
@@ -224,8 +226,11 @@ class PermissionKernelTest {
     }
 
     @Test
-    fun `P15-destructive with no implicit permission denied`() {
-        // No mcos:destructive granted → should fail on permission check
+    fun `P15-destructive command needs confirmation without explicit perms`() {
+        // Destructive commands without explicit permissions are not Denied
+        // (implicit sideEffectClass scopes are not hard requirements);
+        // they reach the confirmation gate, which forces CONFIRM_ONCE
+        // per spec 08 §4.0.
         val descriptor = createDescriptor(
             id = "file.wipe",
             pluginId = "example.files",
@@ -233,8 +238,8 @@ class PermissionKernelTest {
         )
 
         val result = kernel.authorize(descriptor)
-        assertIs<AuthorizationResult.Denied>(result)
-        assertTrue(result.missingPermissions.contains("mcos:destructive"))
+        assertIs<AuthorizationResult.ConfirmationNeeded>(result)
+        assertEquals(SideEffectClass.destructive, result.sideEffectClass)
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -242,10 +247,9 @@ class PermissionKernelTest {
     // ═══════════════════════════════════════════════════════════════
 
     @Test
-    fun `P16-combined explicit and implicit permissions checked together`() {
-        // grant explicit but not implicit
+    fun `P16-explicit permission checked, network scope not a hard requirement`() {
+        // Grant explicit permission
         kernel.grant("example.app", "android.permission.CAMERA")
-        // mcos:network is NOT granted
 
         val descriptor = createDescriptor(
             id = "camera.upload",
@@ -255,9 +259,10 @@ class PermissionKernelTest {
         )
 
         val result = kernel.authorize(descriptor)
-        // Should be denied because mcos:network is missing
-        assertIs<AuthorizationResult.Denied>(result)
-        assertTrue(result.missingPermissions.contains("mcos:network"))
+        // Explicit permission is satisfied; network.* is an implicit scope
+        // (not a hard requirement). The command reaches the confirmation gate.
+        assertIs<AuthorizationResult.ConfirmationNeeded>(result)
+        assertEquals(SideEffectClass.network, result.sideEffectClass)
     }
 
     // ═══════════════════════════════════════════════════════════════
