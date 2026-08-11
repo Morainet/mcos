@@ -147,7 +147,9 @@ class Executor(
         // Stage 5.6 — Network egress check (if EgressPolicy is configured)
         val policy = egressPolicy
         if (policy != null && entry.descriptor.sideEffectClass == SideEffectClass.network) {
-            val urlArg = args["url"]?.jsonPrimitive?.contentOrNull
+            val urlArg = args["url"]?.let {
+                (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content
+            }
             if (urlArg != null) {
                 when (val egress = policy.decideEgress(urlArg, auth)) {
                     is EgressDecision.Deny -> {
@@ -166,27 +168,53 @@ class Executor(
             }
         }
 
-        // Stage 6 — Authorization (if PermissionKernel is configured)
-        val effectiveAuth = if (permissionKernel != null && auth == null) {
-            when (val authz = permissionKernel.authorize(entry.descriptor)) {
-                is AuthorizationResult.Authorized -> authz.stamp
-                is AuthorizationResult.Denied -> {
+        // Stage 6 — Authorization
+        // Security: even when a caller supplies an AuthStamp, we verify it
+        // (a) has not expired and (b) covers the descriptor's required
+        // permissions. Without this check, any caller could fabricate an
+        // AuthStamp to bypass authorization (privilege escalation).
+        val effectiveAuth = if (permissionKernel != null) {
+            if (auth != null) {
+                // Validate supplied AuthStamp before trusting it
+                val now = System.currentTimeMillis()
+                if (auth.expiresAt <= now) {
                     return CommandResult.Err(
                         code = McosErrorCode.PERMISSION_DENIED.name,
-                        message = "Permission denied for '${entry.descriptor.id}': ${authz.reason}",
-                        retryable = true
+                        message = "AuthStamp for '${entry.descriptor.id}' has expired",
+                        retryable = false
                     )
                 }
-                is AuthorizationResult.ConfirmationNeeded -> {
+                val required = collectRequiredPermissions(entry.descriptor)
+                val missing = required.filter { it !in auth.grantsUsed }
+                if (missing.isNotEmpty()) {
                     return CommandResult.Err(
-                        code = McosErrorCode.CONFIRMATION_REQUIRED.name,
-                        message = "Confirmation needed for '${entry.descriptor.id}': ${authz.reason}",
-                        retryable = true,
-                        details = buildJsonObject {
-                            put("sideEffectClass", JsonPrimitive(authz.sideEffectClass.name))
-                            put("reason", JsonPrimitive(authz.reason))
-                        }
+                        code = McosErrorCode.PERMISSION_DENIED.name,
+                        message = "AuthStamp for '${entry.descriptor.id}' does not cover: ${missing.joinToString(", ")}",
+                        retryable = false
                     )
+                }
+                auth
+            } else {
+                when (val authz = permissionKernel.authorize(entry.descriptor)) {
+                    is AuthorizationResult.Authorized -> authz.stamp
+                    is AuthorizationResult.Denied -> {
+                        return CommandResult.Err(
+                            code = McosErrorCode.PERMISSION_DENIED.name,
+                            message = "Permission denied for '${entry.descriptor.id}': ${authz.reason}",
+                            retryable = false
+                        )
+                    }
+                    is AuthorizationResult.ConfirmationNeeded -> {
+                        return CommandResult.Err(
+                            code = McosErrorCode.CONFIRMATION_REQUIRED.name,
+                            message = "Confirmation needed for '${entry.descriptor.id}': ${authz.reason}",
+                            retryable = false,
+                            details = buildJsonObject {
+                                put("sideEffectClass", JsonPrimitive(authz.sideEffectClass.name))
+                                put("reason", JsonPrimitive(authz.reason))
+                            }
+                        )
+                    }
                 }
             }
         } else {
@@ -275,6 +303,16 @@ class Executor(
     }
 
     // ─── Helpers ────────────────────────────────────────────────────────
+
+    /**
+     * Collect the explicit permissions required by a descriptor.
+     * Used for AuthStamp validation when a caller supplies their own stamp.
+     * Implicit sideEffectClass scopes (network.*, mcos:destructive, etc.)
+     * are added by PermissionKernel and need not be checked here.
+     */
+    private fun collectRequiredPermissions(descriptor: CommandDescriptor): List<String> {
+        return descriptor.permissions.map { it.name }
+    }
 
     /**
      * Sanitize an exception message for user-facing output.
