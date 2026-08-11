@@ -297,7 +297,48 @@ class PermissionKernelTest {
         assertIs<AuthorizationResult.Authorized>(result)
         assertTrue(result.stamp.issuedAt >= now - 100)
         assertTrue(result.stamp.expiresAt > result.stamp.issuedAt)
-        assertEquals(result.stamp.issuedAt + 30000, result.stamp.expiresAt)
+        // expiresAt is derived from authStampTtlMs (5 min), NOT timeoutMs (30 s)
+        assertEquals(result.stamp.issuedAt + PermissionKernel.DEFAULT_AUTH_TTL_MS, result.stamp.expiresAt)
+    }
+
+    @Test
+    fun `P19-AuthStamp expiresAt is decoupled from command timeoutMs`() {
+        // A command with a very short timeout (1s) should still get a stamp
+        // valid for the full authStampTtlMs (5 min). This proves the fix for
+        // the timeout-conflation bug where executeSequence would reject later
+        // steps because they inherited the first command's tiny timeout.
+        val descriptor = createDescriptor(
+            id = "cmd.short",
+            pluginId = "example.plugin",
+            sideEffectClass = SideEffectClass.read,
+            timeoutMs = 1000
+        )
+
+        val result = kernel.authorize(descriptor)
+        assertIs<AuthorizationResult.Authorized>(result)
+        val stamp = result.stamp
+        val ttl = stamp.expiresAt - stamp.issuedAt
+
+        // The stamp lifetime must be the full authStampTtlMs, not 1s
+        assertEquals(PermissionKernel.DEFAULT_AUTH_TTL_MS, ttl)
+        assertTrue(ttl > 1000, "Stamp TTL ($ttl ms) must exceed timeoutMs (1000 ms) so sequences don't expire early")
+    }
+
+    @Test
+    fun `P20-AuthStamp uses custom authStampTtlMs when configured`() {
+        kernel.authStampTtlMs = 10_000 // 10 seconds
+
+        val descriptor = createDescriptor(
+            id = "cmd.custom",
+            pluginId = "example.plugin",
+            sideEffectClass = SideEffectClass.read,
+            timeoutMs = 60000
+        )
+
+        val result = kernel.authorize(descriptor)
+        assertIs<AuthorizationResult.Authorized>(result)
+        val ttl = result.stamp.expiresAt - result.stamp.issuedAt
+        assertEquals(10_000, ttl)
     }
 
     // ═══════════════════════════════════════════════════════════════
