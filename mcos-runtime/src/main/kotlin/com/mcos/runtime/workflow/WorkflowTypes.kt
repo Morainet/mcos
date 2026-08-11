@@ -40,11 +40,25 @@ sealed class WorkflowStep {
         val maxIterations: Int = 100
     ) : WorkflowStep()
 
-    /** Retry [step] up to [maxRetries] times with [backoffMs] delay between attempts */
+    /**
+     * Retry [step] up to [maxRetries] times with [backoffMs] delay between attempts.
+     *
+     * **Safety**: only commands marked [idempotent] are retried. A non-idempotent
+     * command (e.g. `files.delete` that fails partway) is NOT retried because
+     * retrying may apply the side effect twice. The [retryOnCodes] filter further
+     * restricts retries to specific error codes (empty = retry on any error,
+     * but only if [idempotent] is true).
+     *
+     * Matches spec [05-workflow.md] RetryPolicy.
+     */
     data class Retry(
         val step: WorkflowStep,
         val maxRetries: Int = 3,
-        val backoffMs: Long = 1000
+        val backoffMs: Long = 1000,
+        /** If false, the step is executed once with no retries. Defaults to true for safety at the call site. */
+        val idempotent: Boolean = true,
+        /** If non-empty, only retry when the error code is in this set. */
+        val retryOnCodes: Set<String> = emptySet()
     ) : WorkflowStep()
 
     /** Execute [step]; on failure, run [compensation] steps sequentially */
