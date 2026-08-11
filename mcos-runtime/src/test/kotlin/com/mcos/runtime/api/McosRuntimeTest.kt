@@ -213,7 +213,7 @@ class McosRuntimeTest {
         registerCommand("test.slow", SideEffectClass.read, handler = object : CommandHandler {
             override suspend fun invoke(ctx: ExecutionContext): CommandResult {
                 kotlinx.coroutines.delay(5000) // long-running
-                return CommandResult.Ok()
+                return CommandResult.Ok(JsonObject(emptyMap()))
             }
         })
 
@@ -289,6 +289,7 @@ class EchoCommandHandler(
 ) : CommandHandler {
     override suspend fun invoke(ctx: ExecutionContext): CommandResult {
         return CommandResult.Ok(
+            value = JsonObject(emptyMap()),
             artifacts = listOf(
                 com.mcos.sdk.Artifact("text", "echo:$commandId", "text/plain")
             )
