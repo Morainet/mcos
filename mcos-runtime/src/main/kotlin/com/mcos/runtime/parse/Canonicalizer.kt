@@ -5,14 +5,24 @@ import kotlinx.serialization.json.*
 
 /**
  * Canonicalizes IR per [02-command-protocol.md 7.5].
- * Object keys are sorted lexicographically; IDs are lowercased;
- * numbers are normalized per schema type.
+ *
+ * Canonicalization rules:
+ * - Command IDs are lowercased.
+ * - Object keys (both `args` and nested objects) are sorted by Unicode code
+ *   point (case-sensitive lexicographic), per §7.5.
+ * - Array order is preserved (semantically meaningful).
+ * - Primitives are already canonical.
+ *
+ * Note: number normalization per schema type (§7.5) requires schema access
+ * which the canonicalizer does not have at this stage. Integer `-0` → `0`
+ * is already handled by the parser's `toLong()` conversion. Full
+ * schema-aware number normalization is deferred.
  */
 object Canonicalizer {
 
     /**
-     * Canonicalize an ExecutionIr in place (mutates the internal representation).
-     * After this call, the IR is in its canonical form suitable for hashing.
+     * Canonicalize an ExecutionIr.
+     * Returns a new IR in canonical form suitable for hashing.
      */
     fun canonicalize(ir: ExecutionIr): ExecutionIr {
         return when (ir) {
@@ -36,13 +46,11 @@ object Canonicalizer {
         }
     }
 
+    /**
+     * Sort arg keys lexicographically by Unicode code point (case-sensitive)
+     * and recursively canonicalize values. Per spec §7.5.
+     */
     private fun canonicalizeArgs(args: JsonObject): JsonObject {
-        // Sort keys lexicographically by Unicode code point
-        val sorted = sortedMapOf<String, JsonElement>(String.CASE_INSENSITIVE_ORDER)
-        for ((key, value) in args) {
-            sorted[key] = canonicalizeValue(value)
-        }
-        // Use a regular LinkedHashMap sorted by key
         val result = linkedMapOf<String, JsonElement>()
         args.keys.sorted().forEach { key ->
             result[key] = canonicalizeValue(args[key]!!)
@@ -68,10 +76,4 @@ object Canonicalizer {
             else -> value
         }
     }
-
-    /**
-     * Normalize a number literal for canonical output.
-     * Strip leading zeros for integers, normalize -0 → 0.
-     */
-    fun normalizeInt(value: Long): Long = if (value == 0L) 0L else value // -0 → 0
 }
