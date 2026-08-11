@@ -420,14 +420,7 @@ class ExecutorTest {
         val permKernel = PermissionKernel()
         val executorWithPerm = Executor(registry, services, permKernel)
 
-        val plugin = createPlugin("test.perm", "1.0.0", mapOf(
-            "camera.capture" to EchoHandler("photo")
-        ))
-        // Plugin has no explicit permissions, but we need to test denial
-        // Register a descriptor with a required permission
-        registry.register(plugin)
-
-        // Re-register with a perm-requiring descriptor by using manifest entries
+        // Register a command that requires CAMERA permission (not granted)
         val permPlugin = createPluginWithPerms(
             id = "test.perm2",
             version = "1.0.0",
@@ -440,7 +433,9 @@ class ExecutorTest {
         val result = executorWithPerm.execute("camera.capture")
         assertIs<CommandResult.Err>(result)
         assertEquals(McosErrorCode.PERMISSION_DENIED.name, result.code)
-        assertTrue(result.retryable)
+        // PERMISSION_DENIED is non-retryable: a denied command stays denied
+        // until the user explicitly grants the permission.
+        assertFalse(result.retryable)
     }
 
     @Test
@@ -560,6 +555,7 @@ class ExecutorTest {
 
         // Should pass through without egress check
         assertIs<CommandResult.Ok>(result)
+        Unit
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -691,7 +687,8 @@ class ExecutorTest {
                     version = version,
                     title = commandId,
                     description = "Command with input schema",
-                    sideEffectClass = SideEffectClass.read
+                    sideEffectClass = SideEffectClass.read,
+                    inputSchema = inputSchema
                 )
             )
         )
