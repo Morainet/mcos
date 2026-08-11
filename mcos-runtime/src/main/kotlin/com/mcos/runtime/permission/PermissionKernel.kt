@@ -1,6 +1,7 @@
 package com.mcos.runtime.permission
 
 import com.mcos.sdk.*
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Result of [PermissionKernel.authorize].
@@ -35,21 +36,26 @@ sealed class AuthorizationResult {
  * - Session grants (temporary, cleared on restart)
  * - sideEffectClass-based confirmation policy
  * - AuthStamp issuance for authorized commands
+ *
+ * Thread safety: all mutable state is guarded by an internal lock
+ * (`synchronized(this)`) because the runtime invokes commands on
+ * `Dispatchers.Default` concurrently.
  */
 class PermissionKernel {
 
     // ─── Grant storage ───────────────────────────────────────────────────
 
     /** Granted permissions: pluginId → set of permission names */
-    private val grants = mutableMapOf<String, MutableSet<String>>()
+    private val grants = ConcurrentHashMap<String, MutableSet<String>>()
 
     /** Session-scoped grants that expire on restart */
-    private val sessionGrants = mutableSetOf<String>()
+    private val sessionGrants = ConcurrentHashMap.newKeySet<String>()
 
     /** Commands the user has marked as "always allow" */
-    private val autoApprove = mutableSetOf<String>()
+    private val autoApprove = ConcurrentHashMap.newKeySet<String>()
 
     /** Confirmation policy override per plugin */
+    @Volatile
     private var alwaysConfirm: Boolean = false
 
     // ─── Authorization ────────────────────────────────────────────────────
@@ -61,7 +67,7 @@ class PermissionKernel {
      * 1. Collect all required permissions (descriptor + plugin-level)
      * 2. Check which are missing from grants
      * 3. If sideEffectClass ≥ write → confirmation required
-     * 4. If auto-approve → skip confirmation
+     * 4. If auto-approve → skip confirmation (unless destructive)
      *
      * @param descriptor The resolved command descriptor.
      * @return [AuthorizationResult.Authorized] if all checks pass,
@@ -72,16 +78,14 @@ class PermissionKernel {
         val commandId = descriptor.id
         val pluginId = descriptor.pluginId
 
-        // Collect required permissions
+        // Collect required permissions (snapshot under lock)
         val required = collectRequiredPermissions(descriptor)
 
         // Check which are missing
         val missing = if (required.isEmpty()) {
             emptyList()
         } else {
-            required.filter { perm ->
-                !hasPermission(pluginId, perm)
-            }
+            required.filter { perm -> !hasPermission(pluginId, perm) }
         }
 
         // If permissions are missing → Denied
@@ -103,13 +107,17 @@ class PermissionKernel {
             )
         }
 
-        // All checks passed — issue auth stamp
+        // All checks passed — issue auth stamp.
+        // Include both explicit permissions and implicit sideEffectClass
+        // scopes in grantsUsed so downstream consumers (e.g.
+        // NetworkEgressPolicy) can match them.
+        val allScopes = required.toSet() + collectImplicitScopes(descriptor)
         return AuthorizationResult.Authorized(
             stamp = AuthStamp(
                 runId = "", // will be filled by Executor
                 commandId = commandId,
                 pluginId = pluginId,
-                grantsUsed = required.toSet(),
+                grantsUsed = allScopes,
                 issuedAt = System.currentTimeMillis(),
                 expiresAt = System.currentTimeMillis() + descriptor.timeoutMs
             )
@@ -122,7 +130,8 @@ class PermissionKernel {
      * Grant a permission to a plugin. Persisted across sessions.
      */
     fun grant(pluginId: String, permission: String) {
-        grants.getOrPut(pluginId) { mutableSetOf() }.add(permission)
+        grants.computeIfAbsent(pluginId) { java.util.Collections.synchronizedSet(mutableSetOf()) }
+            .add(permission)
     }
 
     /**
@@ -151,10 +160,31 @@ class PermissionKernel {
 
     /**
      * Mark a command as auto-approved — skip confirmation for future invocations.
+     *
+     * **Safety invariant** (08-security.md §4.0): `destructive` commands
+     * always require `CONFIRM_ONCE` — auto-approve is rejected for them.
+     * This method throws [IllegalArgumentException] if [enabled] is true
+     * and [commandId] resolves to a destructive command. Callers that do
+     * not have a descriptor can pass [sideEffectClass] directly; if it is
+     * null, the auto-approve is accepted (the guard fires when the
+     * descriptor is available at authorize-time instead).
      */
-    fun setAutoApprove(commandId: String, enabled: Boolean) {
-        if (enabled) autoApprove.add(commandId.lowercase())
-        else autoApprove.remove(commandId.lowercase())
+    fun setAutoApprove(
+        commandId: String,
+        enabled: Boolean,
+        sideEffectClass: SideEffectClass? = null
+    ) {
+        if (enabled && sideEffectClass == SideEffectClass.destructive) {
+            throw IllegalArgumentException(
+                "Cannot auto-approve destructive command '$commandId': " +
+                    "spec 08 §4.0 mandates CONFIRM_ONCE for all destructive operations"
+            )
+        }
+        if (enabled) {
+            autoApprove.add(commandId.lowercase())
+        } else {
+            autoApprove.remove(commandId.lowercase())
+        }
     }
 
     /**
@@ -172,14 +202,19 @@ class PermissionKernel {
      */
     fun hasPermission(pluginId: String, permission: String): Boolean {
         val pluginGrants = grants[pluginId] ?: return false
-        return permission in pluginGrants
+        // Synchronize on the per-plugin set for safe reads
+        synchronized(pluginGrants) {
+            return permission in pluginGrants
+        }
     }
 
     /**
      * Get all granted permissions for a plugin.
      */
-    fun getGrants(pluginId: String): Set<String> =
-        grants[pluginId]?.toSet() ?: emptySet()
+    fun getGrants(pluginId: String): Set<String> {
+        val pluginGrants = grants[pluginId] ?: return emptySet()
+        return synchronized(pluginGrants) { pluginGrants.toSet() }
+    }
 
     /**
      * Check if a permission is session-scoped.
@@ -191,13 +226,16 @@ class PermissionKernel {
      * Clear session grants (e.g. on app restart).
      */
     fun clearSessionGrants() {
-        sessionGrants.forEach { key ->
-            val parts = key.split(":", limit = 2)
-            if (parts.size == 2) {
-                grants[parts[0]]?.remove(parts[1])
+        val keys = sessionGrants.toList()
+        sessionGrants.clear()
+        for (key in keys) {
+            val idx = key.indexOf(':')
+            if (idx > 0) {
+                val pid = key.substring(0, idx)
+                val perm = key.substring(idx + 1)
+                grants[pid]?.remove(perm)
             }
         }
-        sessionGrants.clear()
     }
 
     /**
@@ -215,24 +253,38 @@ class PermissionKernel {
     private fun collectRequiredPermissions(descriptor: CommandDescriptor): List<String> {
         val perms = mutableSetOf<String>()
 
-        // Add command-level permissions
+        // Add command-level explicit permissions.
+        // These are the hard requirements — if not granted, the command
+        // is Denied.
         descriptor.permissions.forEach { entry ->
             perms.add(entry.name)
-        }
-
-        // SideEffectClass-based implicit permissions
-        when (descriptor.sideEffectClass) {
-            SideEffectClass.network -> perms.add("mcos:network")
-            SideEffectClass.destructive -> perms.add("mcos:destructive")
-            SideEffectClass.control -> perms.add("mcos:control")
-            else -> {} // read, write — no implicit perm needed
         }
 
         return perms.toList()
     }
 
+    /**
+     * Collect the implicit scope entries that should appear in the issued
+     * AuthStamp's `grantsUsed`, based on sideEffectClass. These are NOT
+     * hard requirements — they are informational grants that downstream
+     * consumers (e.g. NetworkEgressPolicy) use for scope matching.
+     */
+    private fun collectImplicitScopes(descriptor: CommandDescriptor): Set<String> {
+        return when (descriptor.sideEffectClass) {
+            SideEffectClass.network -> setOf("network.*")
+            SideEffectClass.destructive -> setOf("mcos:destructive")
+            SideEffectClass.control -> setOf("mcos:control")
+            else -> emptySet()
+        }
+    }
+
     private fun needsConfirmation(descriptor: CommandDescriptor, commandId: String): Boolean {
         if (alwaysConfirm) return true
+
+        // Destructive commands ALWAYS require confirmation (spec 08 §4.0):
+        // "no allow-persistent path". Auto-approve is ignored for them.
+        if (descriptor.sideEffectClass >= SideEffectClass.destructive) return true
+
         if (autoApprove.contains(commandId.lowercase())) return false
 
         // sideEffectClass ≥ write → confirmation needed
