@@ -141,21 +141,24 @@ class SchemaValidator {
     ) {
         val content = value.content
 
-        // Numeric constraints
-        val num = content.toDoubleOrNull()
-        if (num != null) {
-            val minimum = schema["minimum"]?.jsonPrimitive?.doubleOrNull
-            val maximum = schema["maximum"]?.jsonPrimitive?.doubleOrNull
+        // Numeric constraints — only apply to non-string (numeric) primitives.
+        // A JSON string "10" must not be treated as the number 10.
+        if (!value.isString) {
+            val num = content.toDoubleOrNull()
+            if (num != null) {
+                val minimum = schema["minimum"]?.jsonPrimitive?.doubleOrNull
+                val maximum = schema["maximum"]?.jsonPrimitive?.doubleOrNull
 
-            if (minimum != null && num < minimum) {
-                errors.add(
-                    ValidationError(path, "minimum $minimum", "$num")
-                )
-            }
-            if (maximum != null && num > maximum) {
-                errors.add(
-                    ValidationError(path, "maximum $maximum", "$num")
-                )
+                if (minimum != null && num < minimum) {
+                    errors.add(
+                        ValidationError(path, "minimum $minimum", "$num")
+                    )
+                }
+                if (maximum != null && num > maximum) {
+                    errors.add(
+                        ValidationError(path, "maximum $maximum", "$num")
+                    )
+                }
             }
         }
 
@@ -203,9 +206,12 @@ class SchemaValidator {
         // "number" matches both integer and floating-point numbers
         val match = when (expectedType) {
             "string"  -> value is JsonPrimitive && value.isString
-            "number"  -> value is JsonPrimitive && (value.content.toDoubleOrNull() != null)
-            "integer" -> value is JsonPrimitive && (value.content.toLongOrNull() != null)
-            "boolean" -> value is JsonPrimitive && (value.isString.not() && value.content == "true" || value.content == "false")
+            // Numeric checks must reject strings: a JSON string "5" is not a number.
+            "number"  -> value is JsonPrimitive && !value.isString && (value.content.toDoubleOrNull() != null)
+            "integer" -> value is JsonPrimitive && !value.isString && (value.content.toLongOrNull() != null)
+            // Parentheses are critical: without them, && binds tighter than ||
+            // and a string "false" would be accepted as a boolean.
+            "boolean" -> value is JsonPrimitive && !value.isString && (value.content == "true" || value.content == "false")
             "array"   -> value is JsonArray
             "object"  -> value is JsonObject
             else      -> true // unknown type → pass
