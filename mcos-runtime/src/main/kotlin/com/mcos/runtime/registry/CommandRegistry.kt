@@ -2,6 +2,8 @@ package com.mcos.runtime.registry
 
 import com.mcos.sdk.CommandDescriptor
 import com.mcos.sdk.CommandHandler
+import com.mcos.sdk.CommandResult
+import com.mcos.sdk.ExecutionContext
 import com.mcos.sdk.McosPlugin
 import com.mcos.sdk.PermissionEntry
 import com.mcos.sdk.SideEffectClass
@@ -104,6 +106,21 @@ data class SemanticVersion(
 }
 
 /**
+ * Stub handler used when a command is declared in the manifest but has no
+ * implementation in [McosPlugin.handlers]. The command is still discoverable
+ * (for prompt building, schema validation, etc.) but fails at execution time
+ * with a clear NOT_IMPLEMENTED error.
+ */
+object NotImplementedHandler : CommandHandler {
+    override suspend fun invoke(ctx: ExecutionContext): CommandResult =
+        CommandResult.Err(
+            code = "NOT_IMPLEMENTED",
+            message = "Command '${ctx.commandId}' is declared but has no handler implementation.",
+            retryable = false
+        )
+}
+
+/**
  * Command registry — the central index that maps command IDs to their
  * descriptors, handlers, and owning plugins.
  *
@@ -155,14 +172,23 @@ class CommandRegistry {
         // Unregister existing entries from this plugin first (re-registration support)
         unregisterSilent(pluginId)
 
+        // Iterate over the union of manifest-declared commands and handler-provided commands.
+        // Manifest is the source of truth for what commands a plugin exposes; a command
+        // declared in the manifest but lacking a handler is still registered (for prompt
+        // building, schema lookup, etc.) and gets a NOT_IMPLEMENTED stub handler.
+        val allCommandIds: LinkedHashSet<String> = LinkedHashSet()
+        for (cmd in manifest.commands) allCommandIds.add(cmd.id)
+        for (id in handlers.keys) allCommandIds.add(id)
+
         val pluginEntries = mutableListOf<RegistryEntry>()
         val conflicts = mutableListOf<ConflictDetail>()
         var commandsRegistered = 0
         var aliasesRegistered = 0
 
-        for ((commandId, handler) in handlers) {
+        for (commandId in allCommandIds) {
             val commandIdLower = commandId.lowercase()
             val manifestEntry = manifestCommands[commandIdLower]
+            val handler = handlers[commandId] ?: handlers[commandIdLower]
 
             // Build descriptor
             val descriptor = if (manifestEntry != null) {
@@ -203,7 +229,7 @@ class CommandRegistry {
                 pluginId = pluginId,
                 pluginVersion = pluginVersion,
                 descriptor = descriptor,
-                handler = handler
+                handler = handler ?: NotImplementedHandler
             )
 
             // Check for conflicts (different plugin has same command ID)
