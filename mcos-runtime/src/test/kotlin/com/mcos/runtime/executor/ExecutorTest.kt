@@ -589,6 +589,36 @@ class ExecutorTest {
         assertEquals(McosErrorCode.PERMISSION_DENIED.name, result.code)
     }
 
+    @Test
+    fun `E23-expired AuthStamp is rejected with PERMISSION_DENIED`() = runBlocking {
+        // Verify the Executor.kt:180 expiry-check path: when a caller supplies
+        // an AuthStamp whose expiresAt <= now, the Executor must reject it
+        // rather than trusting it. This covers the trust-bypass defense.
+        val permKernel = PermissionKernel()
+        val executorWithKernel = Executor(registry, services, permKernel)
+
+        val plugin = createPlugin("test.expiry", "1.0.0", mapOf(
+            "cmd.check" to EchoHandler("ok")
+        ))
+        registry.register(plugin)
+
+        val now = System.currentTimeMillis()
+        val expiredStamp = AuthStamp(
+            runId = "run_1",
+            commandId = "cmd.check",
+            pluginId = "test.expiry",
+            grantsUsed = emptySet(),
+            issuedAt = now - 10_000,
+            expiresAt = now - 1 // already expired
+        )
+
+        val result = executorWithKernel.execute("cmd.check", JsonObject(emptyMap()), expiredStamp)
+        assertIs<CommandResult.Err>(result)
+        assertEquals(McosErrorCode.PERMISSION_DENIED.name, result.code)
+        assertTrue(result.message.contains("expired"), "Error message should mention expiry: ${result.message}")
+        assertFalse(result.retryable)
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // Helpers
     // ═══════════════════════════════════════════════════════════════
