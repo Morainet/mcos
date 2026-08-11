@@ -147,16 +147,39 @@ class Lexer(private val input: String) {
             sb.append(chars[pos])
             advance()
         }
-        // Decimal part
-        if (pos < chars.size && chars[pos] == '.') {
+        // Decimal part — per spec §6.8: "5." and ".5" are invalid.
+        // The '.' must be followed by at least one digit, otherwise we stop
+        // (leaving the '.' to be lexed as a DOT token, which the parser
+        // will reject in value position → PARSE_ERROR).
+        if (pos < chars.size && chars[pos] == '.' &&
+            pos + 1 < chars.size && chars[pos + 1].isDigit()
+        ) {
             sb.append('.')
             advance()
-            if (pos < chars.size && chars[pos].isDigit()) {
-                while (pos < chars.size && chars[pos].isDigit()) {
-                    sb.append(chars[pos])
-                    advance()
-                }
+            while (pos < chars.size && chars[pos].isDigit()) {
+                sb.append(chars[pos])
+                advance()
             }
+        }
+        // Reject exponent notation per spec §6.8: "1e3", "1.5E-2" → PARSE_ERROR.
+        // We detect the presence of 'e' or 'E' immediately after the number
+        // and emit a special COMMENT token to signal an error to the parser.
+        if (pos < chars.size && (chars[pos] == 'e' || chars[pos] == 'E')) {
+            // Consume the exponent characters so the parser sees one bad token
+            sb.append(chars[pos]) // e/E
+            advance()
+            if (pos < chars.size && (chars[pos] == '+' || chars[pos] == '-')) {
+                sb.append(chars[pos])
+                advance()
+            }
+            while (pos < chars.size && chars[pos].isDigit()) {
+                sb.append(chars[pos])
+                advance()
+            }
+            // Return as a NUMBER token; the parser's parseNumber will reject it
+            // because Double.parseDouble succeeds but the spec forbids exponents.
+            // We tag it so the parser can detect it.
+            return Token(TokenType.NUMBER, "EXPONENT:${sb}", startLine, startColumn)
         }
         return Token(TokenType.NUMBER, sb.toString(), startLine, startColumn)
     }
