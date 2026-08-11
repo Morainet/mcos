@@ -192,9 +192,9 @@ class Parser(private val tokens: List<Token>) {
             at(TokenType.LBRACKET) -> parseArray(depth)
             at(TokenType.LBRACE) -> parseObject(depth)
             at(TokenType.IDENT) -> {
-                // Nested invocation detection: ident '(' ...
-                val nextIdx = current + 1
-                if (nextIdx < tokens.size && tokens[nextIdx].type == TokenType.LPAREN) {
+                // Nested invocation detection: ident '(' ... or
+                // qualified ident '.' ident* '(' for commands like photo.compress()
+                if (isNestedInvocation(current)) {
                     throw ParseException(
                         error(
                             "nested_call",
@@ -214,6 +214,12 @@ class Parser(private val tokens: List<Token>) {
     private fun parseNumber(): JsonElement {
         val token = peek()
         val lexeme = token.lexeme
+
+        // Reject exponent notation per spec §6.8.
+        // The lexer tags exponent literals with an "EXPONENT:" prefix.
+        if (lexeme.startsWith("EXPONENT:")) {
+            throw ParseException(error("exponent_notation", "Exponent notation is not allowed: ${lexeme.removePrefix("EXPONENT:")}"))
+        }
 
         // Check leading zeros
         if (lexeme.startsWith('-')) {
@@ -324,6 +330,22 @@ class Parser(private val tokens: List<Token>) {
     }
 
     // ─── Token stream helpers ───────────────────────────────────────────
+
+    /**
+     * Detect a nested invocation starting at [idx]: IDENT (DOT IDENT)* LPAREN.
+     * This catches both bare (foo() and qualified (foo.bar()) nested calls.
+     */
+    private fun isNestedInvocation(idx: Int): Boolean {
+        var i = idx
+        // Walk through IDENT (DOT IDENT)* pattern
+        if (i >= tokens.size || tokens[i].type != TokenType.IDENT) return false
+        i++ // skip first IDENT
+        while (i + 1 < tokens.size && tokens[i].type == TokenType.DOT && tokens[i + 1].type == TokenType.IDENT) {
+            i += 2 // skip DOT and IDENT
+        }
+        // Check if we land on LPAREN
+        return i < tokens.size && tokens[i].type == TokenType.LPAREN
+    }
 
     private fun peek(): Token = tokens.getOrElse(current) { tokens.last() }
     private fun advance(): Token = tokens[current++]
