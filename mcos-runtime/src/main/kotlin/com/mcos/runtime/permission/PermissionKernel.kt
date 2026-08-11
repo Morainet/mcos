@@ -58,6 +58,28 @@ class PermissionKernel {
     @Volatile
     private var alwaysConfirm: Boolean = false
 
+    /**
+     * Authorization stamp lifetime in milliseconds.
+     *
+     * This is **independent of per-command [CommandDescriptor.timeoutMs]**:
+     * `timeoutMs` governs how long a single command may execute (enforced
+     * by `Executor` via `withTimeout` + `ExecutionContext.deadline`),
+     * while `authStampTtlMs` governs how long a minted [AuthStamp] remains
+     * valid. Per [08-security.md §5.2 rule #4](../../../docs/en/08-security.md),
+     * stamps are "run-scoped, short-lived" — they must cover the entire
+     * multi-step run, not just one command's timeout.
+     *
+     * The default (5 min) is derived from the background-event confirmation
+     * timeout in [08-security.md §6.3].
+     */
+    @Volatile
+    var authStampTtlMs: Long = DEFAULT_AUTH_TTL_MS
+
+    companion object {
+        /** Default authorization stamp lifetime: 5 minutes (run-scoped). */
+        const val DEFAULT_AUTH_TTL_MS = 300_000L // 5 min
+    }
+
     // ─── Authorization ────────────────────────────────────────────────────
 
     /**
@@ -111,6 +133,12 @@ class PermissionKernel {
         // Include both explicit permissions and implicit sideEffectClass
         // scopes in grantsUsed so downstream consumers (e.g.
         // NetworkEgressPolicy) can match them.
+        //
+        // expiresAt uses authStampTtlMs (NOT descriptor.timeoutMs) because the
+        // stamp must remain valid across an entire multi-step run. Using
+        // timeoutMs here would cause subsequent commands in executeSequence
+        // — which share the same stamp — to be spuriously rejected as expired.
+        val now = System.currentTimeMillis()
         val allScopes = required.toSet() + collectImplicitScopes(descriptor)
         return AuthorizationResult.Authorized(
             stamp = AuthStamp(
@@ -118,8 +146,8 @@ class PermissionKernel {
                 commandId = commandId,
                 pluginId = pluginId,
                 grantsUsed = allScopes,
-                issuedAt = System.currentTimeMillis(),
-                expiresAt = System.currentTimeMillis() + descriptor.timeoutMs
+                issuedAt = now,
+                expiresAt = now + authStampTtlMs
             )
         )
     }
