@@ -68,20 +68,20 @@ class FilesPluginTest {
     @Test
     fun `F5-file_list returns file entries`() = runBlocking {
         val handler = plugin.handlers()["file.list"]!!
-        val args = buildJsonObject { put("uri", JsonPrimitive("content://test/")) }
+        val args = buildJsonObject { put("path", JsonPrimitive("content://test/")) }
         val ctx = execCtx("file.list", args)
 
         val result = handler.invoke(ctx)
 
         assertTrue(result is CommandResult.Ok)
         val value = (result as CommandResult.Ok).value!!.jsonObject
-        assertTrue(value.containsKey("files"))
+        assertTrue(value.containsKey("entries"))
     }
 
     @Test
-    fun `F6-photo_search accepts format filter`() = runBlocking {
+    fun `F6-photo_search accepts date filter`() = runBlocking {
         val handler = plugin.handlers()["photo.search"]!!
-        val args = buildJsonObject { put("format", JsonPrimitive("jpeg")) }
+        val args = buildJsonObject { put("date", JsonPrimitive("today")) }
         val ctx = execCtx("photo.search", args)
 
         val result = handler.invoke(ctx)
@@ -95,7 +95,7 @@ class FilesPluginTest {
     fun `F7-photo_compress returns compressed result`() = runBlocking {
         val handler = plugin.handlers()["photo.compress"]!!
         val args = buildJsonObject {
-            put("uri", JsonPrimitive("content://test/photo.jpg"))
+            put("uris", buildJsonArray { add(JsonPrimitive("content://test/photo.jpg")) })
             put("quality", JsonPrimitive(80))
         }
         val ctx = execCtx("photo.compress", args)
@@ -104,7 +104,7 @@ class FilesPluginTest {
 
         assertTrue(result is CommandResult.Ok)
         val value = (result as CommandResult.Ok).value!!.jsonObject
-        assertEquals("compressed", value["status"]!!.jsonPrimitive.content)
+        assertEquals(1, value["count"]!!.jsonPrimitive.int)
     }
 
     // ═══════════════════════════════════════════════════════════════

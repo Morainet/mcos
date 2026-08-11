@@ -2,6 +2,7 @@ package com.mcos.runtime.parse
 
 import com.mcos.runtime.ir.*
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -126,6 +127,28 @@ object DslParser {
                 message = "Invalid IR JSON: ${e.message}",
                 reason = "invalid_ir_json"
             )
+        }
+    }
+
+    /**
+     * Deserialize [JsonElement] to ExecutionIr.
+     * The element must be a JSON object with a "type" field.
+     *
+     * @return ExecutionIr parsed from the element, or null if the type is unrecognized.
+     */
+    fun fromJsonElement(element: JsonElement): ExecutionIr? {
+        val obj = element.jsonObject
+        return when (obj["type"]?.jsonPrimitive?.content) {
+            "invoke" -> {
+                val invoke = json.decodeFromJsonElement(IrInvoke.serializer(), obj)
+                ExecutionIr.Invoke(invoke)
+            }
+            "sequence" -> {
+                val sequence = json.decodeFromJsonElement(IrSequence.serializer(), obj)
+                ExecutionIr.Sequence(sequence)
+            }
+            "workflow" -> ExecutionIr.Workflow(obj)
+            else -> null
         }
     }
 }

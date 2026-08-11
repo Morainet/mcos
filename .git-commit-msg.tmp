@@ -1,0 +1,7 @@
+fix: 修复 FilesPlugin/CameraPlugin/SystemPlugin 测试失败并实现 IrJson 解析
+
+- 修复 FilesPluginTest: 测试参数名与插件实现对齐 (uri→path, files→entries, uri→uris, status→count)
+- 修复 CameraPluginTest: assertFailsWith 返回值类型问题 (Throwable→Unit)
+- 修复 SystemPluginTest: 同样修复 assertFailsWith 返回值类型问题
+- DslParser 新增 fromJsonElement: 支持从 JsonElement 直接反序列化 IR
+- McosRuntime.parsePayload: 实现 Payload.IrJson 处理, WorkflowRef 标记为 P2
