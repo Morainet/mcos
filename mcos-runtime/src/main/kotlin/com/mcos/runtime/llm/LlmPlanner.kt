@@ -7,6 +7,9 @@ import com.mcos.runtime.memory.MemoryStore
 import com.mcos.runtime.parse.DslParser
 import com.mcos.runtime.registry.CommandRegistry
 import com.mcos.sdk.CommandDescriptor
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -139,9 +142,11 @@ class LlmPlanner(
 
         for (path in paths.sorted()) {
             val value = store.get(path) ?: continue
-            val displayValue = when {
-                value.jsonObject.isNotEmpty() -> value.toString()
-                else -> value.jsonPrimitive.content
+            val displayValue = when (value) {
+                is JsonObject -> if (value.isNotEmpty()) value.toString() else "{}"
+                is JsonArray -> value.toString()
+                is JsonPrimitive -> value.content
+                else -> value.toString()
             }
             sb.appendLine("- $path: $displayValue")
         }
