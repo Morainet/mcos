@@ -307,6 +307,7 @@ class EchoCommandHandler(
 ) : CommandHandler {
     override suspend fun invoke(ctx: ExecutionContext): CommandResult {
         return CommandResult.Ok(
+            value = JsonObject(emptyMap()),
             artifacts = listOf(
                 Artifact("text", "echo:$commandId", "text/plain")
             )
