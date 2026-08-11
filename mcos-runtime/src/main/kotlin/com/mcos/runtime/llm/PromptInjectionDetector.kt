@@ -1,7 +1,8 @@
 package com.mcos.runtime.llm
 
 import com.mcos.runtime.executor.Command
-import kotlinx.serialization.json.JsonElement
+import com.mcos.sdk.SideEffectClass
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonPrimitive
 
 /**
@@ -52,12 +53,17 @@ class PromptInjectionDetector {
      *        outputs. Each snippet carries a `source` tag (e.g. "camera.scan",
      *        "mail.read", "clipboard"). See [08-security.md 11.1].
      * @param commands The parsed command plan emitted by the LLM.
+     * @param sideEffectClassResolver Optional function to look up a command's
+     *        [SideEffectClass] by ID. If provided, "high-risk" is determined
+     *        by the descriptor's `sideEffectClass` (per spec 08 §11.3) instead
+     *        of the heuristic substring check.
      * @return [InjectionDetection.Safe] or [InjectionDetection.Suspected].
      */
     fun detect(
         utterance: String,
         untrustedSnippets: List<UntrustedSnippet> = emptyList(),
         commands: List<Command> = emptyList(),
+        sideEffectClassResolver: ((String) -> SideEffectClass?)? = null
     ): InjectionDetection {
         // 1. Check untrusted snippets for instruction-override patterns
         for (snippet in untrustedSnippets) {
@@ -88,7 +94,7 @@ class PromptInjectionDetector {
         //    then emitted a destructive/network command, flag it.
         if (untrustedSnippets.isNotEmpty()) {
             for (cmd in commands) {
-                if (isHighRiskCommand(cmd.id)) {
+                if (isHighRiskCommand(cmd.id, sideEffectClassResolver)) {
                     return InjectionDetection.Suspected(
                         reason = "high_risk_after_untrusted",
                         source = untrustedSnippets.first().source,
@@ -178,8 +184,10 @@ class PromptInjectionDetector {
         if (!isNetworkCommand(cmd.id)) return null
 
         val args = cmd.args
-        val url: String = args["url"]?.let { it.jsonPrimitive.content }
-            ?: args["uri"]?.let { it.jsonPrimitive.content }
+        // Safe extraction: use safe-cast to avoid IllegalArgumentException
+        // when the arg is a JSON object/array/null instead of a primitive.
+        val url: String = args["url"]?.let { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }
+            ?: args["uri"]?.let { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }
             ?: return null
 
         val lower = url.lowercase()
@@ -204,24 +212,43 @@ class PromptInjectionDetector {
      * Commands considered high-risk: destructive or network.
      * Per [08-security.md 11.3]: "high-risk" = sideEffectClass is
      * destructive or network.
+     *
+     * If [sideEffectClassResolver] is provided, uses the descriptor's actual
+     * `sideEffectClass` (authoritative). Otherwise falls back to a heuristic
+     * substring check on the command ID.
      */
-    private fun isHighRiskCommand(commandId: String): Boolean {
-        return commandId.startsWith("sys.openUrl") ||
-               commandId.startsWith("sys.intent.start") ||
-               commandId.startsWith("sys.share") ||
-               commandId.contains("delete") ||
-               commandId.contains("remove") ||
-               commandId.contains("send") ||
-               commandId.contains("upload") ||
-               commandId.contains("network")
+    private fun isHighRiskCommand(
+        commandId: String,
+        sideEffectClassResolver: ((String) -> SideEffectClass?)? = null
+    ): Boolean {
+        if (sideEffectClassResolver != null) {
+            val sec = sideEffectClassResolver(commandId)
+            if (sec != null) {
+                return sec == SideEffectClass.destructive ||
+                    sec == SideEffectClass.network ||
+                    sec == SideEffectClass.control
+            }
+        }
+        // Heuristic fallback (case-insensitive — canonicalizer lowercases IDs)
+        val lower = commandId.lowercase()
+        return lower.startsWith("sys.openurl") ||
+               lower.startsWith("sys.intent.start") ||
+               lower.startsWith("sys.share") ||
+               lower.contains("delete") ||
+               lower.contains("remove") ||
+               lower.contains("send") ||
+               lower.contains("upload") ||
+               lower.contains("network") ||
+               lower.contains("write")
     }
 
     private fun isNetworkCommand(commandId: String): Boolean {
-        return commandId.startsWith("sys.openUrl") ||
-               commandId.startsWith("sys.intent.start") ||
-               commandId.contains("send") ||
-               commandId.contains("upload") ||
-               commandId.contains("network")
+        val lower = commandId.lowercase()
+        return lower.startsWith("sys.openurl") ||
+               lower.startsWith("sys.intent.start") ||
+               lower.contains("send") ||
+               lower.contains("upload") ||
+               lower.contains("network")
     }
 
     companion object {
