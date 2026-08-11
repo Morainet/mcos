@@ -328,6 +328,7 @@ class SchemaValidatorTest {
             put("required", buildJsonArray {
                 add(JsonPrimitive("name"))
                 add(JsonPrimitive("age"))
+                add(JsonPrimitive("email"))
             })
             put("properties", buildJsonObject {
                 put("name", buildJsonObject {
