@@ -85,62 +85,79 @@ class NetworkEgressPolicy {
 
     /**
      * Extract the host portion from a URL string.
-     * Handles common formats: `https://example.com/path`, `http://foo:8080/bar`.
+     * Handles common formats: `https://example.com/path`, `http://foo:8080/bar`,
+     * `https://user:pass@host/path` (userinfo stripped), `https://[::1]:8080/`
+     * (IPv6 brackets stripped).
      */
     internal fun extractHost(url: String): String? {
         // Find scheme separator
         val schemeEnd = url.indexOf("://")
         val hostStart = if (schemeEnd >= 0) schemeEnd + 3 else 0
 
-        // Find host end (first of: '/', '?', '#', ':' for port)
-        val remaining = url.substring(hostStart)
-        val hostEnd = remaining.indexOfAny(charArrayOf('/', '?', '#'))
-        val portColon = remaining.indexOf(':')
+        var remaining = url.substring(hostStart)
 
-        val hostEndFinal = when {
-            hostEnd >= 0 && portColon >= 0 -> minOf(hostEnd, portColon)
-            hostEnd >= 0 -> hostEnd
-            portColon >= 0 -> portColon
-            else -> remaining.length
+        // Strip userinfo: everything before the LAST '@' before the first '/',
+        // '?', or '#' (which delimit the end of the authority component).
+        val authEnd = remaining.indexOfAny(charArrayOf('/', '?', '#')).let { if (it < 0) remaining.length else it }
+        val authority = remaining.substring(0, authEnd)
+        remaining = authority + remaining.substring(authEnd)
+
+        // If there is an '@' in the authority, drop the userinfo before it.
+        val atIdx = authority.indexOf('@')
+        if (atIdx >= 0) {
+            remaining = remaining.substring(atIdx + 1)
         }
 
-        return remaining.substring(0, hostEndFinal).lowercase().ifEmpty { null }
+        // Now extract host from the (possibly userinfo-stripped) remaining string
+        val afterUserInfo = remaining
+        val pathEnd = afterUserInfo.indexOfAny(charArrayOf('/', '?', '#'))
+        val hostPort = if (pathEnd >= 0) afterUserInfo.substring(0, pathEnd) else afterUserInfo
+
+        // Handle IPv6 brackets: [::1]:8080 or [::1]
+        var host = if (hostPort.startsWith("[")) {
+            val closeBracket = hostPort.indexOf(']')
+            if (closeBracket > 0) hostPort.substring(1, closeBracket) else return null
+        } else {
+            // Strip port (the last ':' if present — but only if it's after the host)
+            val colonIdx = hostPort.indexOf(':')
+            if (colonIdx >= 0) hostPort.substring(0, colonIdx) else hostPort
+        }
+
+        host = host.lowercase()
+        // Validate: a host must not contain whitespace, and must not be empty.
+        // This catches strings like "not a url" that have no scheme separator.
+        if (host.isEmpty() || host.any { it.isWhitespace() }) return null
+        return host
     }
 
     /**
-     * Simple glob match for domain patterns.
+     * Glob match for domain patterns.
      *
-     * Supports `*` as a wildcard matching one or more domain labels.
-     * Examples:
-     * - `*.example.com` matches `api.example.com` and `cdn.example.com`
-     * - `api.example.com` matches only `api.example.com`
-     * - `*` matches any host
+     * Implements the normative algorithm from [08-security.md 12.1]:
+     * - `*` matches any host (catch-all).
+     * - `*.example.com` matches any subdomain of `example.com` (one or more
+     *   labels prefixing `example.com`).
+     * - `example.com` matches exactly `example.com`.
      *
-     * P1 scope: basic glob only. P2 may add full glob syntax (?, [...], **).
+     * Wildcard-in-the-middle (e.g. `api.*.com`) is not defined by the spec
+     * and returns false to avoid over-matching.
      */
     internal fun globMatch(host: String, pattern: String): Boolean {
-        if (pattern == "*") return true
+        val h = host.lowercase()
+        val p = pattern.lowercase()
 
-        val patternParts = pattern.lowercase().split('.')
-        val hostParts = host.lowercase().split('.')
+        // Catch-all
+        if (p == "*") return true
 
-        // Wildcard must consume at least one label
-        if (patternParts.size > hostParts.size) return false
-
-        var pi = patternParts.size - 1
-        var hi = hostParts.size - 1
-
-        while (pi >= 0 && hi >= 0) {
-            if (patternParts[pi] == "*") {
-                // Wildcard matches remaining host labels (at least one)
-                return hi >= pi - 1 // ensure at least one label consumed
-            }
-            if (patternParts[pi] != hostParts[hi]) return false
-            pi--
-            hi--
+        // Prefix wildcard: *.suffix — matches one or more labels before suffix
+        if (p.startsWith("*.")) {
+            val suffix = p.substring(2) // drop "*."
+            // Host must end with ".suffix" (at least one label prefixing it)
+            return h.endsWith(".$suffix")
         }
 
-        return pi < 0 && hi < 0
+        // Exact match
+        return h == p
     }
 }
 
