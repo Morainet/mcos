@@ -39,7 +39,7 @@ class AuditLogTest {
             outcome = "ok"
         )
         auditLog.append(record)
-        delay(10) // allow writer to process
+        auditLog.flush() // ensure writer has processed all records
 
         assertEquals(1, auditLog.count())
         val retrieved = auditLog.getRun("run_001")
@@ -61,7 +61,7 @@ class AuditLogTest {
                 )
             )
         }
-        delay(10)
+        auditLog.flush()
 
         val runs = auditLog.getRuns()
         assertEquals(5, runs.size)
@@ -81,12 +81,12 @@ class AuditLogTest {
                 )
             )
         }
-        delay(10)
+        auditLog.flush()
 
         val recent = auditLog.getRecent(3)
         assertEquals(3, recent.size)
         assertEquals("cmd.10", recent[0].commandId)
-        assertEquals("cmd.8", recent[1].commandId)
+        assertEquals("cmd.9", recent[1].commandId)
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -113,7 +113,7 @@ class AuditLogTest {
             outcome = "failed"
         )
         auditLog.append(record)
-        delay(10)
+        auditLog.flush()
 
         val run = auditLog.getRun("run_err")
         assertNotNull(run)
@@ -143,7 +143,7 @@ class AuditLogTest {
             outcome = "ok"
         )
         auditLog.append(record)
-        delay(10)
+        auditLog.flush()
 
         val run = auditLog.getRun("run_art")
         assertNotNull(run)
@@ -171,7 +171,7 @@ class AuditLogTest {
                 )
             )
         }
-        delay(10)
+        auditLog.flush()
 
         assertEquals(3, auditLog.count())
         val runs = auditLog.getRuns()
@@ -204,7 +204,7 @@ class AuditLogTest {
                 outcome = "ok"
             )
         )
-        delay(10)
+        auditLog.flush()
 
         assertEquals(1, auditLog.count())
         assertNotNull(auditLog.getRun("new_run"))
@@ -220,7 +220,7 @@ class AuditLogTest {
         auditLog.append(
             RunRecord(
                 runId = "exp_1",
-                timestamp = 1000,
+                timestamp = System.currentTimeMillis(),
                 commandId = "cmd.a",
                 totalDurationMs = 50,
                 outcome = "ok"
@@ -229,13 +229,13 @@ class AuditLogTest {
         auditLog.append(
             RunRecord(
                 runId = "exp_2",
-                timestamp = 2000,
+                timestamp = System.currentTimeMillis(),
                 commandId = "cmd.b",
                 totalDurationMs = 80,
                 outcome = "failed"
             )
         )
-        delay(10)
+        auditLog.flush()
 
         val exported = auditLog.export()
         val lines = exported.trim().split("\n")
@@ -267,7 +267,7 @@ class AuditLogTest {
                 )
             )
         }
-        delay(10)
+        auditLog.flush()
 
         val runs = auditLog.getRuns()
         assertEquals(outcomes.size, runs.size)
