@@ -90,6 +90,10 @@ object DslParser {
 
     /**
      * Deserialize JSON string to ExecutionIr.
+     *
+     * This is the contract-style entry: input is assumed to be valid IR JSON,
+     * so malformed input throws. Callers that prefer the error-channel style
+     * of [parse] should use [tryFromJson].
      */
     fun fromJson(jsonString: String): ExecutionIr {
         val element = json.parseToJsonElement(jsonString).jsonObject
@@ -103,7 +107,25 @@ object DslParser {
                 ExecutionIr.Sequence(sequence)
             }
             "workflow" -> ExecutionIr.Workflow(element)
-            else -> throw IllegalArgumentException("Unknown IR type: ${element["type"]}")
+            else -> throw IllegalArgumentException(
+                "Unknown IR type: ${element["type"]} — expected one of: invoke, sequence, workflow"
+            )
+        }
+    }
+
+    /**
+     * Deserialize JSON string to ExecutionIr via the [ParseResult] error
+     * channel, mirroring [parse]'s style.
+     */
+    fun tryFromJson(jsonString: String): ParseResult {
+        return try {
+            ParseResult.Ok(fromJson(jsonString))
+        } catch (e: Exception) {
+            ParseResult.Err(
+                code = "PARSE_ERROR",
+                message = "Invalid IR JSON: ${e.message}",
+                reason = "invalid_ir_json"
+            )
         }
     }
 }

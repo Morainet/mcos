@@ -17,6 +17,7 @@ class Parser(private val tokens: List<Token>) {
         const val MAX_DEPTH = 32
         const val MAX_STATEMENTS = 64
         const val MAX_TOKEN_COUNT = 4096
+        private val HEADER_REGEX = Regex("""#\s*mcos-dsl:\s*(\d+\.\d+)\s*""")
     }
 
     private var current: Int = 0
@@ -29,10 +30,29 @@ class Parser(private val tokens: List<Token>) {
             return error("token_limit", "Input exceeds maximum token count of $MAX_TOKEN_COUNT")
         }
 
+        // Lexical error pre-check: ERROR tokens (unknown character,
+        // unterminated string) surface precise diagnostics instead of
+        // generic parse errors.
+        tokens.firstOrNull { it.type == TokenType.ERROR }?.let { bad ->
+            val message = when {
+                bad.lexeme.startsWith("unexpected_character:") ->
+                    "Unexpected character '${bad.lexeme.removePrefix("unexpected_character:")}'"
+                else -> "Lexical error: ${bad.lexeme}"
+            }
+            return ParseResult.Err(
+                code = "PARSE_ERROR",
+                message = message,
+                line = bad.line,
+                column = bad.column,
+                reason = "lexical_error",
+                token = bad.lexeme
+            )
+        }
+
         // Check for header
         if (current < tokens.size && at(TokenType.HEADER)) {
             val headerText = advance().lexeme
-            val match = Regex("""#\s*mcos-dsl:\s*(\d+\.\d+)\s*""").find(headerText)
+            val match = HEADER_REGEX.find(headerText)
             headerVersion = match?.groupValues?.get(1)
             if (headerVersion != null && headerVersion != "0.1") {
                 return error("unsupported_version", "Unsupported DSL version: $headerVersion (expected 0.1)")
@@ -142,6 +162,9 @@ class Parser(private val tokens: List<Token>) {
             advance()
 
             // Parse value
+            if (args.containsKey(argName)) {
+                throw ParseException(error("duplicate_arg", "Duplicate argument '$argName'"))
+            }
             val value = parseValue()
             args[argName] = value
             argCount++
@@ -305,6 +328,9 @@ class Parser(private val tokens: List<Token>) {
             throw ParseException(error("expected_colon", "Expected ':' after object field key '$key'"))
         }
         advance()
+        if (fields.containsKey(key)) {
+            throw ParseException(error("duplicate_field", "Duplicate object field '$key'"))
+        }
         val value = parseValue(depth + 1)
         fields[key] = value
     }

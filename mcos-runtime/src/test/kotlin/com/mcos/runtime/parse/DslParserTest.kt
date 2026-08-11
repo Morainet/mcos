@@ -202,6 +202,63 @@ class DslParserTest {
     }
 
     // ═══════════════════════════════════════════════════════════════
+    // Issue #5/#6 — lexical errors surface instead of being swallowed
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `unknown character produces lexical_error instead of being swallowed`() {
+        // '§' is not valid DSL — previously silently treated as a comment
+        val input = "a(b=1) § c(d=2)"
+        val result = DslParser.parse(input)
+        assertIs<ParseResult.Err>(result)
+        assertEquals("PARSE_ERROR", result.code)
+        assertEquals("lexical_error", result.reason)
+        assertTrue(result.message!!.contains("Unexpected character"))
+    }
+
+    @Test
+    fun `unterminated string produces lexical_error`() {
+        val input = """a(name="Tom)"""
+        val result = DslParser.parse(input)
+        assertIs<ParseResult.Err>(result)
+        assertEquals("PARSE_ERROR", result.code)
+        assertEquals("lexical_error", result.reason)
+        assertTrue(result.message!!.contains("unterminated_string"))
+    }
+
+    @Test
+    fun `unterminated string with dangling backslash produces lexical_error`() {
+        val input = """a(path="C:\temp)"""
+        val result = DslParser.parse(input)
+        assertIs<ParseResult.Err>(result)
+        assertEquals("lexical_error", result.reason)
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Issue #10 — duplicate keys are rejected
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `duplicate argument name is rejected`() {
+        val input = """a(name="Tom", name="Jerry")"""
+        val result = DslParser.parse(input)
+        assertIs<ParseResult.Err>(result)
+        assertEquals("PARSE_ERROR", result.code)
+        assertEquals("duplicate_arg", result.reason)
+        assertTrue(result.message!!.contains("Duplicate argument 'name'"))
+    }
+
+    @Test
+    fun `duplicate object field is rejected`() {
+        val input = """a(meta={"x": 1, "x": 2})"""
+        val result = DslParser.parse(input)
+        assertIs<ParseResult.Err>(result)
+        assertEquals("PARSE_ERROR", result.code)
+        assertEquals("duplicate_field", result.reason)
+        assertTrue(result.message!!.contains("Duplicate object field 'x'"))
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     // JSON round-trip tests
     // ═══════════════════════════════════════════════════════════════
 

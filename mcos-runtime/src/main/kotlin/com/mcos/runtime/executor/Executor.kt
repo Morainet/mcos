@@ -1,6 +1,7 @@
 package com.mcos.runtime.executor
 
 import com.mcos.runtime.audit.AuditLog
+import com.mcos.runtime.audit.RunOutcome
 import com.mcos.runtime.audit.RunRecord
 import com.mcos.runtime.audit.StepRecord
 import com.mcos.runtime.error.McosErrorCode
@@ -9,6 +10,7 @@ import com.mcos.runtime.permission.PermissionKernel
 import com.mcos.runtime.registry.CommandRegistry
 import com.mcos.runtime.registry.RegistryEntry
 import com.mcos.runtime.registry.ResolveResult
+import com.mcos.runtime.security.AuthStampSigner
 import com.mcos.runtime.security.EgressDecision
 import com.mcos.runtime.security.NetworkEgressPolicy
 import com.mcos.runtime.security.RateLimitResult
@@ -41,6 +43,9 @@ import kotlin.coroutines.cancellation.CancellationException
  *        If null, no rate limiting is applied.
  * @param egressPolicy Optional [NetworkEgressPolicy] for Stage 5.6 egress checks.
  *        If null, no egress validation is performed.
+ * @param authStampSigner Optional [AuthStampSigner] for Stage 6 AuthStamp
+ *        signature verification and signing. If null, supplied stamps are
+ *        trusted without signature checks (permissive mode).
  */
 class Executor(
     private val registry: CommandRegistry,
@@ -49,6 +54,7 @@ class Executor(
     private val auditLog: AuditLog? = null,
     private val rateLimiter: RateLimiter? = null,
     private val egressPolicy: NetworkEgressPolicy? = null,
+    private val authStampSigner: AuthStampSigner? = null,
 ) {
 
     private val schemaValidator = SchemaValidator()
@@ -147,17 +153,18 @@ class Executor(
         // Stage 5.6 — Network egress check (if EgressPolicy is configured)
         val policy = egressPolicy
         if (policy != null && entry.descriptor.sideEffectClass == SideEffectClass.network) {
-            val urlArg = args["url"]?.let {
-                (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content
-            }
-            if (urlArg != null) {
-                when (val egress = policy.decideEgress(urlArg, auth)) {
+            // Inspect every string value in the argument tree — URLs nested in
+            // objects/arrays are covered, not just the top-level "url" field.
+            val urls = collectUrls(args)
+            for (url in urls) {
+                when (val egress = policy.decideEgress(url, auth)) {
                     is EgressDecision.Deny -> {
                         return CommandResult.Err(
                             code = McosErrorCode.PERMISSION_DENIED.name,
                             message = "Network egress denied for '${entry.descriptor.id}': ${egress.reason}",
                             retryable = false,
                             details = buildJsonObject {
+                                put("url", JsonPrimitive(url))
                                 put("egressReason", JsonPrimitive(egress.reason))
                                 egress.missingDomain?.let { put("missingDomain", JsonPrimitive(it)) }
                             }
@@ -170,9 +177,22 @@ class Executor(
 
         // Stage 6 — Authorization
         // Security: even when a caller supplies an AuthStamp, we verify it
-        // (a) has not expired and (b) covers the descriptor's required
-        // permissions. Without this check, any caller could fabricate an
+        // (a) carries a valid signature (when a signer is configured),
+        // (b) has not expired and (c) covers the descriptor's required
+        // permissions. Without these checks, any caller could fabricate an
         // AuthStamp to bypass authorization (privilege escalation).
+        if (auth != null) {
+            // Signature check is independent of permissionKernel: a forged
+            // stamp must be rejected even when no kernel is wired.
+            val signer = authStampSigner
+            if (signer != null && !signer.verify(auth)) {
+                return CommandResult.Err(
+                    code = McosErrorCode.PERMISSION_DENIED.name,
+                    message = "AuthStamp for '${entry.descriptor.id}' failed signature verification",
+                    retryable = false
+                )
+            }
+        }
         val effectiveAuth = if (permissionKernel != null) {
             if (auth != null) {
                 // Validate supplied AuthStamp before trusting it
@@ -229,33 +249,36 @@ class Executor(
             runId = runId,
             commandId = entry.descriptor.id,
             args = args,
-            auth = effectiveAuth?.copy(runId = runId),
+            auth = effectiveAuth?.copy(runId = runId)?.let { stamp ->
+                // Re-sign after runId is bound, if a signer is configured
+                if (authStampSigner != null) authStampSigner.sign(stamp) else stamp
+            },
             deadline = System.currentTimeMillis() + timeoutMs,
             progress = progress,
             services = hostServices
         )
 
         var result: CommandResult
-        var outcome: String
+        var outcome: RunOutcome
         try {
             result = withTimeout(timeoutMs) {
                 entry.handler.invoke(ctx)
             }
-            outcome = "ok"
+            outcome = RunOutcome.OK
         } catch (e: TimeoutCancellationException) {
             result = CommandResult.Err(
                 code = McosErrorCode.TIMEOUT.name,
                 message = "Command '${entry.descriptor.id}' timed out after ${timeoutMs}ms",
                 retryable = true
             )
-            outcome = "timeout"
+            outcome = RunOutcome.TIMEOUT
         } catch (e: CancellationException) {
             result = CommandResult.Err(
                 code = McosErrorCode.CANCELLED.name,
                 message = "Command '${entry.descriptor.id}' was cancelled",
                 retryable = false
             )
-            outcome = "cancelled"
+            outcome = RunOutcome.CANCELLED
         } catch (e: McosException) {
             result = CommandResult.Err(
                 code = e.code,
@@ -263,14 +286,14 @@ class Executor(
                 retryable = e.retryable,
                 details = e.details
             )
-            outcome = "failed"
+            outcome = RunOutcome.FAILED
         } catch (e: Exception) {
             result = CommandResult.Err(
                 code = McosErrorCode.PLUGIN_ERROR.name,
                 message = "Plugin error in '${entry.descriptor.id}': ${sanitize(e)}",
                 retryable = false
             )
-            outcome = "failed"
+            outcome = RunOutcome.FAILED
         }
 
         // Stage 10 — Audit recording
@@ -320,6 +343,28 @@ class Executor(
      */
     private fun sanitize(e: Throwable): String {
         return e.message?.take(200) ?: e.javaClass.simpleName
+    }
+
+    /**
+     * Recursively collect string values from [element] that look like URLs
+     * (start with http:// or https://). Used by the Stage 5.6 egress check
+     * to cover URLs nested anywhere in the argument tree.
+     */
+    private fun collectUrls(element: JsonElement, out: MutableList<String> = mutableListOf()): List<String> {
+        when (element) {
+            is JsonObject -> element.values.forEach { collectUrls(it, out) }
+            is JsonArray -> element.forEach { collectUrls(it, out) }
+            is JsonPrimitive -> {
+                if (element.isString) {
+                    val s = element.content
+                    if (s.startsWith("http://") || s.startsWith("https://")) {
+                        out.add(s)
+                    }
+                }
+            }
+            else -> {}
+        }
+        return out
     }
 
     /**

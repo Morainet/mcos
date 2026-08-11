@@ -6,7 +6,19 @@ MCOS is an open design for a **Mobile Command Bus**: a typed Command Protocol, o
 
 ## Status
 
-**Phase 0 — design-only (Draft v0.1.0).** This repository currently contains **only design documentation and golden test fixtures**; no implementation code or build system exists yet. Implementation begins in Phase 1 — see [`docs/en/11-implementation-status.md`](./docs/en/11-implementation-status.md).
+**Phase 1 — core runtime implemented (Draft v0.1.0).**
+
+The repository now contains a working multi-module Gradle project:
+
+| Module | Content | Status |
+|--------|---------|--------|
+| `mcos-sdk` | Plugin contracts (`McosPlugin`, `CommandHandler`, `HostServices`, `ExecutionContext`, `AuthStamp`) | ✅ |
+| `mcos-runtime` | DSL parser, command registry, 7-stage executor, permission kernel, rate limiter, egress policy, audit log, LLM planner/chat, workflow engine, event bus, memory | ✅ |
+| `mcos-android` | Compose CLI / Chat shell | ⬜ planned |
+
+Plugins are independently buildable in `plugins/`: `mcos-plugin-hello`, `mcos-plugin-system`, `mcos-plugin-camera`, `mcos-plugin-files` (each with tests).
+
+See [`docs/en/11-implementation-status.md`](./docs/en/11-implementation-status.md) for the detailed status matrix.
 
 ## Docs
 
@@ -36,20 +48,20 @@ Golden DSL ↔ IR fixtures: [`docs/fixtures/`](./docs/fixtures/).
 
 ## Target Modules
 
-No modules are built yet. The intended topology (to be created in Phase 1) is:
+Implemented topology:
 
 ```text
-mcos-android      Compose CLI / Chat shell
-mcos-runtime      Parser · Registry · Executor · Audit
+mcos-runtime      Parser · Registry · Executor (7-stage) · Audit · Security · LLM
 mcos-sdk          Plugin contracts
 plugins/
-  mcos-plugin-hello     Reference sample (hello.world)
-  mcos-plugin-system    sys.* (notify, share)
-  mcos-plugin-camera    camera.* (capture, scan)
-  mcos-plugin-files     file.* / photo.*            (planned)
+  mcos-plugin-hello     Reference sample (hello.world)        ✅
+  mcos-plugin-system    sys.* (notify, share)                 ✅
+  mcos-plugin-camera    camera.* (capture, scan)              ✅
+  mcos-plugin-files     file.* / photo.*                      ✅
   mcos-plugin-iot       home.* / iot.*              (planned)
   mcos-plugin-mcp       mcp.* adapter               (planned)
-mcos-server             Sync · marketplace          (planned)
+mcos-android      Compose CLI / Chat shell           (planned)
+mcos-server       Sync · marketplace                (planned)
 ```
 
 For the full dependency graph and per-module target, see [`docs/en/REPOSITORIES.md`](./docs/en/REPOSITORIES.md).

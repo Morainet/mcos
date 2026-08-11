@@ -3,6 +3,7 @@ package com.mcos.runtime.executor
 import com.mcos.runtime.error.McosErrorCode
 import com.mcos.runtime.permission.PermissionKernel
 import com.mcos.runtime.registry.CommandRegistry
+import com.mcos.runtime.security.AuthStampSigner
 import com.mcos.runtime.security.NetworkEgressPolicy
 import com.mcos.runtime.security.RateLimiter
 import com.mcos.sdk.*
@@ -617,6 +618,63 @@ class ExecutorTest {
         assertEquals(McosErrorCode.PERMISSION_DENIED.name, result.code)
         assertTrue(result.message.contains("expired"), "Error message should mention expiry: ${result.message}")
         assertFalse(result.retryable)
+    }
+
+    @Test
+    fun `E24-forged AuthStamp rejected when signer configured`() = runBlocking {
+        // Issue #3: a caller-supplied stamp without a valid signature must be
+        // rejected when an AuthStampSigner is wired into the Executor.
+        val signer = AuthStampSigner()
+        val executorWithSigner = Executor(registry, services, authStampSigner = signer)
+
+        val plugin = createPlugin("test.forge", "1.0.0", mapOf(
+            "cmd.free" to EchoHandler("ok")
+        ))
+        registry.register(plugin)
+
+        val now = System.currentTimeMillis()
+        val forged = AuthStamp(
+            runId = "run_forged",
+            commandId = "cmd.free",
+            pluginId = "test.forge",
+            grantsUsed = emptySet(),
+            issuedAt = now - 1_000,
+            expiresAt = now + 60_000 // not expired — would pass without signing
+        )
+
+        val result = executorWithSigner.execute("cmd.free", JsonObject(emptyMap()), forged)
+        assertIs<CommandResult.Err>(result)
+        assertEquals(McosErrorCode.PERMISSION_DENIED.name, result.code)
+        assertTrue(result.message.contains("signature"), "Should mention signature verification: ${result.message}")
+    }
+
+    @Test
+    fun `E25-validly signed AuthStamp accepted`() {
+        // A stamp signed by the configured signer must be accepted.
+        runBlocking {
+            val signer = AuthStampSigner()
+            val executorWithSigner = Executor(registry, services, authStampSigner = signer)
+
+            val plugin = createPlugin("test.signed", "1.0.0", mapOf(
+                "cmd.free" to EchoHandler("ok")
+            ))
+            registry.register(plugin)
+
+            val now = System.currentTimeMillis()
+            val valid = signer.sign(
+                AuthStamp(
+                    runId = "run_signed",
+                    commandId = "cmd.free",
+                    pluginId = "test.signed",
+                    grantsUsed = emptySet(),
+                    issuedAt = now - 1_000,
+                    expiresAt = now + 60_000
+                )
+            )
+
+            val result = executorWithSigner.execute("cmd.free", JsonObject(emptyMap()), valid)
+            assertIs<CommandResult.Ok>(result)
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════

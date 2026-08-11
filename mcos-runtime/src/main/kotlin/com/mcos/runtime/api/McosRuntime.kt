@@ -9,6 +9,7 @@ import com.mcos.runtime.parse.DslParser
 import com.mcos.runtime.permission.PermissionKernel
 import com.mcos.runtime.registry.CommandRegistry
 import com.mcos.runtime.registry.ResolveResult as RegistryResolveResult
+import com.mcos.runtime.security.AuthStampSigner
 import com.mcos.runtime.security.NetworkEgressPolicy
 import com.mcos.runtime.security.RateLimiter
 import com.mcos.sdk.CommandResult
@@ -298,12 +299,17 @@ class McosRuntime internal constructor(
         private var memory: MemoryStore = MemoryStore()
         private var eventBus: EventBus = SimpleEventBus()
 
+        // Signed stamps are enabled by default so the production path is
+        // secure out of the box; pass null to disable.
+        private var authStampSigner: AuthStampSigner? = AuthStampSigner()
+
         fun withParser(parser: DslParser) = apply { this.parser = parser }
         fun withRegistry(registry: CommandRegistry) = apply { this.registry = registry }
         fun withPermissionKernel(kernel: PermissionKernel) = apply { this.permissionKernel = kernel }
         fun withExecutor(executor: Executor) = apply { this.executor = executor }
         fun withMemory(memory: MemoryStore) = apply { this.memory = memory }
         fun withEventBus(eventBus: EventBus) = apply { this.eventBus = eventBus }
+        fun withAuthStampSigner(signer: AuthStampSigner?) = apply { this.authStampSigner = signer }
 
         fun build(): McosRuntime {
             val reg = registry ?: CommandRegistry()
@@ -313,6 +319,7 @@ class McosRuntime internal constructor(
                 permissionKernel = perm,
                 rateLimiter = RateLimiter(),
                 egressPolicy = NetworkEgressPolicy(),
+                authStampSigner = authStampSigner,
             )
 
             return McosRuntime(

@@ -78,9 +78,11 @@ class Lexer(private val input: String) {
             chars[pos] == ':' -> { advance(); Token(TokenType.COLON, ":", startLine, startColumn) }
             chars[pos] == '=' -> { advance(); Token(TokenType.EQUALS, "=", startLine, startColumn) }
             else -> {
-                // Unknown character
+                // Unknown character — emit an ERROR token instead of silently
+                // swallowing it as COMMENT (previously made typos undiagnosable)
+                val bad = chars[pos]
                 advance()
-                Token(TokenType.COMMENT, chars[pos - 1].toString(), startLine, startColumn)
+                Token(TokenType.ERROR, "unexpected_character:$bad", startLine, startColumn)
             }
         }
     }
@@ -104,8 +106,8 @@ class Lexer(private val input: String) {
             if (chars[pos] == '\\') {
                 advance() // skip backslash
                 if (pos >= chars.size) {
-                    // Dangling backslash at end of input
-                    return Token(TokenType.STRING, sb.toString(), startLine, startColumn)
+                    // Dangling backslash at end of input — unterminated string
+                    return Token(TokenType.ERROR, "unterminated_string", startLine, startColumn)
                 }
                 when (val escaped = chars[pos]) {
                     'n' -> sb.append('\n')
@@ -124,16 +126,18 @@ class Lexer(private val input: String) {
                 }
                 advance()
             } else if (chars[pos] == '\n') {
-                // Unescaped newline in string — stop here, error will be caught later
-                break
+                // Unescaped newline before closing quote — unterminated string
+                return Token(TokenType.ERROR, "unterminated_string", startLine, startColumn)
             } else {
                 sb.append(chars[pos])
                 advance()
             }
         }
-        if (pos < chars.size) {
-            advance() // skip closing quote
+        if (pos >= chars.size) {
+            // Hit EOF before closing quote — unterminated string
+            return Token(TokenType.ERROR, "unterminated_string", startLine, startColumn)
         }
+        advance() // skip closing quote
         return Token(TokenType.STRING, sb.toString(), startLine, startColumn)
     }
 
