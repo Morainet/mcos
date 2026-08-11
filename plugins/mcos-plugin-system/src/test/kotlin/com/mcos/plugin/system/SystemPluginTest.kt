@@ -124,6 +124,7 @@ class SystemPluginTest {
         assertFailsWith<McosException> {
             handler.invoke(ctx)
         }
+        Unit
     }
 
     @Test
@@ -135,6 +136,7 @@ class SystemPluginTest {
         assertFailsWith<McosException> {
             handler.invoke(ctx)
         }
+        Unit
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -173,6 +175,7 @@ class SystemPluginTest {
         assertFailsWith<McosException> {
             handler.invoke(ctx)
         }
+        Unit
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -231,6 +234,7 @@ class SystemPluginTest {
         assertFailsWith<McosException> {
             handler.invoke(ctx)
         }
+        Unit
     }
 
     @Test
@@ -241,6 +245,7 @@ class SystemPluginTest {
         assertFailsWith<McosException> {
             handler.invoke(ctx)
         }
+        Unit
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -298,6 +303,7 @@ class SystemPluginTest {
         assertFailsWith<McosException> {
             handler.invoke(ctx)
         }
+        Unit
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -483,6 +489,7 @@ class SystemPluginTest {
         assertFailsWith<McosException> {
             handler.invoke(ctx)
         }
+        Unit
     }
 
     @Test

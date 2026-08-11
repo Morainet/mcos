@@ -105,6 +105,7 @@ class CameraPluginTest {
         assertFailsWith<McosException> {
             handler.invoke(ctx)
         }
+        Unit
     }
 
     @Test
@@ -116,6 +117,7 @@ class CameraPluginTest {
         assertFailsWith<McosException> {
             handler.invoke(ctx)
         }
+        Unit
     }
 
     @Test
@@ -171,6 +173,7 @@ class CameraPluginTest {
         assertFailsWith<McosException> {
             handler.invoke(ctx)
         }
+        Unit
     }
 
     // ═══════════════════════════════════════════════════════════════

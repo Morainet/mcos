@@ -268,11 +268,11 @@ class McosRuntime internal constructor(
                 }
             }
             is Payload.IrJson -> {
-                // TODO: parse IR JSON into commands
-                emptyList()
+                val ir = DslParser.fromJsonElement(payload.json)
+                if (ir != null) extractCommands(ir) else emptyList()
             }
             is Payload.WorkflowRef -> {
-                // TODO: load workflow from workflow engine
+                // P2: load workflow from workflow engine
                 emptyList()
             }
         }
