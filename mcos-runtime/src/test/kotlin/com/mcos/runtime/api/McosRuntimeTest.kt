@@ -3,6 +3,7 @@ package com.mcos.runtime.api
 import com.mcos.runtime.memory.MemoryStore
 import com.mcos.runtime.permission.PermissionKernel
 import com.mcos.runtime.registry.CommandRegistry
+import com.mcos.runtime.workflow.WorkflowStep
 import com.mcos.sdk.*
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
@@ -239,6 +240,182 @@ class McosRuntimeTest {
         val cancelled = events.filterIsInstance<RuntimeEvent.RunCancelled>()
         // Even if RunCancelled didn't fire through events, the cancel call should not throw
         assertTrue(true) // no exception thrown
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // W1-W6: Workflow execution (Payload.WorkflowRef / IR JSON)
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `W1-workflow ref executes registered workflow`() = runBlocking {
+        registerCommand("test.a", SideEffectClass.read)
+        registerCommand("test.b", SideEffectClass.read)
+        runtime.workflowStore().register(
+            "wf-demo",
+            WorkflowStep.Sequential(
+                listOf(
+                    WorkflowStep.Command("test.a", JsonObject(emptyMap())),
+                    WorkflowStep.Command("test.b", JsonObject(emptyMap())),
+                )
+            )
+        )
+
+        val handle = runtime.execute(
+            ExecuteRequest(
+                source = Source.CHAT,
+                payload = Payload.WorkflowRef("wf-demo")
+            )
+        )
+        assertEquals(ExecutionStatus.RUNNING, handle.status)
+
+        val events = mutableListOf<RuntimeEvent>()
+        val job = launch {
+            runtime.observe(handle.runId).collect { events.add(it) }
+        }
+        kotlinx.coroutines.delay(500)
+        job.cancel()
+
+        assertTrue(events.any { it is RuntimeEvent.RunStarted }, "should emit RunStarted")
+        assertTrue(events.filterIsInstance<RuntimeEvent.StepSucceeded>().size >= 2, "should run 2 steps")
+        assertTrue(events.any { it is RuntimeEvent.RunSucceeded }, "should emit RunSucceeded")
+    }
+
+    @Test
+    fun `W2-workflow ref missing returns failed handle`() = runBlocking {
+        val handle = runtime.execute(
+            ExecuteRequest(
+                source = Source.CHAT,
+                payload = Payload.WorkflowRef("does-not-exist")
+            )
+        )
+        assertEquals(ExecutionStatus.FAILED, handle.status)
+
+        val events = mutableListOf<RuntimeEvent>()
+        val job = launch {
+            runtime.observe(handle.runId).collect { events.add(it) }
+        }
+        kotlinx.coroutines.delay(300)
+        job.cancel()
+
+        assertTrue(events.any { it is RuntimeEvent.RunFailed }, "should emit RunFailed")
+    }
+
+    @Test
+    fun `W3-workflow ir json executes sequential steps`() = runBlocking {
+        registerCommand("test.a", SideEffectClass.read)
+        val workflowJson = buildJsonObject {
+            put("type", "workflow")
+            putJsonObject("body") {
+                put("type", "sequential")
+                putJsonArray("steps") {
+                    add(
+                        buildJsonObject {
+                            put("type", "command")
+                            put("commandId", "test.a")
+                        }
+                    )
+                    add(
+                        buildJsonObject {
+                            put("type", "command")
+                            put("commandId", "test.a")
+                        }
+                    )
+                }
+            }
+        }
+
+        val handle = runtime.execute(
+            ExecuteRequest(
+                source = Source.CHAT,
+                payload = Payload.IrJson(workflowJson)
+            )
+        )
+        assertEquals(ExecutionStatus.RUNNING, handle.status)
+
+        val events = mutableListOf<RuntimeEvent>()
+        val job = launch {
+            runtime.observe(handle.runId).collect { events.add(it) }
+        }
+        kotlinx.coroutines.delay(500)
+        job.cancel()
+
+        assertTrue(events.filterIsInstance<RuntimeEvent.StepSucceeded>().size >= 2, "should run 2 steps")
+        assertTrue(events.any { it is RuntimeEvent.RunSucceeded }, "should emit RunSucceeded")
+    }
+
+    @Test
+    fun `W4-preview workflow ref estimates command count`() = runBlocking {
+        registerCommand("test.a", SideEffectClass.read)
+        runtime.workflowStore().register(
+            "wf-count",
+            WorkflowStep.Sequential(
+                listOf(
+                    WorkflowStep.Command("test.a", JsonObject(emptyMap())),
+                    WorkflowStep.Command("test.a", JsonObject(emptyMap())),
+                    WorkflowStep.Retry(
+                        step = WorkflowStep.Command("test.a", JsonObject(emptyMap())),
+                        maxRetries = 2,
+                    )
+                )
+            )
+        )
+
+        val preview = runtime.preview(
+            ExecuteRequest(
+                source = Source.CHAT,
+                payload = Payload.WorkflowRef("wf-count")
+            )
+        )
+        // 2 + (1 * 3) = 5
+        assertEquals(5, preview.commandCount)
+        assertEquals("workflow", preview.commands[0].id)
+    }
+
+    @Test
+    fun `W5-workflow failing step emits RunFailed`() = runBlocking {
+        registerCommand("test.fail", SideEffectClass.read, handler = object : CommandHandler {
+            override suspend fun invoke(ctx: ExecutionContext): CommandResult {
+                return CommandResult.Err(code = "NETWORK_ERROR", message = "boom")
+            }
+        })
+        runtime.workflowStore().register(
+            "wf-fail",
+            WorkflowStep.Command("test.fail", JsonObject(emptyMap()))
+        )
+
+        val handle = runtime.execute(
+            ExecuteRequest(
+                source = Source.CHAT,
+                payload = Payload.WorkflowRef("wf-fail")
+            )
+        )
+        assertEquals(ExecutionStatus.RUNNING, handle.status)
+
+        val events = mutableListOf<RuntimeEvent>()
+        val job = launch {
+            runtime.observe(handle.runId).collect { events.add(it) }
+        }
+        kotlinx.coroutines.delay(500)
+        job.cancel()
+
+        assertTrue(events.any { it is RuntimeEvent.StepFailed }, "should emit StepFailed")
+        assertTrue(events.any { it is RuntimeEvent.RunFailed }, "should emit RunFailed")
+    }
+
+    @Test
+    fun `W6-invalid workflow ir json returns failed handle`() = runBlocking {
+        val badJson = buildJsonObject {
+            put("type", "teleport")
+            put("commandId", "test.a")
+        }
+
+        val handle = runtime.execute(
+            ExecuteRequest(
+                source = Source.CHAT,
+                payload = Payload.IrJson(badJson)
+            )
+        )
+        assertEquals(ExecutionStatus.FAILED, handle.status)
     }
 
     // ═══════════════════════════════════════════════════════════════

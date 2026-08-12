@@ -12,6 +12,11 @@ import com.mcos.runtime.registry.ResolveResult as RegistryResolveResult
 import com.mcos.runtime.security.AuthStampSigner
 import com.mcos.runtime.security.NetworkEgressPolicy
 import com.mcos.runtime.security.RateLimiter
+import com.mcos.runtime.workflow.WorkflowEngine
+import com.mcos.runtime.workflow.WorkflowJson
+import com.mcos.runtime.workflow.WorkflowOutcome
+import com.mcos.runtime.workflow.WorkflowStep
+import com.mcos.runtime.workflow.WorkflowStore
 import com.mcos.sdk.CommandResult
 import com.mcos.sdk.MemoryFacade
 import kotlinx.coroutines.*
@@ -99,6 +104,8 @@ class SimpleEventBus : EventBus {
  * @param executor The command executor.
  * @param memory The memory store.
  * @param eventBus The event bus for publishing runtime events.
+ * @param workflowStore The registry of named workflow definitions.
+ * @param workflowEngine The engine that executes workflow definitions.
  */
 class McosRuntime internal constructor(
     private val parser: DslParser,
@@ -107,10 +114,28 @@ class McosRuntime internal constructor(
     private val executor: Executor,
     private val memory: MemoryStore,
     private val eventBus: EventBus,
+    private val workflowStore: WorkflowStore,
+    private val workflowEngine: WorkflowEngine,
 ) {
     // ─── Active run tracking ─────────────────────────────────────────────
 
     private val activeRuns = ConcurrentHashMap<String, Job>()
+
+    /**
+     * Internal plan produced by payload parsing.
+     *
+     * Commands are executed linearly through the executor; workflows are
+     * delegated to [WorkflowEngine] which adds control flow on top.
+     */
+    private sealed interface Plan {
+        data class Commands(val commands: List<Command>) : Plan
+        data class Workflow(val step: WorkflowStep) : Plan
+
+        fun isEmpty(): Boolean = when (this) {
+            is Commands -> commands.isEmpty()
+            is Workflow -> false
+        }
+    }
 
     // ─── Public API (matching 03-runtime.md 4) ─────────────────────────
 
@@ -124,10 +149,14 @@ class McosRuntime internal constructor(
         val runId = UUID.randomUUID().toString()
         val timestamp = System.currentTimeMillis()
 
-        // Parse payload into commands
-        val commands = parsePayload(request.payload)
-        if (commands.isEmpty()) {
-            eventBus.publish(runId, RuntimeEvent.RunFailed(runId, "No executable commands parsed from payload"))
+        // Parse payload into an execution plan
+        val plan = parsePayload(request.payload)
+        if (plan.isEmpty()) {
+            val error = when (val p = request.payload) {
+                is Payload.WorkflowRef -> "Workflow not found: ${p.workflowId}"
+                else -> "No executable commands parsed from payload"
+            }
+            eventBus.publish(runId, RuntimeEvent.RunFailed(runId, error))
             return ExecuteHandle(runId, ExecutionStatus.FAILED)
         }
 
@@ -140,46 +169,10 @@ class McosRuntime internal constructor(
         val job = CoroutineScope(Dispatchers.Default).launch {
             val startTime = System.currentTimeMillis()
             try {
-                eventBus.publish(runId, RuntimeEvent.RunStarted(runId, commands.firstOrNull()?.id, timestamp))
-
-                for ((index, cmd) in commands.withIndex()) {
-                    eventBus.publish(runId, RuntimeEvent.StepStarted(runId, index, cmd.id))
-
-                    val stepStart = System.currentTimeMillis()
-                    val result = executor.execute(cmd.id, cmd.args)
-
-                    val stepDuration = System.currentTimeMillis() - stepStart
-                    when (result) {
-                        is CommandResult.Ok -> {
-                            eventBus.publish(runId, RuntimeEvent.StepSucceeded(runId, index, cmd.id, stepDuration))
-                            result.artifacts.forEach { artifact ->
-                                eventBus.publish(
-                                    runId,
-                                    RuntimeEvent.ArtifactEmitted(runId, artifact.type, artifact.uri, artifact.mimeType)
-                                )
-                            }
-                        }
-                        is CommandResult.Err -> {
-                            eventBus.publish(
-                                runId,
-                                RuntimeEvent.StepFailed(runId, index, cmd.id, result.message)
-                            )
-                            if (result.code == "CONFIRMATION_REQUIRED") {
-                                eventBus.publish(
-                                    runId,
-                                    RuntimeEvent.ConfirmationNeeded(runId, cmd.id, result.message)
-                                )
-                            }
-                            val totalDuration = System.currentTimeMillis() - startTime
-                            eventBus.publish(runId, RuntimeEvent.RunFailed(runId, result.message))
-                            activeRuns.remove(runId)
-                            return@launch
-                        }
-                    }
+                when (plan) {
+                    is Plan.Commands -> runCommands(runId, plan.commands, startTime, timestamp)
+                    is Plan.Workflow -> runWorkflow(runId, plan.step, startTime, timestamp)
                 }
-
-                val totalDuration = System.currentTimeMillis() - startTime
-                eventBus.publish(runId, RuntimeEvent.RunSucceeded(runId, totalDuration))
             } catch (e: CancellationException) {
                 eventBus.publish(runId, RuntimeEvent.RunCancelled(runId))
             } catch (e: Exception) {
@@ -198,30 +191,47 @@ class McosRuntime internal constructor(
      * commands and any warnings.
      */
     suspend fun preview(request: ExecuteRequest): PreviewResult {
-        val commands = parsePayload(request.payload)
-        val warnings = mutableListOf<String>()
+        return when (val plan = parsePayload(request.payload)) {
+            is Plan.Commands -> {
+                val warnings = mutableListOf<String>()
 
-        val previewCommands = commands.map { cmd ->
-            val resolved = registry.resolve(cmd.id)
-            val sideEffectClass = when (resolved) {
-                is RegistryResolveResult.Found -> resolved.entry.descriptor.sideEffectClass.name
-                else -> "unknown"
+                val previewCommands = plan.commands.map { cmd ->
+                    val resolved = registry.resolve(cmd.id)
+                    val sideEffectClass = when (resolved) {
+                        is RegistryResolveResult.Found -> resolved.entry.descriptor.sideEffectClass.name
+                        else -> "unknown"
+                    }
+                    if (resolved !is RegistryResolveResult.Found) {
+                        warnings.add("Unknown command: ${cmd.id}")
+                    }
+                    PreviewCommand(
+                        id = cmd.id,
+                        args = cmd.args.mapValues { it.value.jsonPrimitive.content },
+                        sideEffectClass = sideEffectClass,
+                    )
+                }
+
+                PreviewResult(
+                    commandCount = previewCommands.size,
+                    commands = previewCommands,
+                    warnings = warnings,
+                )
             }
-            if (resolved !is RegistryResolveResult.Found) {
-                warnings.add("Unknown command: ${cmd.id}")
+            is Plan.Workflow -> {
+                val count = countCommands(plan.step)
+                PreviewResult(
+                    commandCount = count,
+                    commands = listOf(
+                        PreviewCommand(
+                            id = "workflow",
+                            args = mapOf("estimatedCommands" to count.toString()),
+                            sideEffectClass = "workflow",
+                        )
+                    ),
+                    warnings = if (count == 0) listOf("Workflow contains no commands") else emptyList(),
+                )
             }
-            PreviewCommand(
-                id = cmd.id,
-                args = cmd.args.mapValues { it.value.jsonPrimitive.content },
-                sideEffectClass = sideEffectClass,
-            )
         }
-
-        return PreviewResult(
-            commandCount = previewCommands.size,
-            commands = previewCommands,
-            warnings = warnings,
-        )
     }
 
     /**
@@ -256,33 +266,153 @@ class McosRuntime internal constructor(
      */
     fun events(): EventBus = eventBus
 
+    /**
+     * Access the workflow store for registering/loading named workflows.
+     */
+    fun workflowStore(): WorkflowStore = workflowStore
+
     // ─── Internal helpers ────────────────────────────────────────────────
 
-    private fun parsePayload(payload: Payload): List<Command> {
+    private fun parsePayload(payload: Payload): Plan {
         return when (payload) {
             is Payload.DslText -> {
                 val result = parser.parse(payload.text)
                 when (result) {
-                    is ParseResult.Ok -> extractCommands(result.ir)
-                    is ParseResult.Err -> emptyList()
+                    is ParseResult.Ok -> planFromIr(result.ir)
+                    is ParseResult.Err -> Plan.Commands(emptyList())
                 }
             }
             is Payload.IrJson -> {
                 val ir = DslParser.fromJsonElement(payload.json)
-                if (ir != null) extractCommands(ir) else emptyList()
+                if (ir != null) planFromIr(ir) else Plan.Commands(emptyList())
             }
             is Payload.WorkflowRef -> {
-                // P2: load workflow from workflow engine
-                emptyList()
+                val step = workflowStore.get(payload.workflowId)
+                if (step != null) Plan.Workflow(step) else Plan.Commands(emptyList())
             }
         }
     }
 
-    private fun extractCommands(ir: ExecutionIr): List<Command> {
+    private fun planFromIr(ir: ExecutionIr): Plan {
         return when (ir) {
-            is ExecutionIr.Invoke -> listOf(Command(ir.invoke.id, ir.invoke.args))
-            is ExecutionIr.Sequence -> ir.sequence.steps.map { Command(it.id, it.args) }
-            is ExecutionIr.Workflow -> emptyList() // Workflow IR not yet supported
+            is ExecutionIr.Invoke -> Plan.Commands(listOf(Command(ir.invoke.id, ir.invoke.args)))
+            is ExecutionIr.Sequence -> Plan.Commands(ir.sequence.steps.map { Command(it.id, it.args) })
+            is ExecutionIr.Workflow -> {
+                val step = WorkflowJson.fromJson(ir.body)
+                if (step != null) Plan.Workflow(step) else Plan.Commands(emptyList())
+            }
+        }
+    }
+
+    /**
+     * Run a flat list of commands through the executor, publishing events.
+     */
+    private suspend fun runCommands(
+        runId: String,
+        commands: List<Command>,
+        startTime: Long,
+        timestamp: Long,
+    ) {
+        eventBus.publish(runId, RuntimeEvent.RunStarted(runId, commands.firstOrNull()?.id, timestamp))
+
+        for ((index, cmd) in commands.withIndex()) {
+            eventBus.publish(runId, RuntimeEvent.StepStarted(runId, index, cmd.id))
+
+            val stepStart = System.currentTimeMillis()
+            val result = executor.execute(cmd.id, cmd.args)
+
+            val stepDuration = System.currentTimeMillis() - stepStart
+            when (result) {
+                is CommandResult.Ok -> {
+                    eventBus.publish(runId, RuntimeEvent.StepSucceeded(runId, index, cmd.id, stepDuration))
+                    result.artifacts.forEach { artifact ->
+                        eventBus.publish(
+                            runId,
+                            RuntimeEvent.ArtifactEmitted(runId, artifact.type, artifact.uri, artifact.mimeType)
+                        )
+                    }
+                }
+                is CommandResult.Err -> {
+                    eventBus.publish(
+                        runId,
+                        RuntimeEvent.StepFailed(runId, index, cmd.id, result.message)
+                    )
+                    if (result.code == "CONFIRMATION_REQUIRED") {
+                        eventBus.publish(
+                            runId,
+                            RuntimeEvent.ConfirmationNeeded(runId, cmd.id, result.message)
+                        )
+                    }
+                    val totalDuration = System.currentTimeMillis() - startTime
+                    eventBus.publish(runId, RuntimeEvent.RunFailed(runId, result.message))
+                    return
+                }
+            }
+        }
+
+        val totalDuration = System.currentTimeMillis() - startTime
+        eventBus.publish(runId, RuntimeEvent.RunSucceeded(runId, totalDuration))
+    }
+
+    /**
+     * Run a workflow definition via [WorkflowEngine], mapping step results
+     * onto runtime events.
+     */
+    private suspend fun runWorkflow(
+        runId: String,
+        step: WorkflowStep,
+        startTime: Long,
+        timestamp: Long,
+    ) {
+        eventBus.publish(runId, RuntimeEvent.RunStarted(runId, null, timestamp))
+
+        val result = workflowEngine.execute(step)
+
+        result.steps.forEachIndexed { index, stepResult ->
+            val commandId = stepResult.commandId ?: "workflow.control"
+            if (stepResult.ok) {
+                eventBus.publish(
+                    runId,
+                    RuntimeEvent.StepSucceeded(runId, index, commandId, stepResult.durationMs)
+                )
+            } else {
+                eventBus.publish(
+                    runId,
+                    RuntimeEvent.StepFailed(
+                        runId,
+                        index,
+                        commandId,
+                        stepResult.message ?: stepResult.code ?: "Workflow step failed"
+                    )
+                )
+            }
+        }
+
+        when (result.outcome) {
+            WorkflowOutcome.COMPLETED ->
+                eventBus.publish(runId, RuntimeEvent.RunSucceeded(runId, result.totalDurationMs))
+            WorkflowOutcome.FAILED -> {
+                val error = result.steps.lastOrNull { !it.ok }?.message ?: "Workflow failed"
+                eventBus.publish(runId, RuntimeEvent.RunFailed(runId, error))
+            }
+            WorkflowOutcome.CANCELLED ->
+                eventBus.publish(runId, RuntimeEvent.RunCancelled(runId))
+        }
+    }
+
+    /**
+     * Estimate how many commands a workflow may execute (upper bound for
+     * loops/retries based on their configured limits).
+     */
+    private fun countCommands(step: WorkflowStep): Int {
+        return when (step) {
+            is WorkflowStep.Command -> 1
+            is WorkflowStep.Sequential -> step.steps.sumOf { countCommands(it) }
+            is WorkflowStep.Parallel -> step.steps.sumOf { countCommands(it) }
+            is WorkflowStep.If -> countCommands(step.thenStep) + (step.elseStep?.let { countCommands(it) } ?: 0)
+            is WorkflowStep.Loop -> countCommands(step.body) * step.maxIterations
+            is WorkflowStep.Retry -> countCommands(step.step) * (step.maxRetries + 1)
+            is WorkflowStep.Try -> countCommands(step.step) + step.compensation.sumOf { countCommands(it) }
         }
     }
 
@@ -298,6 +428,8 @@ class McosRuntime internal constructor(
         private var executor: Executor? = null
         private var memory: MemoryStore = MemoryStore()
         private var eventBus: EventBus = SimpleEventBus()
+        private var workflowStore: WorkflowStore = WorkflowStore()
+        private var workflowEngine: WorkflowEngine? = null
 
         // Signed stamps are enabled by default so the production path is
         // secure out of the box; pass null to disable.
@@ -309,6 +441,8 @@ class McosRuntime internal constructor(
         fun withExecutor(executor: Executor) = apply { this.executor = executor }
         fun withMemory(memory: MemoryStore) = apply { this.memory = memory }
         fun withEventBus(eventBus: EventBus) = apply { this.eventBus = eventBus }
+        fun withWorkflowStore(store: WorkflowStore) = apply { this.workflowStore = store }
+        fun withWorkflowEngine(engine: WorkflowEngine) = apply { this.workflowEngine = engine }
         fun withAuthStampSigner(signer: AuthStampSigner?) = apply { this.authStampSigner = signer }
 
         fun build(): McosRuntime {
@@ -322,6 +456,10 @@ class McosRuntime internal constructor(
                 authStampSigner = authStampSigner,
             )
 
+            // The workflow engine defaults to the same executor, so control
+            // flow steps and flat commands share one execution pipeline.
+            val wfEngine = workflowEngine ?: WorkflowEngine(exec)
+
             return McosRuntime(
                 parser = parser,
                 registry = reg,
@@ -329,6 +467,8 @@ class McosRuntime internal constructor(
                 executor = exec,
                 memory = memory,
                 eventBus = eventBus,
+                workflowStore = workflowStore,
+                workflowEngine = wfEngine,
             )
         }
     }
