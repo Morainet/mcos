@@ -1,0 +1,246 @@
+package com.mcos.runtime.events
+
+import com.mcos.runtime.api.RuntimeEvent
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicInteger
+
+class EventBusTest {
+
+    private fun envelope(
+        type: String,
+        source: String = "test",
+        payload: JsonObject = JsonObject(emptyMap()),
+    ): EventEnvelope = EventEnvelope(
+        type = type,
+        timestamp = System.currentTimeMillis(),
+        payload = payload,
+        source = source,
+    )
+
+    // ─── Delivery ────────────────────────────────────────────────────────
+
+    @Test
+    fun prefixFilterDeliversMatchingEventsOnly() = runBlocking {
+        val bus = TypedEventBus()
+        val received = CopyOnWriteArrayList<String>()
+        bus.subscribe(EventFilter(typePrefix = "connectivity.wifi.")) { received.add(it.type) }
+
+        bus.publishEvent(envelope("connectivity.wifi.connected"))
+        bus.publishEvent(envelope("connectivity.wifi.disconnected"))
+        bus.publishEvent(envelope("battery.low"))
+
+        withTimeout(2_000) {
+            while (received.size < 2) delay(10)
+        }
+        delay(100)
+        assertEquals(
+            listOf("connectivity.wifi.connected", "connectivity.wifi.disconnected"),
+            received,
+        )
+        bus.dispose()
+    }
+
+    @Test
+    fun whereFilterUsesDeepEqualityIgnoringExtraPayloadKeys() = runBlocking {
+        val bus = TypedEventBus()
+        val received = CopyOnWriteArrayList<String>()
+        bus.subscribe(
+            EventFilter(
+                typePrefix = "loc.",
+                where = buildJsonObject {
+                    put("coarse", JsonPrimitive(true))
+                    put("loc", buildJsonObject {
+                        put("lat", JsonPrimitive(31.23))
+                    })
+                },
+            )
+        ) { received.add(it.type) }
+
+        // Matches: nested values equal, extra "lon" key ignored.
+        bus.publishEvent(
+            envelope("loc.change", payload = buildJsonObject {
+                put("coarse", JsonPrimitive(true))
+                put("loc", buildJsonObject {
+                    put("lat", JsonPrimitive(31.23))
+                    put("lon", JsonPrimitive(121.47))
+                })
+            })
+        )
+        // Mismatch: nested lat differs.
+        bus.publishEvent(
+            envelope("loc.change", payload = buildJsonObject {
+                put("coarse", JsonPrimitive(true))
+                put("loc", buildJsonObject { put("lat", JsonPrimitive(31.99)) })
+            })
+        )
+        // Mismatch: coarse differs.
+        bus.publishEvent(
+            envelope("loc.change", payload = buildJsonObject { put("coarse", JsonPrimitive(false)) })
+        )
+        // Mismatch: missing the "coarse" filter key entirely.
+        bus.publishEvent(
+            envelope("loc.change", payload = buildJsonObject { put("lat", JsonPrimitive(31.23)) })
+        )
+
+        withTimeout(2_000) {
+            while (received.isEmpty()) delay(10)
+        }
+        delay(100)
+        assertEquals(listOf("loc.change"), received)
+        bus.dispose()
+    }
+
+    @Test
+    fun multipleSubscribersEachReceiveTheirMatches() = runBlocking {
+        val bus = TypedEventBus()
+        val wifi = CopyOnWriteArrayList<String>()
+        val battery = CopyOnWriteArrayList<String>()
+        bus.subscribe(EventFilter(typePrefix = "connectivity.")) { wifi.add(it.type) }
+        bus.subscribe(EventFilter(typePrefix = "battery.")) { battery.add(it.type) }
+
+        bus.publishEvent(envelope("connectivity.wifi.connected"))
+        bus.publishEvent(envelope("battery.low"))
+        bus.publishEvent(envelope("battery.charging"))
+
+        withTimeout(2_000) {
+            while (wifi.size < 1 || battery.size < 2) delay(10)
+        }
+        assertEquals(listOf("connectivity.wifi.connected"), wifi)
+        assertEquals(listOf("battery.low", "battery.charging"), battery)
+        bus.dispose()
+    }
+
+    // ─── Lifecycle ───────────────────────────────────────────────────────
+
+    @Test
+    fun unsubscribeStopsFurtherDelivery() = runBlocking {
+        val bus = TypedEventBus()
+        val received = CopyOnWriteArrayList<String>()
+        val sub = bus.subscribe(EventFilter(typePrefix = "t.")) { received.add(it.type) }
+
+        bus.publishEvent(envelope("t.one"))
+        withTimeout(2_000) {
+            while (received.isEmpty()) delay(10)
+        }
+
+        bus.unsubscribe(sub)
+        bus.publishEvent(envelope("t.two"))
+        delay(100)
+        assertEquals(listOf("t.one"), received)
+        bus.dispose()
+    }
+
+    @Test
+    fun unsubscribeIdempotent() = runBlocking {
+        val bus = TypedEventBus()
+        val sub = bus.subscribe(EventFilter(typePrefix = "t.")) { }
+        bus.unsubscribe(sub)
+        bus.unsubscribe(sub) // must not throw
+        bus.dispose()
+    }
+
+    // ─── Isolation & audit ───────────────────────────────────────────────
+
+    @Test
+    fun throwingSubscriberIsIsolatedAndAudited() = runBlocking {
+        val errors = CopyOnWriteArrayList<Pair<String, Long>>()
+        val drops = AtomicInteger(0)
+        val bus = TypedEventBus(auditSink = object : EventAuditSink {
+            override fun onSubscriberError(eventType: String, subscriptionId: Long, error: Throwable) {
+                errors.add(eventType to subscriptionId)
+            }
+
+            override fun onBackpressureDrop(eventType: String, subscriptionId: Long) {
+                drops.incrementAndGet()
+            }
+        })
+
+        val healthy = CopyOnWriteArrayList<String>()
+        bus.subscribe(EventFilter(typePrefix = "s.")) { throw IllegalStateException("boom") }
+        bus.subscribe(EventFilter(typePrefix = "s.")) { healthy.add(it.type) }
+
+        bus.publishEvent(envelope("s.ev"))
+        withTimeout(2_000) {
+            while (healthy.isEmpty()) delay(10)
+        }
+
+        assertEquals(listOf("s.ev"), healthy)
+        assertEquals(1, errors.size)
+        assertEquals("s.ev", errors[0].first)
+        assertEquals(0, drops.get())
+        bus.dispose()
+    }
+
+    @Test
+    fun backpressureDropsOldestAndAudits() = runBlocking {
+        val drops = AtomicInteger(0)
+        val bus = TypedEventBus(
+            auditSink = object : EventAuditSink {
+                override fun onSubscriberError(eventType: String, subscriptionId: Long, error: Throwable) {
+                    error("unexpected subscriber error")
+                }
+
+                override fun onBackpressureDrop(eventType: String, subscriptionId: Long) {
+                    drops.incrementAndGet()
+                }
+            },
+            channelCapacity = 2,
+        )
+
+        // Slow consumer: 30ms per event while 40 events arrive instantly.
+        val received = AtomicInteger(0)
+        bus.subscribe(EventFilter(typePrefix = "flood.")) {
+            delay(30)
+            received.incrementAndGet()
+        }
+
+        repeat(40) { bus.publishEvent(envelope("flood.$it")) }
+
+        // Let the slow consumer drain everything. Every published event ends
+        // up either delivered or dropped, never lost silently.
+        withTimeout(5_000) {
+            while (received.get() + drops.get() < 40) delay(10)
+        }
+
+        assertTrue("expected drops, got ${drops.get()}", drops.get() > 0)
+        assertEquals(40, received.get() + drops.get())
+        bus.dispose()
+    }
+
+    // ─── Run-event channel (P1 compatibility) ────────────────────────────
+
+    @Test
+    fun runEventsDeliverPerRun() = runBlocking {
+        val bus = TypedEventBus()
+        val a = CopyOnWriteArrayList<RuntimeEvent>()
+        val b = CopyOnWriteArrayList<RuntimeEvent>()
+        val jobA = launch { bus.observe("runA").collect { a.add(it) } }
+        val jobB = launch { bus.observe("runB").collect { b.add(it) } }
+        delay(50) // let the collectors subscribe before publishing
+
+        bus.publish("runA", RuntimeEvent.RunStarted("runA", "c1", 1))
+        bus.publish("runA", RuntimeEvent.RunSucceeded("runA", 5))
+        bus.publish("runB", RuntimeEvent.RunStarted("runB", "c1", 2))
+
+        withTimeout(2_000) {
+            while (a.size < 2 || b.size < 1) delay(10)
+        }
+        assertEquals(2, a.size)
+        assertEquals(1, b.size)
+        assertEquals(RuntimeEvent.RunSucceeded::class, a[1]::class)
+        jobA.cancel()
+        jobB.cancel()
+        bus.dispose()
+    }
+}

@@ -1,5 +1,7 @@
 package com.mcos.runtime.api
 
+import com.mcos.runtime.events.EventBus
+import com.mcos.runtime.events.TypedEventBus
 import com.mcos.runtime.executor.Command
 import com.mcos.runtime.executor.Executor
 import com.mcos.runtime.ir.ExecutionIr
@@ -21,52 +23,10 @@ import com.mcos.sdk.CommandResult
 import com.mcos.sdk.MemoryFacade
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.filter
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
-
-/**
- * Minimal event bus stub for P1. Enables [McosRuntime.observe] to work
- * without requiring the full P2 EventBus subsystem.
- *
- * Upgrade path: replace with full typed pub/sub in P2 ([03-runtime.md 11]).
- */
-interface EventBus {
-    /** Publish an event for a specific run. */
-    fun publish(runId: String, event: RuntimeEvent)
-
-    /** Observe events for a specific run as a cold [Flow]. */
-    fun observe(runId: String): Flow<RuntimeEvent>
-}
-
-class SimpleEventBus : EventBus {
-    private val sharedFlow = MutableSharedFlow<RuntimeEvent>(replay = 256, extraBufferCapacity = 64)
-
-    override fun publish(runId: String, event: RuntimeEvent) {
-        sharedFlow.tryEmit(event)
-    }
-
-    override fun observe(runId: String): Flow<RuntimeEvent> {
-        return sharedFlow.filter { event ->
-            when (event) {
-                is RuntimeEvent.RunStarted -> event.runId == runId
-                is RuntimeEvent.StepStarted -> event.runId == runId
-                is RuntimeEvent.Progress -> event.runId == runId
-                is RuntimeEvent.ArtifactEmitted -> event.runId == runId
-                is RuntimeEvent.LogEmitted -> event.runId == runId
-                is RuntimeEvent.ConfirmationNeeded -> event.runId == runId
-                is RuntimeEvent.StepSucceeded -> event.runId == runId
-                is RuntimeEvent.StepFailed -> event.runId == runId
-                is RuntimeEvent.RunSucceeded -> event.runId == runId
-                is RuntimeEvent.RunFailed -> event.runId == runId
-                is RuntimeEvent.RunCancelled -> event.runId == runId
-            }
-        }
-    }
-}
 
 /**
  * Top-level runtime facade that wires all subsystems together.
@@ -427,7 +387,7 @@ class McosRuntime internal constructor(
         private var permissionKernel: PermissionKernel? = null
         private var executor: Executor? = null
         private var memory: MemoryStore = MemoryStore()
-        private var eventBus: EventBus = SimpleEventBus()
+        private var eventBus: EventBus = TypedEventBus()
         private var workflowStore: WorkflowStore = WorkflowStore()
         private var workflowEngine: WorkflowEngine? = null
 
