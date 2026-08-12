@@ -3,6 +3,9 @@ package com.mcos.runtime.memory
 import com.mcos.sdk.MemoryCategory
 import com.mcos.sdk.ResolveResult
 import com.mcos.sdk.WriteStatus
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonPrimitive
@@ -435,5 +438,53 @@ class MemoryStoreTest {
 
         assertEquals(WriteStatus.CREATED, result.status)
         assertEquals("北京市朝阳区望京SOHO大厦", store.get("places.company")!!.jsonPrimitive.content)
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // M34-M35: Concurrency (regression for lock hardening)
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `M34-concurrent writes to distinct paths are safe`() = runBlocking {
+        coroutineScope {
+            (1..100).map { i ->
+                async {
+                    store.putString(
+                        "concurrent.key$i",
+                        "value$i",
+                        tags = setOf("concurrent"),
+                        checkConflict = false,
+                    )
+                }
+            }.awaitAll()
+        }
+
+        assertEquals(100, store.count())
+        assertEquals(setOf("concurrent"), store.tags())
+        for (i in 1..100) {
+            assertEquals("value$i", store.get("concurrent.key$i")!!.jsonPrimitive.content)
+        }
+    }
+
+    @Test
+    fun `M35-concurrent mixed read-write keeps state consistent`() = runBlocking {
+        coroutineScope {
+            (1..50).map { i ->
+                async { store.putString("mix.key$i", "v$i", checkConflict = false) }
+            }.awaitAll()
+        }
+
+        coroutineScope {
+            val reads = (1..50).map { i -> async { store.get("mix.key$i") } }
+            val deletes = (1..10).map { i -> async { store.delete("mix.key$i") } }
+            reads.forEach { it.await() }
+            deletes.forEach { it.await() }
+        }
+
+        // 50 writes followed by 10 deletes → 40 remain.
+        assertEquals(40, store.count())
+        assertNull(store.get("mix.key1"))
+        assertNotNull(store.get("mix.key50"))
+        Unit
     }
 }
