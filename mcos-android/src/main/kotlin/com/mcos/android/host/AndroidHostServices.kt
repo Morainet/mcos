@@ -211,24 +211,18 @@ class AndroidNotificationService(private val context: Context) : NotificationSer
 
     override suspend fun notify(title: String, text: String): String {
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                channelId, "MCOS Commands", NotificationManager.IMPORTANCE_DEFAULT
-            )
-            nm.createNotificationChannel(channel)
-        }
+        // minSdk 26 guarantees API 26+; channel creation is always safe.
+        val channel = NotificationChannel(
+            channelId, "MCOS Commands", NotificationManager.IMPORTANCE_DEFAULT
+        )
+        nm.createNotificationChannel(channel)
         // Permission is required on API 33+; skip posting (no crash) when denied.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
             return channelId
         }
-        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            Notification.Builder(context, channelId)
-        } else {
-            @Suppress("DEPRECATION")
-            Notification.Builder(context)
-        }
+        val builder = Notification.Builder(context, channelId)
         nm.notify(
             counter.getAndIncrement(),
             builder
