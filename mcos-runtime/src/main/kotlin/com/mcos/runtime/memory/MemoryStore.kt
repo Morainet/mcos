@@ -29,6 +29,15 @@ import kotlinx.serialization.json.put
  */
 class MemoryStore : MemoryFacade {
 
+    /**
+     * Guards all shared state ([entries], [semanticIndex], [superseded]).
+     * Every public method acquires this lock before touching shared state,
+     * following the same JVM-monitor convention as RateLimiter and
+     * PermissionKernel. Critical sections are short and never suspend while
+     * holding the lock.
+     */
+    private val lock = Any()
+
     /** Stored entries indexed by path */
     private val entries = mutableMapOf<String, MemoryEntry>()
 
@@ -62,7 +71,7 @@ class MemoryStore : MemoryFacade {
         tags: Set<String> = emptySet(),
         category: MemoryCategory = MemoryCategory.OTHER,
         checkConflict: Boolean = true
-    ): MemoryWriteResult {
+    ): MemoryWriteResult = synchronized(lock) {
         val now = currentTimeMs()
         val existing = entries[path]
 
@@ -76,7 +85,7 @@ class MemoryStore : MemoryFacade {
             for (tag in tags) {
                 semanticIndex.getOrPut(tag) { mutableSetOf() }.add(path)
             }
-            return MemoryWriteResult(WriteStatus.UPDATED, supersededPath = supersededPath)
+            return@synchronized MemoryWriteResult(WriteStatus.UPDATED, supersededPath = supersededPath)
         }
 
         // Step 2: new path → cross-path semantic dedup within the category.
@@ -90,7 +99,7 @@ class MemoryStore : MemoryFacade {
                 .maxByOrNull { it.second }
             if (best != null && best.second >= CONFLICT_THRESHOLD) {
                 val existingEntry = entries[best.first]!!
-                return MemoryWriteResult(
+                return@synchronized MemoryWriteResult(
                     status = WriteStatus.CONFLICT,
                     conflict = MemoryConflict(
                         existingPath = best.first,
@@ -107,7 +116,7 @@ class MemoryStore : MemoryFacade {
         for (tag in tags) {
             semanticIndex.getOrPut(tag) { mutableSetOf() }.add(path)
         }
-        return MemoryWriteResult(WriteStatus.CREATED)
+        MemoryWriteResult(WriteStatus.CREATED)
     }
 
     /**
@@ -141,17 +150,17 @@ class MemoryStore : MemoryFacade {
 
     // ─── Read API (MemoryFacade impl) ───────────────────────────────────
 
-    override suspend fun get(path: String): JsonElement? {
-        val entry = entries[path] ?: return null
+    override suspend fun get(path: String): JsonElement? = synchronized(lock) {
+        val entry = entries[path] ?: return@synchronized null
         if (entry.isExpired(currentTimeMs())) {
             entries.remove(path)
             removeFromIndex(path)
-            return null
+            return@synchronized null
         }
-        return entry.value
+        entry.value
     }
 
-    override suspend fun resolveRef(ref: String, semanticType: String?): ResolveResult {
+    override suspend fun resolveRef(ref: String, semanticType: String?): ResolveResult = synchronized(lock) {
         val now = currentTimeMs()
 
         // Step 1-3: score every tag; exact label match → 1.0, alias/abbreviation
@@ -176,7 +185,7 @@ class MemoryStore : MemoryFacade {
         val ranked = pathScores.entries.sortedByDescending { it.value }
 
         // Step 4: resolve — one clear winner, ambiguous cluster, or nothing.
-        return when {
+        when {
             ranked.isEmpty() -> ResolveResult.NotFound("ref_unresolvable")
             ranked.size == 1 -> ResolveResult.Resolved(ranked[0].key, ranked[0].value)
             else -> {
@@ -195,7 +204,7 @@ class MemoryStore : MemoryFacade {
     /**
      * Delete an entry by path and remove from semantic index.
      */
-    suspend fun delete(path: String) {
+    suspend fun delete(path: String) = synchronized(lock) {
         entries.remove(path)
         removeFromIndex(path)
     }
@@ -203,9 +212,9 @@ class MemoryStore : MemoryFacade {
     /**
      * List all paths under a prefix. Useful for namespace operations.
      */
-    suspend fun list(prefix: String = ""): List<String> {
+    suspend fun list(prefix: String = ""): List<String> = synchronized(lock) {
         val now = currentTimeMs()
-        return entries.entries
+        entries.entries
             .filter { it.key.startsWith(prefix) && !it.value.isExpired(now) }
             .map { it.key }
             .sorted()
@@ -214,9 +223,9 @@ class MemoryStore : MemoryFacade {
     /**
      * Get all entries (including metadata) under a prefix.
      */
-    suspend fun listEntries(prefix: String = ""): List<MemoryEntryWithPath> {
+    suspend fun listEntries(prefix: String = ""): List<MemoryEntryWithPath> = synchronized(lock) {
         val now = currentTimeMs()
-        return entries.entries
+        entries.entries
             .filter { it.key.startsWith(prefix) && !it.value.isExpired(now) }
             .map { (path, entry) ->
                 MemoryEntryWithPath(path, entry)
@@ -227,28 +236,30 @@ class MemoryStore : MemoryFacade {
     /**
      * Check if a path has a valid (non-expired) entry.
      */
-    suspend fun has(path: String): Boolean {
-        val entry = entries[path] ?: return false
-        return !entry.isExpired(currentTimeMs())
+    suspend fun has(path: String): Boolean = synchronized(lock) {
+        val entry = entries[path] ?: return@synchronized false
+        !entry.isExpired(currentTimeMs())
     }
 
     /**
      * Get all semantic tags currently in use.
      */
-    fun tags(): Set<String> = semanticIndex.keys.toSet()
+    fun tags(): Set<String> = synchronized(lock) {
+        semanticIndex.keys.toSet()
+    }
 
     /**
      * Count of non-expired entries.
      */
-    suspend fun count(): Int {
+    suspend fun count(): Int = synchronized(lock) {
         val now = currentTimeMs()
-        return entries.values.count { !it.isExpired(now) }
+        entries.values.count { !it.isExpired(now) }
     }
 
     /**
      * Clear all entries, the semantic index and the superseded history.
      */
-    suspend fun clear() {
+    suspend fun clear() = synchronized(lock) {
         entries.clear()
         semanticIndex.clear()
         superseded.clear()
@@ -258,16 +269,17 @@ class MemoryStore : MemoryFacade {
      * Soft-deleted (superseded) versions of [path], oldest first. Each pair is
      * the history key (e.g. "people.tom.phone@2026-07-01T...") and the entry.
      */
-    fun history(path: String): List<Pair<String, MemoryEntry>> =
+    fun history(path: String): List<Pair<String, MemoryEntry>> = synchronized(lock) {
         superseded.entries
             .filter { it.key.startsWith("$path@") }
             .sortedBy { it.key }
             .map { it.key to it.value }
+    }
 
     /**
      * Evict all expired entries.
      */
-    suspend fun evictExpired() {
+    suspend fun evictExpired() = synchronized(lock) {
         val now = currentTimeMs()
         val expired = entries.entries.filter { it.value.isExpired(now) }
         for ((path, _) in expired) {
@@ -281,9 +293,9 @@ class MemoryStore : MemoryFacade {
     /**
      * Export all entries as a JSON object for serialization/sync.
      */
-    fun export(): JsonObject {
+    fun export(): JsonObject = synchronized(lock) {
         val now = currentTimeMs()
-        return buildJsonObject {
+        buildJsonObject {
             for ((path, entry) in entries) {
                 if (!entry.isExpired(now)) {
                     put(path, buildJsonObject {
