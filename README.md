@@ -6,7 +6,7 @@ MCOS is an open design for a **Mobile Command Bus**: a typed Command Protocol, o
 
 ## Status
 
-**Phase 1 — core runtime implemented (Draft v0.1.0).**
+**Phase 1 — core runtime implemented (Draft v0.1.0). Phase 2 — workflow engine, typed event bus, memory enhancements, Android shell — implemented.**
 
 The repository now contains a working multi-module Gradle project:
 
@@ -14,7 +14,7 @@ The repository now contains a working multi-module Gradle project:
 |--------|---------|--------|
 | `mcos-sdk` | Plugin contracts (`McosPlugin`, `CommandHandler`, `HostServices`, `ExecutionContext`, `AuthStamp`) | ✅ |
 | `mcos-runtime` | DSL parser, command registry, 7-stage executor, permission kernel, rate limiter, egress policy, audit log, LLM planner/chat, workflow engine, event bus, memory | ✅ |
-| `mcos-android` | Compose CLI / Chat shell | ⬜ planned |
+| `mcos-android` | Compose CLI / Chat shell | ✅ |
 
 Plugins are independently buildable in `plugins/`: `mcos-plugin-hello`, `mcos-plugin-system`, `mcos-plugin-camera`, `mcos-plugin-files` (each with tests).
 
@@ -60,7 +60,7 @@ plugins/
   mcos-plugin-files     file.* / photo.*                      ✅
   mcos-plugin-iot       home.* / iot.*              (planned)
   mcos-plugin-mcp       mcp.* adapter               (planned)
-mcos-android      Compose CLI / Chat shell           (planned)
+mcos-android      Compose CLI / Chat shell           ✅
 mcos-server       Sync · marketplace                (planned)
 ```
 

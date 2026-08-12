@@ -23,6 +23,7 @@ import com.mcos.sdk.CommandResult
 import com.mcos.sdk.MemoryFacade
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.Flow
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.util.UUID
@@ -91,9 +92,26 @@ class McosRuntime internal constructor(
         data class Commands(val commands: List<Command>) : Plan
         data class Workflow(val step: WorkflowStep) : Plan
 
+        /** Payload could not be parsed into an executable plan. */
+        data class ParseFailed(
+            val code: String,
+            val message: String,
+            val line: Int = 1,
+            val column: Int = 1,
+            val token: String? = null,
+            val expected: List<String>? = null,
+        ) : Plan {
+            /** Human-readable error with location details, e.g. "Invalid payload: syntax at line 2, column 5: ..." */
+            fun toErrorMessage(): String {
+                val loc = if (line > 1 || column > 1) " at line $line, column $column" else ""
+                return "Invalid payload: $code$loc: $message"
+            }
+        }
+
         fun isEmpty(): Boolean = when (this) {
             is Commands -> commands.isEmpty()
             is Workflow -> false
+            is ParseFailed -> false
         }
     }
 
@@ -120,6 +138,12 @@ class McosRuntime internal constructor(
             return ExecuteHandle(runId, ExecutionStatus.FAILED)
         }
 
+        // Parse failures are surfaced synchronously with their details.
+        if (plan is Plan.ParseFailed) {
+            eventBus.publish(runId, RuntimeEvent.RunFailed(runId, plan.toErrorMessage()))
+            return ExecuteHandle(runId, ExecutionStatus.FAILED)
+        }
+
         // Preview/dry-run
         if (request.dryRun) {
             return ExecuteHandle(runId, ExecutionStatus.COMPLETED)
@@ -132,6 +156,7 @@ class McosRuntime internal constructor(
                 when (plan) {
                     is Plan.Commands -> runCommands(runId, plan.commands, startTime, timestamp)
                     is Plan.Workflow -> runWorkflow(runId, plan.step, startTime, timestamp)
+                    is Plan.ParseFailed -> Unit // unreachable: intercepted above
                 }
             } catch (e: CancellationException) {
                 eventBus.publish(runId, RuntimeEvent.RunCancelled(runId))
@@ -152,6 +177,11 @@ class McosRuntime internal constructor(
      */
     suspend fun preview(request: ExecuteRequest): PreviewResult {
         return when (val plan = parsePayload(request.payload)) {
+            is Plan.ParseFailed -> PreviewResult(
+                commandCount = 0,
+                commands = emptyList(),
+                warnings = listOf(plan.toErrorMessage()),
+            )
             is Plan.Commands -> {
                 val warnings = mutableListOf<String>()
 
@@ -166,7 +196,11 @@ class McosRuntime internal constructor(
                     }
                     PreviewCommand(
                         id = cmd.id,
-                        args = cmd.args.mapValues { it.value.jsonPrimitive.content },
+                        // DSL args may be JsonNull (e.g. `meta=null`); keep them as
+                        // the literal string "null" instead of crashing on .content.
+                        args = cmd.args.mapValues { (_, v) ->
+                            v.jsonPrimitive.takeUnless { it is JsonNull }?.content ?: "null"
+                        },
                         sideEffectClass = sideEffectClass,
                     )
                 }
@@ -239,12 +273,23 @@ class McosRuntime internal constructor(
                 val result = parser.parse(payload.text)
                 when (result) {
                     is ParseResult.Ok -> planFromIr(result.ir)
-                    is ParseResult.Err -> Plan.Commands(emptyList())
+                    is ParseResult.Err -> Plan.ParseFailed(
+                        code = result.code,
+                        message = result.message,
+                        line = result.line,
+                        column = result.column,
+                        token = result.token,
+                        expected = result.expected,
+                    )
                 }
             }
             is Payload.IrJson -> {
                 val ir = DslParser.fromJsonElement(payload.json)
-                if (ir != null) planFromIr(ir) else Plan.Commands(emptyList())
+                if (ir != null) {
+                    planFromIr(ir)
+                } else {
+                    Plan.ParseFailed(code = "invalid_ir", message = "IR JSON is not a valid execution IR")
+                }
             }
             is Payload.WorkflowRef -> {
                 val step = workflowStore.get(payload.workflowId)
@@ -259,7 +304,11 @@ class McosRuntime internal constructor(
             is ExecutionIr.Sequence -> Plan.Commands(ir.sequence.steps.map { Command(it.id, it.args) })
             is ExecutionIr.Workflow -> {
                 val step = WorkflowJson.fromJson(ir.body)
-                if (step != null) Plan.Workflow(step) else Plan.Commands(emptyList())
+                if (step != null) {
+                    Plan.Workflow(step)
+                } else {
+                    Plan.ParseFailed(code = "invalid_workflow", message = "Workflow IR body is not a valid workflow definition")
+                }
             }
         }
     }

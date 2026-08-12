@@ -39,33 +39,53 @@ MCOS 是一个开源的**移动命令总线（Mobile Command Bus）**设计：�
 
 ## 模块拓扑
 
-目前尚无已构建的模块。计划中的模块拓扑（将在 Phase 1 开始搭建）见 [`docs/zh/00-vision.md`](./docs/zh/00-vision.md) §5 和 [`docs/zh/REPOSITORIES.md`](./docs/zh/REPOSITORIES.md)：
+已实现的多模块 Gradle 项目拓扑：
 
 ```
-mcos-android      Compose 客户端（CLI / Chat 外壳）
-mcos-runtime      解析器 · 注册中心 · 执行器 · 审计
-mcos-sdk          插件契约（McosPlugin、CommandHandler ……）
+mcos-runtime      Parser · Registry · Executor (7-stage) · Audit · Security · LLM · Workflow · EventBus · Memory
+mcos-sdk          Plugin contracts
 plugins/
-  mcos-plugin-hello     参考示例（hello.world）
-  mcos-plugin-system    sys.*（notify、share）
-  mcos-plugin-camera    camera.*（capture、scan）
-  mcos-plugin-files     file.* / photo.*           （规划）
-  mcos-plugin-iot       home.* / iot.*             （规划）
-  mcos-plugin-mcp       mcp.* 适配器                 （规划）
-mcos-server             同步 · 插件市场              （规划）
+  mcos-plugin-hello     Reference sample (hello.world)        ✅
+  mcos-plugin-system    sys.* (notify, share)                 ✅
+  mcos-plugin-camera    camera.* (capture, scan)              ✅
+  mcos-plugin-files     file.* / photo.*                      ✅
+  mcos-plugin-iot       home.* / iot.*              (planned)
+  mcos-plugin-mcp       mcp.* adapter               (planned)
+mcos-android      Compose CLI / Chat shell           ✅
+mcos-server       Sync · marketplace                (planned)
 ```
+
+完整的依赖图与各模块目标，见 [`docs/zh/REPOSITORIES.md`](./docs/zh/REPOSITORIES.md)。
 
 ---
 
 ## 项目状态
 
-**Phase 0 — 纯设计文档（Draft v0.1.0）。** 本仓库目前**只包含设计文档和黄金测试用例**，尚无任何实现代码或构建系统。实现工作将在 Phase 1 开始——详见 [`docs/zh/11-implementation-status.md`](./docs/zh/11-implementation-status.md)。
+**Phase 1 — 核心运行时已实现（Draft v0.1.0）。Phase 2 — 工作流引擎、类型化事件总线、记忆增强、Android 外壳已实现。**
+
+仓库现在包含可构建的多模块 Gradle 工程：
+
+| 模块 | 内容 | 状态 |
+|------|------|------|
+| `mcos-sdk` | 插件契约（`McosPlugin`、`CommandHandler`、`HostServices`、`ExecutionContext`、`AuthStamp`） | ✅ |
+| `mcos-runtime` | DSL 解析器、命令注册中心、7 阶段执行器、权限内核、限流器、出站策略、审计日志、LLM 规划/对话、工作流引擎、事件总线、记忆 | ✅ |
+| `mcos-android` | Compose CLI / Chat 外壳 | ✅ |
+
+插件在 `plugins/` 下独立构建：`mcos-plugin-hello`、`mcos-plugin-system`、`mcos-plugin-camera`、`mcos-plugin-files`（均带测试）。
+
+详见 [`docs/zh/11-implementation-status.md`](./docs/zh/11-implementation-status.md) 的详细状态矩阵。
 
 ---
 
-## 下一步
+## 构建与下一步
 
-本仓库为纯文档，无需构建。如需开始实现，请阅读：
+构建：
+
+```bash
+./gradlew test assemble
+```
+
+下一步请阅读：
 
 - [`docs/zh/11-implementation-status.md`](./docs/zh/11-implementation-status.md) §6 的推荐开发路径
 - [`docs/zh/REPOSITORIES.md`](./docs/zh/REPOSITORIES.md) 的目标模块依赖图与构建坐标
