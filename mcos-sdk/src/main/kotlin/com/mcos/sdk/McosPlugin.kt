@@ -47,6 +47,54 @@ interface HostServices {
     val clock: Clock
     val json: JsonService
     val memory: MemoryFacade
+
+    /**
+     * Optional platform notification service. Null on hosts without
+     * notification support (e.g. plain JVM). Plugins must fall back to
+     * a stub result when null.
+     */
+    val notifications: NotificationService? get() = null
+
+    /**
+     * Optional platform media-processing service (compress/resize).
+     * Null on hosts without media support. Plugins must fall back to
+     * a stub result when null.
+     */
+    val media: MediaService? get() = null
+}
+
+/**
+ * Posts system notifications. Provided by hosts with a notification
+ * manager (Android NotificationManager, desktop toasts, etc.).
+ */
+interface NotificationService {
+    /**
+     * Post a notification with the given title and text.
+     * @return an identifier for the posted notification (e.g. channel id)
+     */
+    suspend fun notify(title: String, text: String): String
+}
+
+/**
+ * Media processing for image artifacts. Provided by hosts with
+ * bitmap processing capability.
+ */
+interface MediaService {
+    /**
+     * Compress the given image content URIs to JPEG and return the
+     * compressed output content URIs (same order, nulls dropped).
+     *
+     * @param uris source image content URIs
+     * @param quality JPEG quality 1-100
+     * @param maxWidth optional max output width (keeps aspect ratio)
+     * @param maxHeight optional max output height (keeps aspect ratio)
+     */
+    suspend fun compress(
+        uris: List<String>,
+        quality: Int,
+        maxWidth: Int? = null,
+        maxHeight: Int? = null,
+    ): List<String>
 }
 
 interface FileService {

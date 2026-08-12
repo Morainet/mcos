@@ -1,9 +1,13 @@
 package com.mcos.android
 
+import android.Manifest
 import android.annotation.SuppressLint
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -24,6 +28,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.mcos.android.host.ActivityResultBridge
 import com.mcos.android.host.AndroidHostServices
 import com.mcos.plugin.camera.CameraPlugin
 import com.mcos.plugin.files.FilesPlugin
@@ -47,7 +52,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val hostServices = AndroidHostServices(this)
+        val resultBridge = ActivityResultBridge()
+        val hostServices = AndroidHostServices(this, resultBridge)
         val registry = CommandRegistry()
 
         val runtime = McosRuntime.Builder()
@@ -67,7 +73,7 @@ class MainActivity : ComponentActivity() {
         val plugins = listOf(HelloPlugin(), SystemPlugin(), CameraPlugin(), FilesPlugin())
 
         setContent {
-            MCOSApp(runtime, hostServices, plugins)
+            MCOSApp(runtime, hostServices, plugins, resultBridge)
         }
     }
 }
@@ -81,8 +87,25 @@ fun MCOSApp(
     runtime: McosRuntime,
     hostServices: HostServices,
     plugins: List<McosPlugin>,
+    resultBridge: ActivityResultBridge,
 ) {
     val scope = rememberCoroutineScope()
+
+    // ── activity result bridge ─────────────────────────────────────────
+    val resultLauncher = rememberLauncherForActivityResult(resultBridge.contract) { result ->
+        resultBridge.onResult(result)
+    }
+    LaunchedEffect(resultLauncher) { resultBridge.attach(resultLauncher) }
+
+    // Request notification permission on Android 13+ so sys.notify works.
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { }
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
 
     // ── state ──────────────────────────────────────────────────────────
     var dslText by remember { mutableStateOf("hello.greet(name=\"MCOS\")\ncamera.capture()") }
@@ -91,6 +114,7 @@ fun MCOSApp(
     var pluginsLoaded by remember { mutableStateOf(false) }
     var showCommands by remember { mutableStateOf(false) }
     var previewText by remember { mutableStateOf<String?>(null) }
+    var lastArtifacts by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
 
     val registry = runtime.registry()
     val commandIds = remember { registry.allCommands().map { it.id } }
@@ -153,10 +177,12 @@ fun MCOSApp(
                                 "[${now()}]   ${event.percent?.let { "$it% " } ?: ""}${event.message ?: "in progress…"}"
                             )
 
-                        is RuntimeEvent.ArtifactEmitted ->
+                        is RuntimeEvent.ArtifactEmitted -> {
                             events.add(
                                 "[${now()}]   artifact ${event.type}: ${event.uri} (${event.mimeType ?: "?"})"
                             )
+                            lastArtifacts = lastArtifacts + (event.type to event.uri)
+                        }
 
                         is RuntimeEvent.LogEmitted ->
                             events.add("[${event.level}] ${event.message}")
@@ -178,6 +204,22 @@ fun MCOSApp(
 
                         is RuntimeEvent.RunCancelled ->
                             events.add("[${now()}] ■ Cancelled")
+                    }
+                }
+
+                // E2E chain: prefill the next step from produced image artifacts.
+                val imageUris = lastArtifacts.filter { it.first == "image" }.map { it.second }
+                if (imageUris.isNotEmpty()) {
+                    when {
+                        dslText.contains("camera.capture") -> {
+                            val uriList = imageUris.joinToString(", ") { "\"$it\"" }
+                            dslText = "photo.compress(uris=[$uriList], quality=80)"
+                            events.add("[${now()}] → 已生成压缩命令，再次执行即可")
+                        }
+                        dslText.contains("photo.compress") -> {
+                            dslText = "sys.notify(title=\"MCOS\", text=\"Compressed ${imageUris.size} image(s)\")"
+                            events.add("[${now()}] → 已生成通知命令，再次执行即可")
+                        }
                     }
                 }
             } catch (e: Exception) {
