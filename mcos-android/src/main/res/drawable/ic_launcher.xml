@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- MCOS launcher icon: dark terminal-style rounded square with a green prompt ">_" -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- background -->
+    <path
+        android:fillColor="#FF1E1F22"
+        android:pathData="M20,0 L88,0 A20,20 0 0 1 108,20 L108,88 A20,20 0 0 1 88,108 L20,108 A20,20 0 0 1 0,88 L0,20 A20,20 0 0 1 20,0 Z" />
+    <!-- prompt ">" -->
+    <path
+        android:fillColor="#FF4ADE80"
+        android:pathData="M22,54 L42,34 L48,40 L34,54 L48,68 L42,74 Z" />
+    <!-- cursor "_" -->
+    <path
+        android:fillColor="#FF4ADE80"
+        android:pathData="M56,60 L92,60 L92,66 L56,66 Z" />
+</vector>
