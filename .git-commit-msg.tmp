@@ -1,0 +1,20 @@
+feat(android): 打通 camera.capture → photo.compress → sys.notify 真实 E2E 管线
+
+SDK:
+- HostServices 新增可选 notifications/media 服务 (默认 null, 兼容现有 Stub)
+- 新增 NotificationService / MediaService 接口
+
+插件:
+- sys.notify 优先使用真实通知服务 (无服务时回退 stub)
+- photo.compress 优先使用真实图片压缩服务
+
+Android:
+- 新增 ActivityResultBridge: Compose ActivityResultLauncher ↔ suspend 桥接
+- AndroidNotificationService: NotificationManager + 通知渠道 + API33 权限检查
+- AndroidMediaService: Bitmap 压缩/等比缩放 → 缓存目录 → FileProvider uri
+- AndroidUiService: ACTION_IMAGE_CAPTURE 映射 + 相机 EXTRA_OUTPUT 真实输出
+- Manifest: POST_NOTIFICATIONS 权限 + FileProvider + file_paths.xml
+
+MainActivity:
+- 注册 result launcher 与通知权限请求
+- E2E 自动串联: capture 产物自动生成 compress 命令 → 再生成 notify 命令

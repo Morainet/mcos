@@ -263,13 +263,16 @@ class SystemPlugin : McosPlugin {
             val text = args["text"]?.jsonPrimitive?.content
                 ?: throw McosException("SCHEMA_VIOLATION", "Missing required arg: text")
 
-            // On Android, this would call NotificationManager via HostServices.
-            // For JVM MVP, return a structured result.
+            val notifications = services?.notifications
+            val channel = notifications?.notify(title, text)
+
+            // Fallback for hosts without a notification service (JVM MVP).
             return CommandResult.Ok(
                 value = buildJsonObject {
                     put("status", JsonPrimitive("notified"))
                     put("title", JsonPrimitive(title))
                     put("text", JsonPrimitive(text))
+                    if (channel != null) put("channel", JsonPrimitive(channel))
                 }
             )
         }

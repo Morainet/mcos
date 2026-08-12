@@ -1,24 +1,41 @@
 package com.mcos.android.host
 
+import android.Manifest
+import android.app.Activity
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
+import android.os.Build
 import android.provider.MediaStore
+import androidx.core.content.FileProvider
 import com.mcos.sdk.*
 import kotlinx.serialization.json.*
+import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Android-specific implementation of [HostServices].
  * Wires real Android APIs — ContentResolver, HttpURLConnection,
- * Intent-based activity launching, SharedPreferences — into the
- * MCOS plugin execution pipeline.
+ * Intent-based activity launching, NotificationManager, bitmap
+ * compression, SharedPreferences — into the MCOS plugin execution
+ * pipeline.
  */
-class AndroidHostServices(context: Context) : HostServices {
+class AndroidHostServices(
+    context: Context,
+    private val resultBridge: ActivityResultBridge,
+) : HostServices {
 
     override val files: FileService = AndroidFileService(context)
     override val net: NetService = AndroidNetService()
-    override val ui: UiService = AndroidUiService(context)
+    override val ui: UiService = AndroidUiService(context, resultBridge)
     override val secureStore: SecureStore = AndroidSecureStore(context)
     override val clock: Clock = object : Clock {
         override fun nowMs(): Long = System.currentTimeMillis()
@@ -28,6 +45,8 @@ class AndroidHostServices(context: Context) : HostServices {
         override fun parse(source: String): JsonElement = j.parseToJsonElement(source)
     }
     override val memory: MemoryFacade = InMemoryFacade()
+    override val notifications: NotificationService = AndroidNotificationService(context)
+    override val media: MediaService = AndroidMediaService(context)
 }
 
 // ── FileService ─────────────────────────────────────────────────────────────
@@ -99,19 +118,180 @@ class AndroidNetService : NetService {
 
 // ── UiService ───────────────────────────────────────────────────────────────
 
-class AndroidUiService(private val context: Context) : UiService {
+class AndroidUiService(
+    private val context: Context,
+    private val bridge: ActivityResultBridge,
+) : UiService {
+
     override suspend fun startActivityForResult(intent: Map<String, String>): Map<String, String>? {
         val action = intent["action"] ?: return null
-        val extras = intent.filterKeys { it != "action" }
+        return when (action) {
+            "ACTION_IMAGE_CAPTURE" -> launchCamera(intent)
+            "ACTION_SCAN_BARCODE" -> null // P2: ML Kit barcode scanning
+            "ACTION_VIEW" -> openUrl(intent)
+            "ACTION_SEND" -> share(intent)
+            else -> startRawAction(action, intent)
+        }
+    }
+
+    private suspend fun launchCamera(intent: Map<String, String>): Map<String, String>? {
+        val dir = File(context.cacheDir, "camera").apply { mkdirs() }
+        val outFile = File(dir, "img_${System.currentTimeMillis()}.jpg")
+        val uri = fileProviderUri(outFile)
+        val i = Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
+            putExtra(MediaStore.EXTRA_OUTPUT, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        val result = bridge.launch(i)
+        if (result?.resultCode == Activity.RESULT_OK && outFile.exists()) {
+            return mapOf(
+                "status" to "captured",
+                "uri" to fileProviderUri(outFile).toString(),
+                "mimeType" to "image/jpeg",
+            )
+        }
+        return null // user cancelled
+    }
+
+    private fun openUrl(intent: Map<String, String>): Map<String, String>? {
+        val url = intent["uri"]
+        if (url.isNullOrBlank()) return mapOf("status" to "cancelled")
+        val i = Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return try {
+            context.startActivity(i)
+            mapOf("status" to "opened")
+        } catch (_: Exception) {
+            mapOf("status" to "failed")
+        }
+    }
+
+    private fun share(intent: Map<String, String>): Map<String, String>? {
+        val i = Intent(Intent.ACTION_SEND).setType("text/plain")
+        intent["text"]?.takeIf { it.isNotBlank() }?.let { i.putExtra(Intent.EXTRA_TEXT, it) }
+        intent["uri"]?.takeIf { it.isNotBlank() }?.let {
+            try {
+                i.putExtra(Intent.EXTRA_STREAM, Uri.parse(it))
+                i.type = "image/*"
+            } catch (_: Exception) {
+                // ignore malformed uri
+            }
+        }
+        val chooser = Intent.createChooser(i, "Share via MCOS").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return try {
+            context.startActivity(chooser)
+            mapOf("status" to "completed")
+        } catch (_: Exception) {
+            mapOf("status" to "failed")
+        }
+    }
+
+    private fun startRawAction(action: String, intent: Map<String, String>): Map<String, String>? {
         val i = Intent(action)
-        extras.forEach { (k, v) -> i.putExtra(k, v) }
+        intent.forEach { (k, v) -> if (k != "action") i.putExtra(k, v) }
         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         return try {
             context.startActivity(i)
-            null // result not available with simple startActivity
+            mapOf("status" to "started")
         } catch (_: Exception) {
-            null
+            mapOf("status" to "failed")
         }
+    }
+
+    private fun fileProviderUri(file: File): Uri =
+        FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+}
+
+// ── NotificationService ─────────────────────────────────────────────────────
+
+class AndroidNotificationService(private val context: Context) : NotificationService {
+
+    private val counter = AtomicInteger(1)
+    private val channelId = "mcos_commands"
+
+    override suspend fun notify(title: String, text: String): String {
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                channelId, "MCOS Commands", NotificationManager.IMPORTANCE_DEFAULT
+            )
+            nm.createNotificationChannel(channel)
+        }
+        // Permission is required on API 33+; skip posting (no crash) when denied.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return channelId
+        }
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(context, channelId)
+        } else {
+            @Suppress("DEPRECATION")
+            Notification.Builder(context)
+        }
+        nm.notify(
+            counter.getAndIncrement(),
+            builder
+                .setContentTitle(title)
+                .setContentText(text)
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setAutoCancel(true)
+                .build()
+        )
+        return channelId
+    }
+}
+
+// ── MediaService ────────────────────────────────────────────────────────────
+
+class AndroidMediaService(private val context: Context) : MediaService {
+
+    override suspend fun compress(
+        uris: List<String>,
+        quality: Int,
+        maxWidth: Int?,
+        maxHeight: Int?,
+    ): List<String> {
+        val outDir = File(context.cacheDir, "mcos").apply { mkdirs() }
+        return uris.mapNotNull { uri ->
+            try {
+                val resolver = context.contentResolver
+                val bmp = resolver.openInputStream(Uri.parse(uri))?.use { input ->
+                    BitmapFactory.decodeStream(input)
+                } ?: return@mapNotNull null
+
+                val scaled = resize(bmp, maxWidth, maxHeight)
+                if (scaled !== bmp) bmp.recycle()
+
+                val outFile = File(
+                    outDir,
+                    "mcos_compressed_${System.currentTimeMillis()}_${scaled.width}x${scaled.height}.jpg"
+                )
+                outFile.outputStream().use { fos ->
+                    scaled.compress(Bitmap.CompressFormat.JPEG, quality, fos)
+                }
+                scaled.recycle()
+                FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", outFile).toString()
+            } catch (_: Exception) {
+                null
+            }
+        }
+    }
+
+    private fun resize(bmp: Bitmap, maxWidth: Int?, maxHeight: Int?): Bitmap {
+        if (maxWidth == null && maxHeight == null) return bmp
+        var w = bmp.width
+        var h = bmp.height
+        if (maxWidth != null && w > maxWidth) {
+            h = (h * maxWidth) / w
+            w = maxWidth
+        }
+        if (maxHeight != null && h > maxHeight) {
+            w = (w * maxHeight) / h
+            h = maxHeight
+        }
+        return if (w == bmp.width && h == bmp.height) bmp
+        else Bitmap.createScaledBitmap(bmp, w, h, true)
     }
 }
 

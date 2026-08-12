@@ -311,7 +311,11 @@ class FilesPlugin : McosPlugin {
             val maxWidth = args["maxWidth"]?.jsonPrimitive?.intOrNull
             val maxHeight = args["maxHeight"]?.jsonPrimitive?.intOrNull
 
-            val compressedPaths = uris.map { uri ->
+            // Use the host media service when available (real bitmap
+            // compression); otherwise fall back to a stub path mapping.
+            val compressedPaths = services?.media?.let { media ->
+                media.compress(uris, quality, maxWidth, maxHeight)
+            } ?: uris.map { uri ->
                 "content://mcos/compressed/${uri.substringAfterLast("/")}"
             }
 
