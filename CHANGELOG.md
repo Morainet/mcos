@@ -10,6 +10,20 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### Implemented — P1 MVP + P2 core (2026-08)
+The repository has moved from design-only to a working implementation:
+
+- **Build**: Gradle Kotlin DSL multi-module (JDK 17, Kotlin 2.0.21, AGP 8.7.3, compileSdk 35, minSdk 26); modules `mcos-sdk`, `mcos-runtime`, `mcos-android`, `plugins/mcos-plugin-{hello,system,camera,files}`.
+- **Command pipeline**: `DslParser` (lexer/parser/canonicalizer, all 8 golden fixtures pass), `ExecutionIr`, `CommandRegistry`, `Executor` (steps, artifacts, confirmation, cancellation), JSON-Schema validation.
+- **Security**: `PermissionKernel` (`decideConfirmation` NORMAL/ELEVATED), `NetworkEgressPolicy` (`decideEgress`), `PromptInjectionDetector`, `RateLimiter` (per-plugin/min), `AuditLog` (append/filter/rotate, sha256 + HMAC chain), `AuthStampSigner`.
+- **Workflow** (P2 full): `WorkflowEngine` — sequential/parallel/if/loop/retry/try/confirm; named `WorkflowStore`; `WorkflowJson` decode; wired into `McosRuntime.runWorkflow` with plan preview.
+- **Event Bus** (P2 full): typed `EventEnvelope` + `EventFilter` (typePrefix + deep-equality `where`), per-subscriber isolation under `SupervisorJob`, bounded channels with drop-oldest backpressure + `EventAuditSink`; P1 run-event channel kept.
+- **Memory** (P2 core): TTL, semantic tags, 4-step fuzzy `resolveRef` with confidence + reason, `CREATED`/`UPDATED`/`CONFLICT` write semantics with cross-path dedup and superseded history.
+- **LLM**: `LlmPlanner`, `OpenAiLlmProvider`, `ChatOrchestrator` (runtime side; Android UI not connected).
+- **Android shell**: Jetpack Compose CLI/Chat UI, `AndroidHostServices` (notifications, camera, files), `ActivityResultBridge`.
+- **Tests**: 361 across all modules (fixtures, executor, permission, audit, workflow W1–W6, event bus ×8, memory M1–M33, plugins, Android).
+- **Docs**: `docs/en/11-implementation-status.md` rewritten from "design-only" to the live status matrix above.
+
 ### Removed
 - Removed the Phase-0 code skeleton and build system to make the repository a clean **design-only** baseline. Deleted:
   - All source modules: `mcos-sdk`, `mcos-runtime`, `mcos-android`, `plugins/mcos-plugin-{hello,system,camera}` (7 Kotlin source files + 1 test + `plugin.json`).
