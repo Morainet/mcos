@@ -24,6 +24,11 @@ The repository has moved from design-only to a working implementation:
 - **Tests**: 361 across all modules (fixtures, executor, permission, audit, workflow W1–W6, event bus ×8, memory M1–M33, plugins, Android).
 - **Docs**: `docs/en/11-implementation-status.md` rewritten from "design-only" to the live status matrix above.
 
+### Security P1 closure (2026-08-12)
+- **Secret Management** (§9.2): `{{secret.<key>}}` template resolution — `security/SecretResolver` + per-plugin `Executor` NetService decorator. Values are resolved from the plugin-scoped `SecureStore` only at outbound-request time, are **never** written back into `ExecutionContext.args`, and unknown keys stay inert; audit redaction honors the `x-mcos-secret` marker (§9.4).
+- **Crash-loop Quarantine** (§15.3): `security/CrashQuarantine` — ≥3 uncaught plugin exceptions within a 60 s sliding window quarantine the plugin (commands unregistered + audit event `plugin.quarantined`); successful invokes reset the window; only explicit re-enable or a new verified version lifts the quarantine.
+- **Tests**: +24 (385 total) — `SecretResolver`, `CrashQuarantine`, `Executor` security integration (A-1/A-2), audit `x-mcos-secret` redaction.
+
 ### Removed
 - Removed the Phase-0 code skeleton and build system to make the repository a clean **design-only** baseline. Deleted:
   - All source modules: `mcos-sdk`, `mcos-runtime`, `mcos-android`, `plugins/mcos-plugin-{hello,system,camera}` (7 Kotlin source files + 1 test + `plugin.json`).

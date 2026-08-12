@@ -80,8 +80,8 @@ Status legend: ✅ implemented · 🟡 partial · ⬜ spec-only (not started). L
 | **Network Egress Policy** | [08](./08-security.md) §12 (`decideEgress`) | P1 | ✅ `security/NetworkEgressPolicy.decideEgress` |
 | **Prompt Injection Detection** | [08](./08-security.md) §11 | P1 (compiler-side) | ✅ `llm/PromptInjectionDetector` |
 | **Rate Limiting** | [08](./08-security.md) §10 | P1 (per-plugin/min) | ✅ `security/RateLimiter` (per-plugin/min) |
-| **Secret Management** (`{{secret}}` templates) | [08](./08-security.md) §9 | P1 | ⬜ not implemented |
-| **Crash-loop Quarantine** | [08](./08-security.md) §15.3 | P1 | ⬜ not implemented |
+| **Secret Management** (`{{secret}}` templates) | [08](./08-security.md) §9 | P1 | ✅ `security/SecretResolver` + `Executor` NetService decorator (values never written back into args; unknown keys stay inert; `x-mcos-secret` audit redaction) |
+| **Crash-loop Quarantine** | [08](./08-security.md) §15.3 | P1 | ✅ `security/CrashQuarantine` (3 crashes / 60s → quarantine + unregister + audit `plugin.quarantined`; success resets window; explicit re-enable only) |
 | **Process Isolation** | [08](./08-security.md) §8 | P1 (best effort) → P3 (third-party default) | 🟡 best-effort in-process concurrency only |
 | **Workflow Engine** | [05](./05-workflow.md) | P2 | ✅ `workflow/WorkflowEngine` — sequential/parallel/if/loop/retry/try/confirm, named store + JSON decode; wired into `McosRuntime.runWorkflow` (`d533c05`) |
 | **Event Bus** | [03](./03-runtime.md) §11 | P2 | ✅ `events/EventBus` — typed envelopes, prefix+where filters, subscriber isolation, drop-oldest backpressure + audit (`22ba52b`) |
@@ -89,9 +89,9 @@ Status legend: ✅ implemented · 🟡 partial · ⬜ spec-only (not started). L
 | **Enterprise Policy** | [08](./08-security.md) §13 | P3 | ⬜ not started |
 | **Marketplace** | [09](./09-marketplace.md) | P3 | ⬜ not started |
 
-> **Done:** the `DslParser` (the highest-leverage first step) shipped together with the rest of the P1 pipeline. The P1 safety floor is implemented for `decideConfirmation`, `decideEgress`, prompt-injection checks and rate limiting; **crash quarantine and `{{secret}}` templates remain open**.
+> **Done:** the `DslParser` (the highest-leverage first step) shipped together with the rest of the P1 pipeline. The P1 safety floor is closed: `decideConfirmation`, `decideEgress`, prompt-injection checks, rate limiting, **`{{secret}}` template resolution (§9.2)** and **crash-loop quarantine (§15.3)** are all implemented.
 >
-> **Test baseline (2026-08-12):** 361 tests across all modules — parser fixtures, executor, permission, audit, workflow (W1-W6), event bus (8), memory (M1-M33), plugins, Android.
+> **Test baseline (2026-08-12):** 385 tests across all modules — parser fixtures, executor, permission, audit (incl. `x-mcos-secret` redaction), workflow (W1-W6), event bus (8), memory (M1-M33), secret resolver, crash quarantine, plugins, Android.
 
 ---
 
@@ -141,7 +141,7 @@ Aggregated from the "MVP vs V1" phasing tables in [05](./05-workflow.md) §15, [
 | Marketplace | spec done | — | ⬜ sideload debug | public index + signing ([09 §15](./09-marketplace.md)) |
 | Process Isolation | spec done | 🟡 best effort (in-process) | — | third-party default |
 | Enterprise Policy | spec done | — | — | ⬜ allowlist/denylist ([08 §13](./08-security.md)) |
-| Crash-loop Quarantine | spec done | ⬜ **not implemented** | ✅ | ✅ |
+| Crash-loop Quarantine | spec done | ✅ | ✅ | ✅ |
 
 ---
 

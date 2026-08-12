@@ -11,10 +11,12 @@ import com.mcos.runtime.registry.CommandRegistry
 import com.mcos.runtime.registry.RegistryEntry
 import com.mcos.runtime.registry.ResolveResult
 import com.mcos.runtime.security.AuthStampSigner
+import com.mcos.runtime.security.CrashQuarantine
 import com.mcos.runtime.security.EgressDecision
 import com.mcos.runtime.security.NetworkEgressPolicy
 import com.mcos.runtime.security.RateLimitResult
 import com.mcos.runtime.security.RateLimiter
+import com.mcos.runtime.security.SecretResolver
 import com.mcos.runtime.validate.SchemaValidator
 import com.mcos.runtime.validate.ValidationError as ValError
 import com.mcos.runtime.validate.ValidationResult
@@ -53,6 +55,8 @@ import kotlin.coroutines.cancellation.CancellationException
  * @param authStampSigner Optional [AuthStampSigner] for Stage 6 AuthStamp
  *        signature verification and signing. If null, supplied stamps are
  *        trusted without signature checks (permissive mode).
+ * @param quarantine Optional [CrashQuarantine] for crash-loop detection
+ *        (08-security.md §15.3). If null, crash-loop quarantine is disabled.
  */
 class Executor(
     private val registry: CommandRegistry,
@@ -62,6 +66,7 @@ class Executor(
     private val rateLimiter: RateLimiter? = null,
     private val egressPolicy: NetworkEgressPolicy? = null,
     private val authStampSigner: AuthStampSigner? = null,
+    private val quarantine: CrashQuarantine? = null,
 ) {
 
     private val schemaValidator = SchemaValidator()
@@ -86,6 +91,16 @@ class Executor(
             return CommandResult.Err(
                 code = McosErrorCode.UNKNOWN_COMMAND.name,
                 message = "Unknown command: $commandId",
+                retryable = false
+            )
+        }
+        // Crash-loop quarantine gate (08-security.md §15.3): a quarantined
+        // plugin refuses to execute even if its commands were re-registered.
+        val pluginId = resolved.entry.descriptor.pluginId
+        if (quarantine?.isQuarantined(pluginId) == true) {
+            return CommandResult.Err(
+                code = McosErrorCode.UNAVAILABLE.name,
+                message = "Plugin '$pluginId' is quarantined (crash-loop) and cannot execute",
                 retryable = false
             )
         }
@@ -262,7 +277,10 @@ class Executor(
             },
             deadline = System.currentTimeMillis() + timeoutMs,
             progress = progress,
-            services = hostServices
+            // Stage 4 (Expand) — `{{secret.*}}` templates (08-security.md §9.2)
+            // are resolved by the per-plugin NetService decorator; args keep
+            // the template form and values never enter the audit trail.
+            services = secretResolvingServices()
         )
 
         var result: CommandResult
@@ -301,6 +319,13 @@ class Executor(
                 retryable = false
             )
             outcome = RunOutcome.FAILED
+            // §15.3 — uncaught plugin exceptions count as crashes.
+            recordPluginCrash(entry, e)
+        }
+
+        // A successful invocation resets the crash-loop window (§15.3).
+        if (result is CommandResult.Ok) {
+            quarantine?.recordSuccess(entry.descriptor.pluginId)
         }
 
         // Stage 10 — Audit recording
@@ -350,6 +375,87 @@ class Executor(
      */
     private fun sanitize(e: Throwable): String {
         return e.message?.take(200) ?: e.javaClass.simpleName
+    }
+
+    // ─── Secret resolution (§9.2) ───────────────────────────────────────
+
+    /**
+     * Per-plugin [HostServices] facade whose [NetService] resolves
+     * `{{secret.<key>}}` templates (08-security.md §9.2) from the plugin's
+     * scoped [SecureStore] before the request leaves the runtime. All other
+     * services are delegated unchanged, and the resolved value is never
+     * written back into ExecutionContext.args.
+     */
+    private fun secretResolvingServices(): HostServices {
+        val original = hostServices
+        return object : HostServices {
+            override val files: FileService get() = original.files
+            override val net: NetService get() = SecretResolvingNetService(original.net, original.secureStore)
+            override val ui: UiService get() = original.ui
+            override val secureStore: SecureStore get() = original.secureStore
+            override val clock: Clock get() = original.clock
+            override val json: JsonService get() = original.json
+            override val memory: MemoryFacade get() = original.memory
+            override val notifications: NotificationService? get() = original.notifications
+            override val media: MediaService? get() = original.media
+        }
+    }
+
+    /**
+     * [NetService] decorator that resolves `{{secret.<key>}}` templates in
+     * request headers and body before delegating. Templates whose key is not
+     * present in the plugin-scoped [SecureStore] stay inert — a plugin can
+     * only resolve secrets inside its own namespace.
+     */
+    private class SecretResolvingNetService(
+        private val delegate: NetService,
+        private val store: SecureStore,
+    ) : NetService {
+        override suspend fun request(
+            method: String,
+            url: String,
+            body: String?,
+            headers: Map<String, String>,
+        ): NetResponse {
+            val resolvedHeaders = headers.mapValues { (_, v) -> SecretResolver.resolve(v) { store.get(it) } }
+            val resolvedBody = body?.let { SecretResolver.resolve(it) { store.get(it) } }
+            return delegate.request(method, url, resolvedBody, resolvedHeaders)
+        }
+    }
+
+    // ─── Crash-loop quarantine (§15.3) ──────────────────────────────────
+
+    /**
+     * Crash-loop quarantine (08-security.md §15.3): when a plugin crashes
+     * >= threshold times within the sliding window, its commands are removed
+     * from the registry and an audit event `plugin.quarantined` is emitted.
+     */
+    private fun recordPluginCrash(entry: RegistryEntry, e: Exception) {
+        val q = quarantine ?: return
+        val pluginId = entry.descriptor.pluginId
+        if (q.recordCrash(pluginId, e.stackTraceToString())) {
+            registry.unregister(pluginId)
+            auditLog?.append(
+                RunRecord(
+                    runId = UUID.randomUUID().toString(),
+                    timestamp = System.currentTimeMillis(),
+                    source = "SECURITY",
+                    commandId = entry.descriptor.id,
+                    steps = listOf(
+                        StepRecord(
+                            commandId = entry.descriptor.id,
+                            pluginId = pluginId,
+                            ok = false,
+                            code = "plugin.quarantined",
+                            message = q.quarantineReason(pluginId)?.take(500),
+                            durationMs = 0,
+                        )
+                    ),
+                    totalDurationMs = 0,
+                    outcome = RunOutcome.FAILED,
+                )
+            )
+        }
     }
 
     /**

@@ -275,4 +275,38 @@ class AuditLogTest {
             assertTrue(runs.any { it.outcome == outcome })
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // A11: Secret redaction (§9.4 x-mcos-secret marker)
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `A11-x-mcos-secret marker redacts scalar members`() {
+        val ir = """{"auth":{"x-mcos-secret":true,"value":"s3cr3t","mode":"bearer"},"ok":true}"""
+        val out = auditLog.redactSecrets(ir)
+        assertTrue(out.contains("\"value\":\"***REDACTED***\""))
+        assertTrue(out.contains("\"mode\":\"***REDACTED***\""))
+        assertFalse(out.contains("s3cr3t"))
+        // the marker itself is kept so schema semantics remain visible
+        assertTrue(out.contains("\"x-mcos-secret\":true"))
+        // sibling non-secret object member is not touched
+        assertTrue(out.contains("\"ok\":true"))
+    }
+
+    @Test
+    fun `A11-name-based redaction still applies alongside the marker`() {
+        val ir = """{"password":"hunter2","x-mcos-secret":true,"note":"hi"}"""
+        val out = auditLog.redactSecrets(ir)
+        assertTrue(out.contains("\"password\":\"***REDACTED***\""))
+        assertTrue(out.contains("\"note\":\"***REDACTED***\""))
+        assertFalse(out.contains("hunter2"))
+    }
+
+    @Test
+    fun `A11-object without marker keeps scalar values`() {
+        val ir = """{"auth":{"value":"s3cr3t","mode":"bearer"},"ok":true}"""
+        val out = auditLog.redactSecrets(ir)
+        assertTrue(out.contains("s3cr3t"))
+        assertFalse(out.contains("REDACTED"))
+    }
 }
