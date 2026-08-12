@@ -248,12 +248,18 @@ class AuditLog {
     private fun redactElement(element: JsonElement): JsonElement {
         return when (element) {
             is JsonObject -> {
+                // 08-security.md §9.4 — an object carrying the x-mcos-secret
+                // marker is secret regardless of its member names: every
+                // scalar member is redacted (the marker itself is kept).
+                val marked = element["x-mcos-secret"]?.jsonPrimitive?.booleanOrNull == true ||
+                    element["xMcosSecret"]?.jsonPrimitive?.booleanOrNull == true
                 val result = linkedMapOf<String, JsonElement>()
                 for ((key, value) in element) {
-                    result[key] = if (isSecretField(key)) {
-                        JsonPrimitive("***REDACTED***")
-                    } else {
-                        redactElement(value)
+                    result[key] = when {
+                        key == "x-mcos-secret" || key == "xMcosSecret" -> value
+                        isSecretField(key) -> JsonPrimitive("***REDACTED***")
+                        marked && value is JsonPrimitive -> JsonPrimitive("***REDACTED***")
+                        else -> redactElement(value)
                     }
                 }
                 JsonObject(result)

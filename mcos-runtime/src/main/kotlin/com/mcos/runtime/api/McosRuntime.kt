@@ -12,6 +12,7 @@ import com.mcos.runtime.permission.PermissionKernel
 import com.mcos.runtime.registry.CommandRegistry
 import com.mcos.runtime.registry.ResolveResult as RegistryResolveResult
 import com.mcos.runtime.security.AuthStampSigner
+import com.mcos.runtime.security.CrashQuarantine
 import com.mcos.runtime.security.NetworkEgressPolicy
 import com.mcos.runtime.security.RateLimiter
 import com.mcos.runtime.workflow.WorkflowEngine
@@ -444,6 +445,9 @@ class McosRuntime internal constructor(
         // secure out of the box; pass null to disable.
         private var authStampSigner: AuthStampSigner? = AuthStampSigner()
 
+        // Crash-loop quarantine (08-security.md §15.3) is on by default.
+        private var quarantine: CrashQuarantine? = CrashQuarantine()
+
         fun withParser(parser: DslParser) = apply { this.parser = parser }
         fun withRegistry(registry: CommandRegistry) = apply { this.registry = registry }
         fun withPermissionKernel(kernel: PermissionKernel) = apply { this.permissionKernel = kernel }
@@ -453,6 +457,7 @@ class McosRuntime internal constructor(
         fun withWorkflowStore(store: WorkflowStore) = apply { this.workflowStore = store }
         fun withWorkflowEngine(engine: WorkflowEngine) = apply { this.workflowEngine = engine }
         fun withAuthStampSigner(signer: AuthStampSigner?) = apply { this.authStampSigner = signer }
+        fun withQuarantine(quarantine: CrashQuarantine?) = apply { this.quarantine = quarantine }
 
         fun build(): McosRuntime {
             val reg = registry ?: CommandRegistry()
@@ -463,6 +468,7 @@ class McosRuntime internal constructor(
                 rateLimiter = RateLimiter(),
                 egressPolicy = NetworkEgressPolicy(),
                 authStampSigner = authStampSigner,
+                quarantine = quarantine,
             )
 
             // The workflow engine defaults to the same executor, so control
@@ -490,10 +496,17 @@ class McosRuntime internal constructor(
 class StubHostServices(
     override val memory: MemoryFacade,
 ) : com.mcos.sdk.HostServices {
+    private val stubSecureStore = object : com.mcos.sdk.SecureStore {
+        private val entries = ConcurrentHashMap<String, String>()
+        override suspend fun get(key: String): String? = entries[key]
+        override suspend fun put(key: String, value: String) { entries[key] = value }
+        override suspend fun remove(key: String) { entries.remove(key) }
+    }
+
     override val files: com.mcos.sdk.FileService get() = error("FileService not available in stub")
     override val net: com.mcos.sdk.NetService get() = error("NetService not available in stub")
     override val ui: com.mcos.sdk.UiService get() = error("UiService not available in stub")
-    override val secureStore: com.mcos.sdk.SecureStore get() = error("SecureStore not available in stub")
+    override val secureStore: com.mcos.sdk.SecureStore get() = stubSecureStore
     override val clock: com.mcos.sdk.Clock get() = object : com.mcos.sdk.Clock {
         override fun nowMs(): Long = System.currentTimeMillis()
     }
