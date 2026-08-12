@@ -29,6 +29,11 @@ The repository has moved from design-only to a working implementation:
 - **Crash-loop Quarantine** (§15.3): `security/CrashQuarantine` — ≥3 uncaught plugin exceptions within a 60 s sliding window quarantine the plugin (commands unregistered + audit event `plugin.quarantined`); successful invokes reset the window; only explicit re-enable or a new verified version lifts the quarantine.
 - **Tests**: +24 (385 total) — `SecretResolver`, `CrashQuarantine`, `Executor` security integration (A-1/A-2), audit `x-mcos-secret` redaction.
 
+### Memory P2 closure (2026-08-12)
+- **Episodic Memory** (07 §8): `memory/EpisodicMemory` — run-summary store with time-decay recall (0–7d ×1.0, 7–30d ×0.5, 30–90d ×0.2, >90d ×0.05, §8.1), Planner first-use check (§8.3), 90-day retention + 50→5 auto-summarize (§8.2), `MemoryExport`-shaped JSON export.
+- **Shared similarity**: `fuzzyScore` extracted into `memory/FuzzyScore` (stand-in embedding, §6.0 Step 3) and reused by both `MemoryStore` and `EpisodicMemory`.
+- **Tests**: +14 (399 total) — episodic `EpisodicMemoryTest` E1–E14; all M1–M33 fuzzy-ref tests stay green on the shared scorer.
+
 ### Removed
 - Removed the Phase-0 code skeleton and build system to make the repository a clean **design-only** baseline. Deleted:
   - All source modules: `mcos-sdk`, `mcos-runtime`, `mcos-android`, `plugins/mcos-plugin-{hello,system,camera}` (7 Kotlin source files + 1 test + `plugin.json`).
