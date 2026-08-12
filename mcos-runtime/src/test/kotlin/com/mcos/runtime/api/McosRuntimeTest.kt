@@ -106,6 +106,83 @@ class McosRuntimeTest {
         assertEquals(ExecutionStatus.FAILED, handle.status)
     }
 
+    @Test
+    fun `R3-1-preview with null argument does not crash`() = runBlocking {
+        registerCommand("test.hello", SideEffectClass.read)
+
+        val preview = runtime.preview(
+            ExecuteRequest(
+                source = Source.CHAT,
+                payload = Payload.DslText("test.hello(greeting=\"hi\", meta=null)")
+            )
+        )
+
+        assertEquals(1, preview.commandCount)
+        assertEquals("null", preview.commands[0].args["meta"], "JsonNull should be surfaced as \"null\"")
+    }
+
+    @Test
+    fun `R3-2-preview reports parse errors in warnings`() = runBlocking {
+        val preview = runtime.preview(
+            ExecuteRequest(
+                source = Source.CHAT,
+                payload = Payload.DslText("test.hello(greeting=\"hi\"")
+            )
+        )
+
+        assertEquals(0, preview.commandCount)
+        assertTrue(preview.warnings.any { it.contains("Invalid payload") }, "parse failure should be reported")
+    }
+
+    @Test
+    fun `R3-3-execute parse error returns failed handle with details`() = runBlocking {
+        val handle = runtime.execute(
+            ExecuteRequest(
+                source = Source.CHAT,
+                payload = Payload.DslText("test.hello(greeting=\"hi\"")
+            )
+        )
+
+        assertEquals(ExecutionStatus.FAILED, handle.status)
+
+        val events = mutableListOf<RuntimeEvent>()
+        val job = launch {
+            runtime.observe(handle.runId).collect { events.add(it) }
+        }
+        kotlinx.coroutines.delay(300)
+        job.cancel()
+
+        val failed = events.filterIsInstance<RuntimeEvent.RunFailed>().single()
+        assertTrue(failed.error.contains("Invalid payload"), "should carry parse details: ${failed.error}")
+        assertTrue(failed.error.contains("PARSE_ERROR"), "should carry error code: ${failed.error}")
+    }
+
+    @Test
+    fun `R3-4-execute invalid IR JSON returns failed handle with details`() = runBlocking {
+        val badJson = buildJsonObject {
+            put("type", "teleport")
+            put("commandId", "test.a")
+        }
+        val handle = runtime.execute(
+            ExecuteRequest(
+                source = Source.CHAT,
+                payload = Payload.IrJson(badJson)
+            )
+        )
+
+        assertEquals(ExecutionStatus.FAILED, handle.status)
+
+        val events = mutableListOf<RuntimeEvent>()
+        val job = launch {
+            runtime.observe(handle.runId).collect { events.add(it) }
+        }
+        kotlinx.coroutines.delay(300)
+        job.cancel()
+
+        val failed = events.filterIsInstance<RuntimeEvent.RunFailed>().single()
+        assertTrue(failed.error.contains("invalid_ir"), "should carry error code: ${failed.error}")
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // R4-R5: Preview
     // ═══════════════════════════════════════════════════════════════
