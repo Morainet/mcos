@@ -141,11 +141,57 @@ interface MemoryFacade {
     suspend fun resolveRef(ref: String, semanticType: String? = null): ResolveResult
 }
 
+/**
+ * Result of reference resolution, per [07-memory.md 6.0].
+ *
+ * - [Resolved] carries the concrete id and a confidence score in `[0..1]`.
+ * - [Ambiguous] lists candidate paths when the top two scores differ by less
+ *   than the ambiguity threshold — the Planner should emit a `Clarify`.
+ * - [NotFound] carries a machine-readable reason
+ *   (e.g. `"ref_unresolvable"`, `"filtered_out"`).
+ */
 sealed class ResolveResult {
-    data class Resolved(val id: String) : ResolveResult()
+    data class Resolved(val id: String, val confidence: Float = 1.0f) : ResolveResult()
     data class Ambiguous(val candidates: List<String>) : ResolveResult()
-    data object NotFound : ResolveResult()
+    data class NotFound(val reason: String = "ref_unresolvable") : ResolveResult()
 }
+
+/**
+ * Write outcome for [MemoryStore.put], per [07-memory.md 5.1].
+ */
+enum class WriteStatus { CREATED, UPDATED, CONFLICT, REJECTED }
+
+/**
+ * Risk level of a memory fact; drives the conflict confirmation policy
+ * ([07-memory.md 5.2]).
+ */
+enum class MemoryCategory { PREFERENCE, PLACE, PERSON, DEVICE, PAYMENT, PERMISSION, OTHER }
+
+/**
+ * Details of a cross-path semantic conflict detected during a write.
+ */
+data class MemoryConflict(
+    val existingPath: String,
+    val existingValue: kotlinx.serialization.json.JsonElement,
+    val similarity: Float,
+    val category: MemoryCategory,
+)
+
+/**
+ * Result of a memory write, per [07-memory.md 5.1].
+ *
+ * @property status CREATED (new fact), UPDATED (same-path overwrite, old value
+ *   soft-deleted into history), CONFLICT (cross-path semantic duplicate, write
+ *   withheld), or REJECTED (category policy refused the write).
+ * @property supersededPath History key of the replaced value, e.g.
+ *   `"people.tom.phone@2026-07-01T..."`, when [status] is UPDATED.
+ * @property conflict Details when [status] is CONFLICT.
+ */
+data class MemoryWriteResult(
+    val status: WriteStatus,
+    val supersededPath: String? = null,
+    val conflict: MemoryConflict? = null,
+)
 
 // ─── Supporting value types ──────────────────────────────────────────────
 

@@ -85,7 +85,7 @@ class StubHelloHostServices : HostServices {
     override val net: NetService get() = error("not available")
     override val memory: MemoryFacade = object : MemoryFacade {
         override suspend fun get(path: String): JsonElement? = null
-        override suspend fun resolveRef(ref: String, semanticType: String?): ResolveResult = ResolveResult.NotFound
+        override suspend fun resolveRef(ref: String, semanticType: String?): ResolveResult = ResolveResult.NotFound()
     }
     override val ui: UiService = object : UiService {
         override suspend fun startActivityForResult(intent: Map<String, String>): Map<String, String>? = null

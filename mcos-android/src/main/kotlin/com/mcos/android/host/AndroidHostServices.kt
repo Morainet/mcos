@@ -311,6 +311,6 @@ class InMemoryFacade : MemoryFacade {
     override suspend fun get(path: String): JsonElement? = store[path]
 
     override suspend fun resolveRef(ref: String, semanticType: String?): ResolveResult {
-        return ResolveResult.NotFound // P2: episodic + fuzzy ref resolution
+        return ResolveResult.NotFound() // P2: episodic + fuzzy ref resolution
     }
 }

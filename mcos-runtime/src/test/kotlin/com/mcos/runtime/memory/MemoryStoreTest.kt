@@ -1,6 +1,8 @@
 package com.mcos.runtime.memory
 
+import com.mcos.sdk.MemoryCategory
 import com.mcos.sdk.ResolveResult
+import com.mcos.sdk.WriteStatus
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonPrimitive
@@ -336,5 +338,102 @@ class MemoryStoreTest {
         val homeResult = store.resolveRef("home")
         assertIs<ResolveResult.Resolved>(homeResult)
         assertEquals("user.locations.home", homeResult.id)
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // M27-M29: Fuzzy reference resolution (07-memory.md 6.0)
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `M27-fuzzy ref matches alias or abbreviation`() = runBlocking {
+        store.putString("devices.living_room_lamp", "on", tags = setOf("客厅灯"))
+
+        // User says "客厅灯的开关" — the ref contains the tag verbatim,
+        // so the alias containment scores 0.85.
+        val result = store.resolveRef("客厅灯的开关")
+        assertIs<ResolveResult.Resolved>(result)
+        assertEquals("devices.living_room_lamp", result.id)
+        assertEquals(0.85f, result.confidence)
+    }
+
+    @Test
+    fun `M28-unresolvable ref returns NotFound with reason`() = runBlocking {
+        store.putString("facts.home", "123", tags = setOf("home"))
+
+        val result = store.resolveRef("xyzzy")
+        assertIs<ResolveResult.NotFound>(result)
+        assertEquals("ref_unresolvable", result.reason)
+    }
+
+    @Test
+    fun `M29-exact ref resolves with full confidence`() = runBlocking {
+        store.putString("facts.home", "123", tags = setOf("home"))
+
+        val result = store.resolveRef("home")
+        assertIs<ResolveResult.Resolved>(result)
+        assertEquals(1.0f, result.confidence)
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // M30-M33: Write semantics (07-memory.md 5.1)
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `M30-new path write returns CREATED`() = runBlocking {
+        val result = store.putString("prefs.theme", "dark")
+        assertEquals(WriteStatus.CREATED, result.status)
+        assertNull(result.supersededPath)
+        assertNull(result.conflict)
+        assertEquals("dark", store.get("prefs.theme")!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `M31-same path write returns UPDATED and soft-deletes old value`() = runBlocking {
+        store.putString("facts.theme", "light", tags = setOf("preference"))
+        val result = store.putString("facts.theme", "dark", tags = setOf("preference"))
+
+        assertEquals(WriteStatus.UPDATED, result.status)
+        assertNotNull(result.supersededPath)
+        assertTrue(result.supersededPath!!.startsWith("facts.theme@"))
+
+        // Old value kept in history, new value is current.
+        val history = store.history("facts.theme")
+        assertEquals(1, history.size)
+        assertEquals("light", history[0].second.value.jsonPrimitive.content)
+        assertEquals("dark", store.get("facts.theme")!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `M32-cross path semantic duplicate returns CONFLICT and withholds write`() = runBlocking {
+        store.putString(
+            "places.office", "北京市朝阳区望京SOHO",
+            category = MemoryCategory.PLACE,
+        )
+        val result = store.putString(
+            "places.company", "北京市朝阳区望京SOHO大厦",
+            category = MemoryCategory.PLACE,
+        )
+
+        assertEquals(WriteStatus.CONFLICT, result.status)
+        assertNull(store.get("places.company"), "conflicting write must be withheld")
+        assertEquals("places.office", result.conflict!!.existingPath)
+        assertEquals(MemoryCategory.PLACE, result.conflict!!.category)
+        assertTrue(result.conflict!!.similarity >= MemoryStore.CONFLICT_THRESHOLD)
+    }
+
+    @Test
+    fun `M33-checkConflict false skips dedup check`() = runBlocking {
+        store.putString(
+            "places.office", "北京市朝阳区望京SOHO",
+            category = MemoryCategory.PLACE,
+        )
+        val result = store.putString(
+            "places.company", "北京市朝阳区望京SOHO大厦",
+            category = MemoryCategory.PLACE,
+            checkConflict = false,
+        )
+
+        assertEquals(WriteStatus.CREATED, result.status)
+        assertEquals("北京市朝阳区望京SOHO大厦", store.get("places.company")!!.jsonPrimitive.content)
     }
 }

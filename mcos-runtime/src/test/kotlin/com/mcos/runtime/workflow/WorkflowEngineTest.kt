@@ -616,7 +616,7 @@ class WorkflowEngineTest {
         }
         override val memory = object : MemoryFacade {
             override suspend fun get(path: String): JsonElement? = null
-            override suspend fun resolveRef(ref: String, semanticType: String?): ResolveResult = ResolveResult.NotFound
+            override suspend fun resolveRef(ref: String, semanticType: String?): ResolveResult = ResolveResult.NotFound()
         }
     }
 }
