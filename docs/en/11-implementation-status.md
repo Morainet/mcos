@@ -85,13 +85,13 @@ Status legend: ✅ implemented · 🟡 partial · ⬜ spec-only (not started). L
 | **Process Isolation** | [08](./08-security.md) §8 | P1 (best effort) → P3 (third-party default) | 🟡 best-effort in-process concurrency only |
 | **Workflow Engine** | [05](./05-workflow.md) | P2 | ✅ `workflow/WorkflowEngine` — sequential/parallel/if/loop/retry/try/confirm, named store + JSON decode; wired into `McosRuntime.runWorkflow` (`d533c05`) |
 | **Event Bus** | [03](./03-runtime.md) §11 | P2 | ✅ `events/EventBus` — typed envelopes, prefix+where filters, subscriber isolation, drop-oldest backpressure + audit (`22ba52b`) |
-| **Memory** | [07](./07-memory.md) | P2 | ✅ `memory/MemoryStore` — TTL, tags, fuzzy resolveRef + confidence, CREATED/UPDATED/CONFLICT write semantics, superseded history (`d549236`) + ✅ `memory/EpisodicMemory` — run summaries, time-decay recall (§8.1), 50→5 auto-summarize + 90-day retention (§8.2) |
+| **Memory** | [07](./07-memory.md) | P2 | ✅ `memory/MemoryStore` — TTL, tags, fuzzy resolveRef + confidence, CREATED/UPDATED/CONFLICT write semantics, superseded history (`d549236`) + ✅ `memory/EpisodicMemory` — run summaries, time-decay recall (§8.1), 50→5 auto-summarize + 90-day retention (§8.2) + ✅ `memory/RunSummarizer` — §9.4 run-completion hook: commands/workflows record `EpisodicRecord` (entities from `namespace.path` args, summary from DSL text) |
 | **Enterprise Policy** | [08](./08-security.md) §13 | P3 | ⬜ not started |
 | **Marketplace** | [09](./09-marketplace.md) | P3 | ⬜ not started |
 
 > **Done:** the `DslParser` (the highest-leverage first step) shipped together with the rest of the P1 pipeline. The P1 safety floor is closed: `decideConfirmation`, `decideEgress`, prompt-injection checks, rate limiting, **`{{secret}}` template resolution (§9.2)** and **crash-loop quarantine (§15.3)** are all implemented.
 >
-> **Test baseline (2026-08-12):** 399 tests across all modules — parser fixtures, executor, permission, audit (incl. `x-mcos-secret` redaction), workflow (W1-W6), event bus (8), memory (M1-M33 + episodic E1-E14), secret resolver, crash quarantine, plugins, Android.
+> **Test baseline (2026-08-12):** 410 tests across all modules — parser fixtures, executor, permission, audit (incl. `x-mcos-secret` redaction), workflow (W1-W6), event bus (8), memory (M1-M33 + episodic E1-E14 + summarizer S1-S11), secret resolver, crash quarantine, plugins, Android.
 
 ---
 
@@ -135,7 +135,7 @@ Aggregated from the "MVP vs V1" phasing tables in [05](./05-workflow.md) §15, [
 | Audit | spec done | ✅ **implemented** basic | ✅ **implemented** encrypted + export (HMAC chain) | remote attestation |
 | Workflow | spec done | ✅ sequence | ✅ **implemented** parallel / if / loop / retry / try / confirm | — |
 | Event Bus | spec done | ✅ run-event channel | ✅ **implemented** full (envelopes, filters, isolation, backpressure) | — |
-| Memory | spec done | ✅ profile + remember | ✅ fuzzy refs + conflict detection + **episodic layer** (E1-E14); cloud sync open | cloud sync |
+| Memory | spec done | ✅ profile + remember | ✅ fuzzy refs + conflict detection + **episodic layer** (E1-E14) + **run-completion summarizer** (S1-S11, §9.4); cloud sync open | cloud sync |
 | Planner | spec done | ✅ 1 provider, chat→DSL | 🟡 multi-provider + probes open ([06 §17](./06-agent.md)) | — |
 | Plugins | spec done | ✅ hello + system + camera + files (20+ commands, [10 §4.3.1](./10-roadmap.md)) | ⬜ IoT + Intent | MCP spike (P2) / MCP production + marketplace (P3) |
 | Marketplace | spec done | — | ⬜ sideload debug | public index + signing ([09 §15](./09-marketplace.md)) |
@@ -160,7 +160,7 @@ Steps 1–7 and 10 are **implemented** (2026-08-12); 8–9 are partially wired t
 9. 🟡 **`files` plugin** — `photo.search` / `photo.compress` implemented; Android gallery search pending. Per [10](./10-roadmap.md) §4.3.
 10. ✅ **One LLM provider** — `LlmPlanner` + OpenAI provider; utterance → single command / short sequence. Per [06](./06-agent.md) §3. Android chat UI not connected.
 
-**Next up (suggested):** wire the Planner into the Android chat shell (needs an API key), then connect the episodic Memory layer to workflow completion (Summarizer, 07-memory.md §13), then multi-provider Planner probes (06 §17).
+**Next up (suggested):** wire the Planner into the Android chat shell (needs an API key), then multi-provider Planner probes (06 §17), then the cloud-sync Memory tier (§16).
 
 ---
 

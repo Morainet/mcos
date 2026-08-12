@@ -6,7 +6,10 @@ import com.mcos.runtime.executor.Command
 import com.mcos.runtime.executor.Executor
 import com.mcos.runtime.ir.ExecutionIr
 import com.mcos.runtime.ir.ParseResult
+import com.mcos.runtime.memory.EpisodicMemory
+import com.mcos.runtime.memory.EpisodicOutcome
 import com.mcos.runtime.memory.MemoryStore
+import com.mcos.runtime.memory.RunSummarizer
 import com.mcos.runtime.parse.DslParser
 import com.mcos.runtime.permission.PermissionKernel
 import com.mcos.runtime.registry.CommandRegistry
@@ -18,6 +21,7 @@ import com.mcos.runtime.security.RateLimiter
 import com.mcos.runtime.workflow.WorkflowEngine
 import com.mcos.runtime.workflow.WorkflowJson
 import com.mcos.runtime.workflow.WorkflowOutcome
+import com.mcos.runtime.workflow.WorkflowResult
 import com.mcos.runtime.workflow.WorkflowStep
 import com.mcos.runtime.workflow.WorkflowStore
 import com.mcos.sdk.CommandResult
@@ -68,6 +72,7 @@ import java.util.concurrent.ConcurrentHashMap
  * @param eventBus The event bus for publishing runtime events.
  * @param workflowStore The registry of named workflow definitions.
  * @param workflowEngine The engine that executes workflow definitions.
+ * @param episodicMemory Archival-tier store for run summaries (§8).
  */
 class McosRuntime internal constructor(
     private val parser: DslParser,
@@ -78,7 +83,9 @@ class McosRuntime internal constructor(
     private val eventBus: EventBus,
     private val workflowStore: WorkflowStore,
     private val workflowEngine: WorkflowEngine,
+    private val episodicMemory: EpisodicMemory,
 ) {
+    private val summarizer = RunSummarizer(episodicMemory)
     // ─── Active run tracking ─────────────────────────────────────────────
 
     private val activeRuns = ConcurrentHashMap<String, Job>()
@@ -155,8 +162,8 @@ class McosRuntime internal constructor(
             val startTime = System.currentTimeMillis()
             try {
                 when (plan) {
-                    is Plan.Commands -> runCommands(runId, plan.commands, startTime, timestamp)
-                    is Plan.Workflow -> runWorkflow(runId, plan.step, startTime, timestamp)
+                    is Plan.Commands -> runCommands(runId, plan.commands, startTime, timestamp, request.payload)
+                    is Plan.Workflow -> runWorkflow(runId, plan.step, startTime, timestamp, request.payload)
                     is Plan.ParseFailed -> Unit // unreachable: intercepted above
                 }
             } catch (e: CancellationException) {
@@ -257,6 +264,11 @@ class McosRuntime internal constructor(
     fun memory(): MemoryFacade = memory
 
     /**
+     * Access the episodic (run-summary) memory store (§8).
+     */
+    fun episodicMemory(): EpisodicMemory = episodicMemory
+
+    /**
      * Access the event bus.
      */
     fun events(): EventBus = eventBus
@@ -322,6 +334,7 @@ class McosRuntime internal constructor(
         commands: List<Command>,
         startTime: Long,
         timestamp: Long,
+        payload: Payload,
     ) {
         eventBus.publish(runId, RuntimeEvent.RunStarted(runId, commands.firstOrNull()?.id, timestamp))
 
@@ -353,6 +366,7 @@ class McosRuntime internal constructor(
                             RuntimeEvent.ConfirmationNeeded(runId, cmd.id, result.message)
                         )
                     }
+                    summarize(runId, commands, payload, EpisodicOutcome.FAILED)
                     val totalDuration = System.currentTimeMillis() - startTime
                     eventBus.publish(runId, RuntimeEvent.RunFailed(runId, result.message))
                     return
@@ -360,8 +374,27 @@ class McosRuntime internal constructor(
             }
         }
 
+        summarize(runId, commands, payload, EpisodicOutcome.SUCCESS)
         val totalDuration = System.currentTimeMillis() - startTime
         eventBus.publish(runId, RuntimeEvent.RunSucceeded(runId, totalDuration))
+    }
+
+    /**
+     * Record the run in the episodic memory (07-memory.md §9.4). The summary
+     * text comes from the raw DSL payload; the JSON/IR payloads fall back to
+     * the command-id listing. Entities are memory paths referenced by the
+     * command arguments.
+     */
+    private fun summarize(runId: String, commands: List<Command>, payload: Payload, outcome: EpisodicOutcome) {
+        val raw = (payload as? Payload.DslText)?.text
+        summarizer.summarize(
+            runId = runId,
+            summary = raw.orEmpty(),
+            commandIds = commands.map { it.id },
+            argsByCommand = commands.map { it.args },
+            outcome = outcome,
+            timestamp = System.currentTimeMillis(),
+        )
     }
 
     /**
@@ -373,6 +406,7 @@ class McosRuntime internal constructor(
         step: WorkflowStep,
         startTime: Long,
         timestamp: Long,
+        payload: Payload,
     ) {
         eventBus.publish(runId, RuntimeEvent.RunStarted(runId, null, timestamp))
 
@@ -399,14 +433,59 @@ class McosRuntime internal constructor(
         }
 
         when (result.outcome) {
-            WorkflowOutcome.COMPLETED ->
+            WorkflowOutcome.COMPLETED -> {
+                summarizeWorkflow(runId, step, result, payload, EpisodicOutcome.SUCCESS)
                 eventBus.publish(runId, RuntimeEvent.RunSucceeded(runId, result.totalDurationMs))
+            }
             WorkflowOutcome.FAILED -> {
+                summarizeWorkflow(runId, step, result, payload, EpisodicOutcome.FAILED)
                 val error = result.steps.lastOrNull { !it.ok }?.message ?: "Workflow failed"
                 eventBus.publish(runId, RuntimeEvent.RunFailed(runId, error))
             }
-            WorkflowOutcome.CANCELLED ->
+            WorkflowOutcome.CANCELLED -> {
+                summarizeWorkflow(runId, step, result, payload, EpisodicOutcome.CANCELLED)
                 eventBus.publish(runId, RuntimeEvent.RunCancelled(runId))
+            }
+        }
+    }
+
+    /**
+     * Record a finished workflow run in the episodic memory (§9.4). Command
+     * ids come from the executed steps; entities are extracted from the
+     * workflow definition's command arguments.
+     */
+    private fun summarizeWorkflow(
+        runId: String,
+        step: WorkflowStep,
+        result: WorkflowResult,
+        payload: Payload,
+        outcome: EpisodicOutcome,
+    ) {
+        val raw = (payload as? Payload.DslText)?.text
+        summarizer.summarize(
+            runId = runId,
+            summary = raw.orEmpty(),
+            commandIds = result.steps.mapNotNull { it.commandId },
+            argsByCommand = collectCommandArgs(step),
+            outcome = outcome,
+            timestamp = System.currentTimeMillis(),
+        )
+    }
+
+    /**
+     * Collect every command's argument map from a workflow definition,
+     * depth-first, for entity extraction.
+     */
+    private fun collectCommandArgs(step: WorkflowStep): List<JsonObject> {
+        return when (step) {
+            is WorkflowStep.Command -> listOf(step.args)
+            is WorkflowStep.Sequential -> step.steps.flatMap { collectCommandArgs(it) }
+            is WorkflowStep.Parallel -> step.steps.flatMap { collectCommandArgs(it) }
+            is WorkflowStep.If ->
+                collectCommandArgs(step.thenStep) + (step.elseStep?.let { collectCommandArgs(it) } ?: emptyList())
+            is WorkflowStep.Loop -> collectCommandArgs(step.body)
+            is WorkflowStep.Retry -> collectCommandArgs(step.step)
+            is WorkflowStep.Try -> collectCommandArgs(step.step) + step.compensation.flatMap { collectCommandArgs(it) }
         }
     }
 
@@ -437,6 +516,7 @@ class McosRuntime internal constructor(
         private var permissionKernel: PermissionKernel? = null
         private var executor: Executor? = null
         private var memory: MemoryStore = MemoryStore()
+        private var episodicMemory: EpisodicMemory = EpisodicMemory()
         private var eventBus: EventBus = TypedEventBus()
         private var workflowStore: WorkflowStore = WorkflowStore()
         private var workflowEngine: WorkflowEngine? = null
@@ -453,6 +533,7 @@ class McosRuntime internal constructor(
         fun withPermissionKernel(kernel: PermissionKernel) = apply { this.permissionKernel = kernel }
         fun withExecutor(executor: Executor) = apply { this.executor = executor }
         fun withMemory(memory: MemoryStore) = apply { this.memory = memory }
+        fun withEpisodicMemory(episodicMemory: EpisodicMemory) = apply { this.episodicMemory = episodicMemory }
         fun withEventBus(eventBus: EventBus) = apply { this.eventBus = eventBus }
         fun withWorkflowStore(store: WorkflowStore) = apply { this.workflowStore = store }
         fun withWorkflowEngine(engine: WorkflowEngine) = apply { this.workflowEngine = engine }
@@ -484,6 +565,7 @@ class McosRuntime internal constructor(
                 eventBus = eventBus,
                 workflowStore = workflowStore,
                 workflowEngine = wfEngine,
+                episodicMemory = episodicMemory,
             )
         }
     }
