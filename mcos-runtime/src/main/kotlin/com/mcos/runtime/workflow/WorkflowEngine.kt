@@ -262,16 +262,25 @@ class WorkflowEngine(
         var attempts = 0
         while (attempts <= step.maxRetries) {
             attempts++
-            // Snapshot collector size to detect if the step added an error result
+            // Snapshot collector size so we can locate the error result(s)
+            // produced by THIS attempt. When the retried step is composite
+            // (Sequential/Parallel/If) it may append multiple results, and
+            // the trailing entry is not necessarily the one that caused the
+            // failure — so we must inspect the whole [sizeBefore, size) slice
+            // rather than just lastOrNull().
             val sizeBefore = collector.size
             val ok = executeStep(step.step, collector)
             if (ok) return true
 
-            // Check error code filter: if retryOnCodes is specified and the
-            // last error code is not in the set, do not retry.
+            // Check error code filter: if retryOnCodes is specified and none
+            // of the error codes produced by this attempt are in the set,
+            // do not retry.
             if (step.retryOnCodes.isNotEmpty()) {
-                val lastError = collector.lastOrNull()
-                if (lastError?.code == null || lastError.code !in step.retryOnCodes) {
+                val newResults = collector.subList(sizeBefore, collector.size)
+                val hasRetryableCode = newResults.any { res ->
+                    res.code != null && res.code in step.retryOnCodes
+                }
+                if (!hasRetryableCode) {
                     return false
                 }
             }
