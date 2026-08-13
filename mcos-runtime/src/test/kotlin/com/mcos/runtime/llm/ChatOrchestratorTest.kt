@@ -307,6 +307,25 @@ class ChatOrchestratorTest {
         Unit
     }
 
+    @Test
+    fun `O14-successful run populates results from step events`() = runBlocking {
+        // P3-F5 regression: ChatResult.results was always emptyList() even on
+        // successful runs. It should now be populated from StepSucceeded/
+        // StepFailed events.
+        registerEchoCommand("test.ok")
+        val provider = FakeLlmProvider(
+            listOf(LlmResponse.Ok("test.ok()"))
+        )
+        val orchestrator = ChatOrchestrator(LlmPlanner(provider, registry), runtime)
+
+        val result = orchestrator.chat("do ok task")
+
+        assertTrue(result.success)
+        assertTrue(result.results.isNotEmpty(), "results should be populated: ${result.results}")
+        assertTrue(result.results.all { it is CommandResult.Ok }, "all results should be Ok")
+        Unit
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // Helpers
     // ═══════════════════════════════════════════════════════════════
