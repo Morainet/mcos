@@ -124,6 +124,20 @@ class NetworkEgressPolicy {
         }
 
         host = host.lowercase()
+        // IDN hardening (P0-S3): normalise the host to its ASCII (Punycode)
+        // form before returning, so a Unicode hostname (e.g. "例え.jp") is
+        // compared against granted scopes in canonical form. Two attack
+        // classes are closed by this:
+        //  - A granted scope "network.example.com" must not be bypassable by
+        //    an IDN homograph like "network.exámple.com" whose Punycode form
+        //    differs from the granted ASCII scope.
+        //  - A Unicode/Punycode host that fails IDN conversion is rejected
+        //    rather than silently passing.
+        host = try {
+            java.net.IDN.toASCII(host)
+        } catch (e: Exception) {
+            return null
+        }
         // Validate: a host must not contain whitespace, and must not be empty.
         // This catches strings like "not a url" that have no scheme separator.
         if (host.isEmpty() || host.any { it.isWhitespace() }) return null
