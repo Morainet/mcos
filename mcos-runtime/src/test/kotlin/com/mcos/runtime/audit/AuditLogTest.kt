@@ -309,4 +309,35 @@ class AuditLogTest {
         assertTrue(out.contains("s3cr3t"))
         assertFalse(out.contains("REDACTED"))
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // A12-A13: flush() deadlock guard + expanded redaction (P0-C5)
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `A12-flush returns immediately when writer is not running`() = runBlocking {
+        // P0-C5 regression: flush() must NOT hang when no writer coroutine is
+        // draining the channel. Previously it awaited a sentinel that would
+        // never be consumed, deadlocking the caller forever.
+        val log = AuditLog()
+        // Intentionally do NOT call start() — there is no writer.
+        log.append(RunRecord(runId = "r1", timestamp = 1, commandId = "c"))
+        // This must return promptly instead of hanging.
+        log.flush()
+        assertTrue(true) // reached here without deadlock
+        log.stop()
+    }
+
+    @Test
+    fun `A13-authorization bearer and cookie fields are redacted`() {
+        // P0-C5 regression: the secret-field set must cover authorization,
+        // bearer, and cookie (in addition to password/token/secret/apikey/
+        // api_key/credential). All should be scrubbed from the audit trail.
+        val ir = """{"authorization":"Bearer abc123","refresh_cookie":"sid=xyz","api_key":"k1"}"""
+        val out = auditLog.redactSecrets(ir)
+        assertFalse(out.contains("abc123"), "authorization value must be redacted: $out")
+        assertFalse(out.contains("sid=xyz"), "cookie value must be redacted: $out")
+        assertFalse(out.contains("\"k1\""), "api_key value must be redacted: $out")
+        assertTrue(out.contains("REDACTED"))
+    }
 }
