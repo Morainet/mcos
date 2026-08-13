@@ -201,6 +201,36 @@ class DslParserTest {
         assertEquals("leading_zero", result.reason)
     }
 
+    @Test
+    fun `S8 — unicode escape uXXXX decodes to codepoint`() {
+        // P0-P2 regression: \uXXXX must decode to the Unicode codepoint.
+        // "\u4e2d\u6587" → "中文". Previously the lexer fell through to the
+        // `else` branch and kept the literal text "\u4e2d\u6587".
+        val input = """a(name="\u4e2d\u6587")"""
+        val result = DslParser.parse(input)
+        assertIs<ParseResult.Ok>(result)
+        val ir = result.ir as ExecutionIr.Invoke
+        assertEquals("中文", ir.invoke.args["name"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun `S9 — unicode escape handles ASCII and symbols`() {
+        // \u0041 = 'A', \u00e9 = 'é', \u263a = '☺'
+        val input = """a(s="\u0041\u00e9\u263a")"""
+        val result = DslParser.parse(input)
+        assertIs<ParseResult.Ok>(result)
+        val ir = result.ir as ExecutionIr.Invoke
+        assertEquals("Aé☺", ir.invoke.args["s"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun `S10 — invalid unicode escape produces lexical error`() {
+        // Fewer than 4 hex digits after \u → error, not silent literal.
+        val input = """a(s="\u12")"""
+        val result = DslParser.parse(input)
+        assertIs<ParseResult.Err>(result)
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // Issue #5/#6 — lexical errors surface instead of being swallowed
     // ═══════════════════════════════════════════════════════════════
