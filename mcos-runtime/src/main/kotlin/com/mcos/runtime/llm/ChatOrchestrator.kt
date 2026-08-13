@@ -10,6 +10,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.JsonObject
 
 /**
  * End-to-end orchestrator that combines [LlmPlanner] with [McosRuntime]
@@ -136,6 +137,14 @@ class ChatOrchestrator(
         val failedEvent = events.filterIsInstance<RuntimeEvent.RunFailed>().firstOrNull()
         val cancelled = events.any { it is RuntimeEvent.RunCancelled }
 
+        // P3-F5: Derive per-command results from the collected step events.
+        // StepSucceeded / StepFailed carry the per-step outcome; we map them
+        // to CommandResult.Ok / Err, ordered by stepIndex. (The full Ok.value
+        // payload is not carried by the event, so Ok results have an empty
+        // object — the caller can still inspect the events list for richer
+        // detail.)
+        val results = extractResults(events)
+
         val summary = when {
             succeeded -> "Executed ${plan.commands.size} command(s) successfully"
             cancelled -> "Execution was cancelled"
@@ -145,12 +154,29 @@ class ChatOrchestrator(
 
         return ChatResult(
             plan = plan,
-            results = emptyList(),
+            results = results,
             events = events,
             success = succeeded,
             summary = summary,
         )
     }
+
+    /**
+     * Map per-step events to [CommandResult]s, ordered by stepIndex.
+     * Only [RuntimeEvent.StepSucceeded] and [RuntimeEvent.StepFailed] produce
+     * entries; progress/log/artifact events are ignored.
+     */
+    private fun extractResults(events: List<RuntimeEvent>): List<CommandResult> =
+        events.mapNotNull { event ->
+            when (event) {
+                is RuntimeEvent.StepSucceeded -> CommandResult.Ok(value = JsonObject(emptyMap()))
+                is RuntimeEvent.StepFailed -> CommandResult.Err(
+                    code = "STEP_FAILED",
+                    message = event.error,
+                )
+                else -> null
+            }
+        }
 }
 
 /**
