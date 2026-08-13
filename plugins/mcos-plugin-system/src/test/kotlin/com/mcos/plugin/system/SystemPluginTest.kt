@@ -139,6 +139,41 @@ class SystemPluginTest {
         Unit
     }
 
+    @Test
+    fun `S9-1-sys_notify fails UNAVAILABLE when host has no notification service`() = runBlocking {
+        // P0-F1 regression: a host without a NotificationService must NOT get
+        // a fake "notified" success — the handler must surface UNAVAILABLE so
+        // callers and the audit trail know the notification was never posted.
+        val noNotifyPlugin = SystemPlugin()
+        val noNotifyServices = object : HostServices {
+            override val files get() = error("x")
+            override val net get() = error("x")
+            override val ui get() = error("x")
+            override val secureStore get() = error("x")
+            override val clock = object : Clock { override fun nowMs() = 0L }
+            override val json get() = error("x")
+            override val memory = object : MemoryFacade {
+                override suspend fun get(path: String): JsonElement? = null
+                override suspend fun resolveRef(ref: String, semanticType: String?): ResolveResult = ResolveResult.NotFound()
+            }
+            // notifications intentionally left null (default)
+        }
+        noNotifyPlugin.onLoad(noNotifyServices)
+
+        val handler = noNotifyPlugin.handlers()["sys.notify"]!!
+        val args = buildJsonObject {
+            put("title", JsonPrimitive("Hi"))
+            put("text", JsonPrimitive("Body"))
+        }
+        val ctx = ExecutionContext(
+            runId = "r", commandId = "sys.notify", args = args, services = noNotifyServices,
+        )
+        val ex = assertFailsWith<McosException> { handler.invoke(ctx) }
+        assertEquals("UNAVAILABLE", ex.code)
+        noNotifyPlugin.onUnload()
+        Unit
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // S10-S12: sys.share
     // ═══════════════════════════════════════════════════════════════
@@ -534,4 +569,7 @@ class StubSystemHostServices : HostServices {
         override fun nowMs(): Long = System.currentTimeMillis()
     }
     override val json: JsonService get() = error("JsonService not available")
+    override val notifications: NotificationService? = object : NotificationService {
+        override suspend fun notify(title: String, text: String): String = "test-channel"
+    }
 }
