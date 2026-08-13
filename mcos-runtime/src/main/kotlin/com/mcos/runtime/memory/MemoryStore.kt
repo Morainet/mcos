@@ -27,9 +27,16 @@ import kotlinx.serialization.json.put
  *
  * Upgrade path to persistent storage: Room + SQLCipher with same API surface.
  *
- * Matches [01-architecture.md Memory], [03-runtime.md 12].
+ * Matches [01-architecture.md Memory], [03-runtime.md 12],
+ * [07-memory.md 11] (vector-clock sync).
+ *
+ * @param deviceId Identity of this device for vector-clock sync
+ *   ([07-memory.md 11.1]). Every [put] ticks this device's counter; synced
+ *   entries carry it to peers for last-writer-wins resolution.
  */
-class MemoryStore : MemoryFacade {
+class MemoryStore(
+    private val deviceId: String = "local",
+) : MemoryFacade {
 
     /**
      * Guards all shared state ([entries], [semanticIndex], [superseded]).
@@ -85,17 +92,28 @@ class MemoryStore : MemoryFacade {
         ttlMs: Long? = null,
         tags: Set<String> = emptySet(),
         category: MemoryCategory = MemoryCategory.OTHER,
-        checkConflict: Boolean = true
+        checkConflict: Boolean = true,
+        syncable: Boolean = false
     ): MemoryWriteResult = suspendLock.withLock {
         val now = currentTimeMs()
         val existing = entries[path]
 
         // Step 1: same-path write is always an update — soft-delete the old
-        // value into history, the new value becomes current.
+        // value into history, the new value becomes current. The vector clock
+        // is ticked on the writer's device ([07-memory.md 11.1]).
         if (existing != null) {
             val supersededPath = "$path@${isoTimestamp(now)}"
             superseded[supersededPath] = existing
-            entries[path] = MemoryEntry(value, now, ttlMs, tags, category)
+            entries[path] = MemoryEntry(
+                value = value,
+                createdAt = now,
+                ttlMs = ttlMs,
+                tags = tags,
+                category = category,
+                syncable = syncable,
+                vectorClock = existing.vectorClock.tick(deviceId),
+                writerDeviceId = deviceId,
+            )
             removeFromIndex(path)
             for (tag in tags) {
                 semanticIndex.getOrPut(tag) { mutableSetOf() }.add(path)
@@ -127,7 +145,16 @@ class MemoryStore : MemoryFacade {
         }
 
         // Step 3: no conflict — create the new fact.
-        entries[path] = MemoryEntry(value, now, ttlMs, tags, category)
+        entries[path] = MemoryEntry(
+            value = value,
+            createdAt = now,
+            ttlMs = ttlMs,
+            tags = tags,
+            category = category,
+            syncable = syncable,
+            vectorClock = VectorClock().tick(deviceId),
+            writerDeviceId = deviceId,
+        )
         for (tag in tags) {
             semanticIndex.getOrPut(tag) { mutableSetOf() }.add(path)
         }
@@ -143,8 +170,10 @@ class MemoryStore : MemoryFacade {
         ttlMs: Long? = null,
         tags: Set<String> = emptySet(),
         category: MemoryCategory = MemoryCategory.OTHER,
-        checkConflict: Boolean = true
-    ): MemoryWriteResult = put(path, JsonPrimitive(value), ttlMs, tags, category, checkConflict)
+        checkConflict: Boolean = true,
+        syncable: Boolean = false
+    ): MemoryWriteResult =
+        put(path, JsonPrimitive(value), ttlMs, tags, category, checkConflict, syncable)
 
     /**
      * Store a structured JSON object value.
@@ -155,12 +184,13 @@ class MemoryStore : MemoryFacade {
         ttlMs: Long? = null,
         tags: Set<String> = emptySet(),
         category: MemoryCategory = MemoryCategory.OTHER,
-        checkConflict: Boolean = true
+        checkConflict: Boolean = true,
+        syncable: Boolean = false
     ): MemoryWriteResult {
         val jsonObj = buildJsonObject {
             value.forEach { (k, v) -> put(k, JsonPrimitive(v)) }
         }
-        return put(path, jsonObj, ttlMs, tags, category, checkConflict)
+        return put(path, jsonObj, ttlMs, tags, category, checkConflict, syncable)
     }
 
     // ─── Read API (MemoryFacade impl) ───────────────────────────────────
@@ -326,6 +356,49 @@ class MemoryStore : MemoryFacade {
         }
     }
 
+    // ─── Sync support ([07-memory.md 11]) ───────────────────────────────
+
+    /**
+     * Apply a remote synced entry as an authoritative write
+     * ([07-memory.md 11.1]). Called by [MemorySync] after the LWW decision
+     * has been made.
+     *
+     * Bypasses the cross-path semantic dedup check — a sync is an explicit
+     * peer decision, not a local query — and merges the remote vector clock
+     * into the local one so this device's clock catches up: subsequent local
+     * writes keep LWW monotonic.
+     *
+     * @param preserveLocalHistory when `true` ("keep both" resolution), the
+     *   current local value is soft-deleted into history so both values are
+     *   retained; when `false` the remote value simply replaces it.
+     */
+    internal suspend fun applySyncEntry(
+        path: String,
+        entry: SyncEntry,
+        preserveLocalHistory: Boolean = false,
+    ) = suspendLock.withLock {
+        val existing = entries[path]
+        if (preserveLocalHistory && existing != null) {
+            superseded["$path@${isoTimestamp(currentTimeMs())}"] = existing
+        }
+        // Merge clocks: local counter catches up to the remote writer's.
+        val mergedClock = entry.vectorClock.merge(existing?.vectorClock ?: VectorClock())
+        entries[path] = MemoryEntry(
+            value = entry.value,
+            createdAt = entry.createdAt,
+            ttlMs = entry.ttlMs,
+            tags = entry.tags,
+            category = entry.category,
+            syncable = true, // anything arriving via sync is syncable by definition
+            vectorClock = mergedClock,
+            writerDeviceId = null,
+        )
+        removeFromIndex(path)
+        for (tag in entry.tags) {
+            semanticIndex.getOrPut(tag) { mutableSetOf() }.add(path)
+        }
+    }
+
     // ─── Internal helpers ───────────────────────────────────────────────
 
     /** Flatten a JSON value to text for similarity comparison. */
@@ -369,7 +442,16 @@ data class MemoryEntry(
     val createdAt: Long,
     val ttlMs: Long? = null,
     val tags: Set<String> = emptySet(),
-    val category: MemoryCategory = MemoryCategory.OTHER
+    val category: MemoryCategory = MemoryCategory.OTHER,
+    /**
+     * [07-memory.md 11.0]: only entries with `syncable = true` ever leave the
+     * device; `local_only` entries (the default) never sync.
+     */
+    val syncable: Boolean = false,
+    /** [07-memory.md 11.1]: vector clock for LWW conflict resolution. */
+    val vectorClock: VectorClock = VectorClock(),
+    /** Device id of the writer that last set this value (null = pre-sync data). */
+    val writerDeviceId: String? = null,
 ) {
     fun isExpired(now: Long): Boolean {
         return ttlMs?.let { now - createdAt > it } ?: false

@@ -87,13 +87,13 @@ mcos/
 | **进程隔离** | [08](./08-security.md) §8 | P1（尽力而为）→ P3（第三方默认） | 🟡 仅进程内尽力而为的并发控制 |
 | **Workflow 引擎** | [05](./05-workflow.md) | P2 | ✅ `workflow/WorkflowEngine` — sequential/parallel/if/loop/retry/try/confirm，命名 store + JSON 解码；已接入 `McosRuntime.runWorkflow`（`d533c05`） |
 | **Event Bus** | [03](./03-runtime.md) §11 | P2 | ✅ `events/EventBus` — 类型化信封、前缀 + where 过滤、订阅者隔离、丢最旧背压 + 审计（`22ba52b`） |
-| **Memory** | [07](./07-memory.md) | P2 | ✅ `memory/MemoryStore` — TTL、标签、模糊 resolveRef + 置信度、CREATED/UPDATED/CONFLICT 写入语义、superseded 历史（`d549236`） |
+| **Memory** | [07](./07-memory.md) | P2 | ✅ `memory/MemoryStore` — TTL、标签、模糊 resolveRef + 置信度、CREATED/UPDATED/CONFLICT 写入语义、superseded 历史（`d549236`）+ ✅ `memory/EpisodicMemory` — run 摘要、时间衰减召回（§8.1）、50→5 自动摘要 + 90 天保留（§8.2）+ ✅ `memory/RunSummarizer` — §9.4 run 完成钩子：命令/工作流记录 `EpisodicRecord`（实体取自 `namespace.path` 参数，摘要取自 DSL 文本）+ ✅ **`memory/MemorySync` — §11 设备间同步：`VectorClock`（tick / 严格支配 `isAfter` / `isConcurrentWith` / 分量取最大 `merge`，§11.1）、per-entry `syncable` 标记（§11.0：仅 `syncable=true` 条目可离开设备）、`SyncEntry` 快照导出/导入 + LWW 表（本地/远端支配 → 静默；并发 → 呈现 `SyncConflict` → `KEEP_LOCAL`/`KEEP_REMOTE`/`KEEP_BOTH`）、`SyncPolicy`（§11.3：`enabled` = disableCloudMemorySync、`allowedCategories` = allowedSyncCategories）违规记 AuditLog** |
 | **企业策略** | [08](./08-security.md) §13 | P3 | ⬜ 未开始 |
 | **Marketplace** | [09](./09-marketplace.md) | P3 | ⬜ 未开始 |
 
 > **已完成：** `DslParser`（最高杠杆的第一步）与其余 P1 流水线一同交付。P1 安全底线中 `decideConfirmation`、`decideEgress`、prompt-injection 检查与 rate limiting 均已实现；**crash 隔离与 `{{secret}}` 模板仍为空白**。
 >
-> **测试基线（2026-08-13）：** 全模块 504 个测试——parser fixture、executor、permission、audit（含 `x-mcos-secret` 脱敏）、workflow（W1-W6）、event bus（8）、memory（M1-M33 + 情景 E1-E14 + 摘要 S1-S11）、secret 解析器、crash 隔离、插件、多 provider（R1-R8 registry + F1-F6 回退链 + T1-T8 原生工具调用 + O1-O10 本地隐私闸门 + T-transport 7 + **C1-C14 CONSTRAINED：模式选择（TOOL_CALL > CONSTRAINED）、IR `invoke`/`sequence`/`clarify`/`refuse` 解析、畸形→`LLM_PARSE_ERROR`、可重试回退 + 不可重试终止、语法注入、`parseIrJson` 单元测试**）、Android。
+> **测试基线（2026-08-13）：** 全模块 523 个测试——parser fixture、executor、permission、audit（含 `x-mcos-secret` 脱敏）、workflow（W1-W6）、event bus（8）、memory（M1-M33 + 情景 E1-E14 + 摘要 S1-S11 + **同步 V1-V4 向量时钟语义：tick / 严格支配 `isAfter` / 并发 / 分量取最大 `merge` + S1-S15 同步流：仅 syncable 导出、新路径应用、本地/远端支配 LWW、并发→`SyncConflict` 呈现、幂等重复导入、`allowedSyncCategories` 过滤、`disableCloudMemorySync` 中止 + AuditLog 记录、KEEP_LOCAL/REMOTE/BOTH 解决、时钟 merge 单调性、快照载荷**）、secret 解析器、crash 隔离、插件、多 provider（R1-R8 registry + F1-F6 回退链 + T1-T8 原生工具调用 + O1-O10 本地隐私闸门 + T-transport 7 + **C1-C14 CONSTRAINED：模式选择（TOOL_CALL > CONSTRAINED）、IR `invoke`/`sequence`/`clarify`/`refuse` 解析、畸形→`LLM_PARSE_ERROR`、可重试回退 + 不可重试终止、语法注入、`parseIrJson` 单元测试**）、Android。
 
 ---
 
@@ -137,7 +137,7 @@ mcos/
 | Audit | 规范完成 | ✅ **已实现** 基础 | ✅ **已实现** 加密 + 导出（HMAC 链） | 远程证明 |
 | Workflow | 规范完成 | ✅ 顺序 | ✅ **已实现** 并行 / 条件 / 循环 / 重试 / try / 确认 | — |
 | Event Bus | 规范完成 | ✅ run 事件通道 | ✅ **已实现** 完整（信封、过滤、隔离、背压） | — |
-| Memory | 规范完成 | ✅ profile + remember | 🟡 模糊引用 + 冲突检测已完成；**情景层 + 云端同步未做** | 云端同步 |
+| Memory | 规范完成 | ✅ profile + remember | 🟡 模糊引用 + 冲突检测 + **§11 同步层（向量时钟 LWW + 策略）已完成**；**情景层未做** | 云端同步（Phase 3 server blob 加密） |
 | Planner | 规范完成 | ✅ 1 个 provider，chat→DSL | 🟡 多 provider + 探测未做（[06 §17](./06-agent.md)） | — |
 | Plugins | 规范完成 | ✅ hello + system + camera + files（20+ 命令，[10 §4.3.1](./10-roadmap.md)） | ⬜ IoT + Intent | MCP spike (P2) / MCP 生产 + 市场 (P3) |
 | Marketplace | 规范完成 | — | ⬜ 调试侧载 | 公共索引 + 签名（[09 §15](./09-marketplace.md)） |
@@ -165,8 +165,9 @@ mcos/
 12. ✅ **本地→云端回退与隐私闸门**——`LlmProvider` 上的 `ProviderTier`（ON_DEVICE/CLOUD）、`LlmPlanner.cloudFallbackEnabled`（"允许云端 planner" 显式开关，06 §13.2）以及隐私闸门：一旦 ON_DEVICE provider 失败，升级到 CLOUD 需要显式开启——否则失败以 `CLOUD_FALLBACK_DISABLED` 拒绝呈现，且数据不出设备。标准错误码 `CAPABILITY_EXCEEDED`/`CLOUD_FALLBACK_DISABLED`；`LlmProviderRegistry.onDeviceProviders()`/`cloudProviders()` 分层过滤。按 [06](./06-agent.md) §13.0/§13.2/§17 V2。
 13. ✅ **Android 聊天外壳（Planner 接入应用）**——可插拔 `LlmHttpTransport`（`llm/` 中的 `LlmHttpTransport`/`HttpTransportResponse`/`LlmTransportException`；JDK `HttpClient` 默认实现保持 JVM 测试绿色；`AndroidLlmHttpTransport` 使用 `HttpURLConnection`——Android 无 `java.net.http` 模块）、`OpenAiLlmProvider(transport=…)` 注入、Manifest 中的 `INTERNET` 权限，以及 `MainActivity` 中的 **AI Chat 卡片**（自然语言输入 → `ChatOrchestrator` → 计划/DSL 预填到 DSL 编辑器 → 执行事件记录；OpenAI API key 经 `AndroidSecureStore` 持久化）。按 [06](./06-agent.md) §17。
 14. ✅ **PlanMode `CONSTRAINED`（语法约束解码）**——`Capability.CONSTRAINED` + `PlanMode.CONSTRAINED`、`LlmProvider.constrainedChat(messages, grammar)`（默认 `CAPABILITY_EXCEEDED`，不可重试）、模式选择 `NATIVE_TOOL_CALL > CONSTRAINED > FREEFORM_JSON`、`buildIrJsonSchema()`（MCOS IR JSON Schema：`invoke`/`sequence`/`clarify`/`refuse`）以及 `parseIrJson()`——模型回复是单个 IR JSON 对象；畸形输出产生可重试的 `LLM_PARSE_ERROR`，回退链继续。`OpenAiLlmProvider` 用 OpenAI `response_format: json_object` + 将 schema 追加到 system 消息实现 constrainedChat（API 侧的近似实现；真正的语法见 llama.cpp GBNF / Outlines / Gemini）。CONSTRAINED 的 system prompt 只列出命令/记忆（无 DSL 格式段）。按 [06](./06-agent.md) §3.2 V2 / §17 V2。
+15. ✅ **Memory 设备间同步（§11）**——`memory/VectorClock`（§11.1：`tick`/严格支配 `isAfter`/`isConcurrentWith`/分量取最大 `merge`；刻意不用 CRDT——事实型 KV 记忆"最新正确值"即所需语义）、`MemoryEntry` 增 `syncable`/`vectorClock`/`writerDeviceId`（§11.0：仅 `syncable=true` 条目可离开设备；本地 `put` 自动 tick 本设备时钟）、`memory/MemorySync`——`exportSnapshot()`（只含 syncable 条目）+ `importSnapshot()`（LWW 表：本地/远端支配→静默保留/覆盖，并发→呈现 `SyncConflict`："Keep local, remote, or both?"）+ `resolveConflict()`（`KEEP_LOCAL`/`KEEP_REMOTE`/`KEEP_BOTH`，后者将本地旧值软删入历史保留两者）以及 `SyncPolicy`（§11.3：`enabled` = disableCloudMemorySync 全局禁用、`allowedCategories` = allowedSyncCategories 类别限制），违规中止并记 AuditLog（`source=MEMORY_SYNC`）。`MemoryStore.applySyncEntry` 合并远端时钟使本设备单调追平（LWW 单调性）。Server（Phase 3）仅存加密 blob——本实现聚焦设备侧载荷与决策。按 [07](./07-memory.md) §11。
 
-**下一步（建议）：** 云端同步 Memory 层（06 §16），然后为 CONSTRAINED 接入更高保真的语法注入（GBNF/Outlines 后端）与 PlanMode `LATENCY_TIERED`（§17 V3）。
+**下一步（建议）：** 为 CONSTRAINED 接入更高保真的语法注入（GBNF/Outlines 后端），然后 PlanMode `LATENCY_TIERED`（§17 V3）、Memory 云端 server（Phase 3 blob 加密 + E2E）与情景层（§8）。
 
 ---
 
