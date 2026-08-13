@@ -41,7 +41,12 @@ import kotlin.coroutines.cancellation.CancellationException
  *
  * Implements MCOS Runtime spec [03-runtime.md 9].
  *
- * Pipeline: Stage 3 (Resolve) → Stage 5 (Validate) → Stage 5.5 (Rate Limit) → Stage 5.6 (Egress) → Stage 6 (Authorize) → Stage 8 (Invoke) → Stage 10 (Audit)
+ * Pipeline: Stage 3 (Resolve) → Stage 5 (Validate) → Stage 5.5 (Rate Limit) → Stage 6 (Authorize) → Stage 6.5 (Egress, post-auth) → Stage 8 (Invoke) → Stage 10 (Audit)
+ *
+ * NOTE: egress checking deliberately runs AFTER Stage 6 authorization
+ * (signature verification + permission grants). Reading `auth.grantsUsed`
+ * before the stamp's signature is verified would let a caller forge a stamp
+ * with arbitrary `network.*` scopes and bypass egress policy.
  *
  * @param registry The [CommandRegistry] to resolve command IDs.
  * @param hostServices The [HostServices] facade injected into each [ExecutionContext].
@@ -50,13 +55,18 @@ import kotlin.coroutines.cancellation.CancellationException
  * @param auditLog Optional [AuditLog] for Stage 10 audit recording.
  * @param rateLimiter Optional [RateLimiter] for Stage 5.5 rate limiting.
  *        If null, no rate limiting is applied.
- * @param egressPolicy Optional [NetworkEgressPolicy] for Stage 5.6 egress checks.
+ * @param egressPolicy Optional [NetworkEgressPolicy] for Stage 6.5 egress checks.
  *        If null, no egress validation is performed.
  * @param authStampSigner Optional [AuthStampSigner] for Stage 6 AuthStamp
  *        signature verification and signing. If null, supplied stamps are
  *        trusted without signature checks (permissive mode).
  * @param quarantine Optional [CrashQuarantine] for crash-loop detection
  *        (08-security.md §15.3). If null, crash-loop quarantine is disabled.
+ * @param globalKillSwitch Supplier consulted at Stage 6.5; when it returns
+ *        true, every network egress request is denied immediately, before
+ *        any domain-scope matching. Defaults to never-active.
+ * @param debugMode When true, the egress policy allows non-HTTPS URLs
+ *        (development only). Defaults to false.
  */
 class Executor(
     private val registry: CommandRegistry,
@@ -67,6 +77,8 @@ class Executor(
     private val egressPolicy: NetworkEgressPolicy? = null,
     private val authStampSigner: AuthStampSigner? = null,
     private val quarantine: CrashQuarantine? = null,
+    private val globalKillSwitch: () -> Boolean = { false },
+    private val debugMode: Boolean = false,
 ) {
 
     private val schemaValidator = SchemaValidator()
@@ -172,30 +184,9 @@ class Executor(
             }
         }
 
-        // Stage 5.6 — Network egress check (if EgressPolicy is configured)
-        val policy = egressPolicy
-        if (policy != null && entry.descriptor.sideEffectClass == SideEffectClass.network) {
-            // Inspect every string value in the argument tree — URLs nested in
-            // objects/arrays are covered, not just the top-level "url" field.
-            val urls = collectUrls(args)
-            for (url in urls) {
-                when (val egress = policy.decideEgress(url, auth)) {
-                    is EgressDecision.Deny -> {
-                        return CommandResult.Err(
-                            code = McosErrorCode.PERMISSION_DENIED.name,
-                            message = "Network egress denied for '${entry.descriptor.id}': ${egress.reason}",
-                            retryable = false,
-                            details = buildJsonObject {
-                                put("url", JsonPrimitive(url))
-                                put("egressReason", JsonPrimitive(egress.reason))
-                                egress.missingDomain?.let { put("missingDomain", JsonPrimitive(it)) }
-                            }
-                        )
-                    }
-                    is EgressDecision.Allow -> { /* proceed */ }
-                }
-            }
-        }
+        // Stage 5.6 was here historically — egress now runs at Stage 6.5,
+        // AFTER signature verification, so we only ever read a trusted
+        // AuthStamp's grantsUsed (see P0-S1 security note in class kdoc).
 
         // Stage 6 — Authorization
         // Security: even when a caller supplies an AuthStamp, we verify it
@@ -261,6 +252,37 @@ class Executor(
             }
         } else {
             auth
+        }
+
+        // Stage 6.5 — Network egress check (post-authorization).
+        // Security: runs AFTER Stage 6 so grantsUsed is read from a stamp
+        // whose signature (when a signer is configured) and permission
+        // coverage have already been verified. Without this ordering a caller
+        // could forge a stamp with `network.<attacker-domain>` scopes and
+        // pass egress (P0-S1).
+        val policy = egressPolicy
+        if (policy != null && entry.descriptor.sideEffectClass == SideEffectClass.network) {
+            val kill = globalKillSwitch()
+            // Inspect every string value in the argument tree — URLs nested in
+            // objects/arrays are covered, not just the top-level "url" field.
+            val urls = collectUrls(args)
+            for (url in urls) {
+                when (val egress = policy.decideEgress(url, effectiveAuth, kill, debugMode)) {
+                    is EgressDecision.Deny -> {
+                        return CommandResult.Err(
+                            code = McosErrorCode.PERMISSION_DENIED.name,
+                            message = "Network egress denied for '${entry.descriptor.id}': ${egress.reason}",
+                            retryable = false,
+                            details = buildJsonObject {
+                                put("url", JsonPrimitive(url))
+                                put("egressReason", JsonPrimitive(egress.reason))
+                                egress.missingDomain?.let { put("missingDomain", JsonPrimitive(it)) }
+                            }
+                        )
+                    }
+                    is EgressDecision.Allow -> { /* proceed */ }
+                }
+            }
         }
 
         val runId = UUID.randomUUID().toString()
@@ -460,8 +482,18 @@ class Executor(
 
     /**
      * Recursively collect string values from [element] that look like URLs
-     * (start with http:// or https://). Used by the Stage 5.6 egress check
-     * to cover URLs nested anywhere in the argument tree.
+     * (start with an ASCII `http://` or `https://` scheme). Used by the
+     * Stage 6.5 egress check to cover URLs nested anywhere in the argument
+     * tree.
+     *
+     * IDN/Unicode hardening (P0-S3): the scheme prefix is matched against the
+     * ASCII scheme only; visually-similar Unicode lookalikes (e.g. a full-width
+     * `ｈｔｔｐｓ://`) are NOT treated as URLs and therefore never reach the egress
+     * policy — they simply won't be recognised as outbound targets, which is
+     * the safe failure mode for a free-text field. The actual host→scope
+     * matching happens in [NetworkEgressPolicy], which normalises hosts via
+     * `IDN.toASCII` so a Punycode/Unicode host is compared against the granted
+     * scope in canonical form.
      */
     private fun collectUrls(element: JsonElement, out: MutableList<String> = mutableListOf()): List<String> {
         when (element) {
@@ -470,7 +502,11 @@ class Executor(
             is JsonPrimitive -> {
                 if (element.isString) {
                     val s = element.content
-                    if (s.startsWith("http://") || s.startsWith("https://")) {
+                    // Lowercase the ASCII scheme prefix only — `http`/`https`
+                    // must be ASCII; a Unicode lookalike must NOT match. We
+                    // compare the lowercased first 8 chars to the schemes.
+                    val prefix = s.take(8).lowercase()
+                    if (prefix.startsWith("http://") || prefix.startsWith("https://")) {
                         out.add(s)
                     }
                 }
