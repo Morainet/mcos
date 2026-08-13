@@ -130,6 +130,14 @@ object NotImplementedHandler : CommandHandler {
  * - Namespace prefix queries
  * - Version coexistence (sorted set per command ID)
  * - Plugin install/uninstall lifecycle
+ *
+ * Thread safety (P1-C4): every public method is guarded by the registry's
+ * intrinsic monitor. Registrations and unregisters are compound operations
+ * that touch several indexes atomically; reads (resolve / list) must observe
+ * a consistent snapshot. The monitor is held only briefly and never crosses a
+ * suspension point, so this is safe under coroutine concurrency. A
+ * `ConcurrentHashMap` alone would not suffice because `register`/`unregister`
+ * perform multi-index read-modify-write sequences that must be atomic.
  */
 class CommandRegistry {
 
@@ -160,7 +168,7 @@ class CommandRegistry {
      * @return [RegisterResult.Ok] if all commands registered cleanly,
      *         [RegisterResult.Conflict] if some commands conflicted.
      */
-    fun register(plugin: McosPlugin): RegisterResult {
+    fun register(plugin: McosPlugin): RegisterResult = synchronized(this) {
         val manifest = plugin.manifest
         val pluginId = manifest.id
         val pluginVersion = manifest.version
@@ -293,14 +301,14 @@ class CommandRegistry {
         } else {
             RegisterResult.Ok(commandsRegistered, aliasesRegistered)
         }
-    }
+    } // synchronized(this)
 
     /**
      * Unregister all commands owned by a plugin.
      * @return the number of entries removed.
      */
-    fun unregister(pluginId: String): Int {
-        val entries = byPlugin.remove(pluginId) ?: return 0
+    fun unregister(pluginId: String): Int = synchronized(this) {
+        val entries = byPlugin.remove(pluginId) ?: return@synchronized 0
         var removed = 0
 
         for (entry in entries) {
@@ -330,7 +338,7 @@ class CommandRegistry {
             aliasesToRemove.forEach { byAlias.remove(it) }
         }
 
-        return removed
+        removed
     }
 
     /**
@@ -354,7 +362,7 @@ class CommandRegistry {
      * @param commandId The fully-qualified command ID, e.g. "camera.capture"
      * @return [ResolveResult.Found] if found, [ResolveResult.NotFound] otherwise.
      */
-    fun resolve(commandId: String): ResolveResult {
+    fun resolve(commandId: String): ResolveResult = synchronized(this) {
         val idLower = commandId.lowercase()
 
         // Step 1: Exact match
@@ -369,11 +377,11 @@ class CommandRegistry {
         }
 
         if (entries.isNullOrEmpty()) {
-            return ResolveResult.NotFound(commandId)
+            return@synchronized ResolveResult.NotFound(commandId)
         }
 
         // Step 3: Return highest version (list is already sorted desc)
-        return ResolveResult.Found(entries.first())
+        ResolveResult.Found(entries.first())
     }
 
     /**
@@ -385,7 +393,7 @@ class CommandRegistry {
      *         [ResolveResult.IncompatibleVersion] if entries exist but none match the range,
      *         [ResolveResult.NotFound] if no entries at all.
      */
-    fun resolve(commandId: String, versionRange: String): ResolveResult {
+    fun resolve(commandId: String, versionRange: String): ResolveResult = synchronized(this) {
         val idLower = commandId.lowercase()
 
         var entries = byId[idLower]
@@ -397,13 +405,13 @@ class CommandRegistry {
         }
 
         if (entries.isNullOrEmpty()) {
-            return ResolveResult.NotFound(commandId)
+            return@synchronized ResolveResult.NotFound(commandId)
         }
 
         val minVersion = try {
             SemanticVersion.parse(versionRange)
         } catch (_: Exception) {
-            return ResolveResult.IncompatibleVersion(commandId, versionRange)
+            return@synchronized ResolveResult.IncompatibleVersion(commandId, versionRange)
         }
 
         // Find highest compatible version (same major, ≥ minVersion)
@@ -416,7 +424,7 @@ class CommandRegistry {
             }
         }
 
-        return if (compatible != null) {
+        if (compatible != null) {
             ResolveResult.Found(compatible)
         } else {
             ResolveResult.IncompatibleVersion(commandId, versionRange)
@@ -428,61 +436,63 @@ class CommandRegistry {
     /**
      * List all registered command descriptors.
      */
-    fun allCommands(): List<CommandDescriptor> =
+    fun allCommands(): List<CommandDescriptor> = synchronized(this) {
         byId.values.flatMap { entries ->
             entries.map { it.descriptor }
         }.distinctBy { it.id.lowercase() }
+    }
 
     /**
      * List commands filtered by namespace prefix.
      * @param prefix The namespace prefix, e.g. "camera".
      */
-    fun listByNamespace(prefix: String): List<CommandDescriptor> {
+    fun listByNamespace(prefix: String): List<CommandDescriptor> = synchronized(this) {
         val prefixLower = prefix.lowercase()
-        val ids = byNamespace[prefixLower] ?: return emptyList()
-        return ids.mapNotNull { id -> byId[id]?.firstOrNull()?.descriptor }
+        val ids = byNamespace[prefixLower] ?: return@synchronized emptyList()
+        ids.mapNotNull { id -> byId[id]?.firstOrNull()?.descriptor }
     }
 
     /**
      * List all known namespace prefixes.
      */
-    fun namespaces(): Set<String> = byNamespace.keys.toSet()
+    fun namespaces(): Set<String> = synchronized(this) { byNamespace.keys.toSet() }
 
     /**
      * List all registered aliases as (alias → target) pairs.
      */
-    fun aliases(): Map<String, String> = byAlias.toMap()
+    fun aliases(): Map<String, String> = synchronized(this) { byAlias.toMap() }
 
     /**
      * Get the total number of registered command entries.
      */
-    fun entryCount(): Int = byId.values.sumOf { it.size }
+    fun entryCount(): Int = synchronized(this) { byId.values.sumOf { it.size } }
 
     /**
      * Get the total number of unique command IDs.
      */
-    fun commandCount(): Int = byId.size
+    fun commandCount(): Int = synchronized(this) { byId.size }
 
     /**
      * Check if a command ID is registered.
      */
-    fun isRegistered(commandId: String): Boolean {
+    fun isRegistered(commandId: String): Boolean = synchronized(this) {
         val idLower = commandId.lowercase()
-        return byId.containsKey(idLower) || byAlias.containsKey(idLower)
+        byId.containsKey(idLower) || byAlias.containsKey(idLower)
     }
 
     /**
      * Get all commands owned by a specific plugin.
      */
-    fun getByPlugin(pluginId: String): List<CommandDescriptor> =
+    fun getByPlugin(pluginId: String): List<CommandDescriptor> = synchronized(this) {
         byPlugin[pluginId]?.map { it.descriptor } ?: emptyList()
+    }
 
     // ─── Clear ──────────────────────────────────────────────────────────
 
     /**
      * Clear all entries from the registry. Primarily for testing.
      */
-    fun clear() {
+    fun clear() = synchronized(this) {
         byId.clear()
         byAlias.clear()
         byPlugin.clear()
