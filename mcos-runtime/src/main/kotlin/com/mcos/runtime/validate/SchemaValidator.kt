@@ -2,6 +2,7 @@ package com.mcos.runtime.validate
 
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -36,14 +37,16 @@ data class ValidationError(
  * Lightweight JSON Schema (Draft 2020-12 subset) validator for MVOS MVP.
  *
  * Supported keywords:
- * - `type`          — "string" | "number" | "integer" | "boolean" | "array" | "object"
+ * - `type`          — "string" | "number" | "integer" | "boolean" | "array" | "object" | "null"
  * - `required`      — array of required field names
  * - `properties`    — per-field sub-schemas
+ * - `additionalProperties` — when `false`, rejects fields not declared in `properties`
  * - `items`         — array item schema
  * - `minimum`       — numeric lower bound (inclusive)
  * - `maximum`       — numeric upper bound (inclusive)
  * - `minLength`     — string min length
  * - `maxLength`     — string max length
+ * - `pattern`       — regex the string must fully match (invalid regex → validation error)
  * - `enum`          — array of allowed values
  *
  * Unsupported keywords are silently ignored (not an error).
@@ -102,6 +105,37 @@ class SchemaValidator {
             for ((key, propSchema) in properties) {
                 val valAtKey = value[key] ?: continue
                 validateValue(valAtKey, propSchema.jsonObject, appendPath(path, key), errors)
+            }
+
+            // additionalProperties: false — reject fields not declared in `properties`.
+            // Only honored when `properties` is present; a bare
+            // `additionalProperties: false` without `properties` is a no-op
+            // (there is nothing to compare against).
+            val additional = schema["additionalProperties"]
+            if (additional != null) {
+                // additionalProperties is either a boolean or a sub-schema.
+                // We only special-case `false` (reject undeclared fields); a
+                // truthy value or a schema is treated as permissive.
+                val allowed = additional.jsonPrimitive.contentOrNull?.let {
+                    when (it) {
+                        "true" -> true
+                        "false" -> false
+                        else -> null
+                    }
+                }
+                if (allowed == false) {
+                    for (key in value.keys) {
+                        if (key !in properties) {
+                            errors.add(
+                                ValidationError(
+                                    path = appendPath(path, key),
+                                    expected = "additionalProperties=false (undeclared field)",
+                                    actual = "present"
+                                )
+                            )
+                        }
+                    }
+                }
             }
         }
     }
@@ -186,6 +220,27 @@ class SchemaValidator {
                     ValidationError(path, "maxLength $maxLength", "length ${content.length}")
                 )
             }
+
+            // pattern — the string must fully match the supplied regex. A
+            // syntactically invalid pattern is itself a schema error: rather
+            // than silently swallowing the exception (which would let a
+            // malformed schema accept anything), we surface it as a
+            // validation error citing the bad pattern.
+            val patternStr = schema["pattern"]?.jsonPrimitive?.contentOrNull
+            if (patternStr != null) {
+                try {
+                    val regex = Regex(patternStr)
+                    if (!regex.matches(content)) {
+                        errors.add(
+                            ValidationError(path, "pattern /$patternStr/", content)
+                        )
+                    }
+                } catch (e: Exception) {
+                    errors.add(
+                        ValidationError(path, "pattern (invalid: ${e.message?.take(80)})", content)
+                    )
+                }
+            }
         }
     }
 
@@ -223,6 +278,12 @@ class SchemaValidator {
             "boolean" -> value is JsonPrimitive && !value.isString && (value.content == "true" || value.content == "false")
             "array"   -> value is JsonArray
             "object"  -> value is JsonObject
+            // JsonNull is a SIBLING of JsonPrimitive in kotlinx.serialization
+            // (both extend JsonElement), NOT a subclass — so `value is JsonPrimitive`
+            // is always false for null. This case must check `value is JsonNull`
+            // directly; otherwise a `type: "null"` schema would fall through to
+            // the `else -> true` branch and accept any value.
+            "null"    -> value is JsonNull
             else      -> true // unknown type → pass
         }
         if (!match) {
