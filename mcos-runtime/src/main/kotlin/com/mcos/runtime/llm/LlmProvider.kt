@@ -90,6 +90,39 @@ sealed class LlmProbeResult {
 }
 
 /**
+ * Where an [LlmProvider] executes its inference (06 §13.0).
+ *
+ * The planner's fallback chain respects a privacy gate between tiers: an
+ * ON_DEVICE provider must not escalate to a CLOUD provider unless the user
+ * explicitly enabled "Allow cloud planner" (06 §13.2, privacy-first default).
+ */
+enum class ProviderTier {
+    /** Runs on-device (MLC-LLM, GGUF, NNAPI): offline, private, weaker. */
+    ON_DEVICE,
+
+    /** Runs on a cloud service: networked, provider data policy applies. */
+    CLOUD,
+}
+
+/**
+ * Standard error codes used by the planner / fallback chain (06 §13.2).
+ */
+object LlmErrorCode {
+    /**
+     * Provider cannot handle the request with its current capabilities
+     * (06 §13.2 `Refuse(CAPABILITY)`). On-device providers return this to
+     * signal a legitimate escalation request to cloud.
+     */
+    const val CAPABILITY_EXCEEDED = "CAPABILITY_EXCEEDED"
+
+    /**
+     * Planner wanted to escalate an on-device failure to a cloud provider
+     * but "Allow cloud planner" is disabled (06 §13.2 privacy gate).
+     */
+    const val CLOUD_FALLBACK_DISABLED = "CLOUD_FALLBACK_DISABLED"
+}
+
+/**
  * Abstraction for an LLM backend.
  *
  * Implementations should handle:
@@ -105,6 +138,12 @@ interface LlmProvider {
      * "gemini", "on-device". Defaults to the simple class name.
      */
     val id: String get() = this::class.simpleName ?: "llm-provider"
+
+    /**
+     * Where this provider runs (06 §13.0). Defaults to [ProviderTier.CLOUD];
+     * on-device implementations (MLC-LLM, GGUF, NNAPI) must override.
+     */
+    val tier: ProviderTier get() = ProviderTier.CLOUD
 
     /**
      * Capabilities this provider advertises. Defaults to [Capability.CHAT]

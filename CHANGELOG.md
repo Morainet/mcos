@@ -53,6 +53,12 @@ The repository has moved from design-only to a working implementation:
 - **`OpenAiLlmProvider`**: advertises `TOOL_CALL` and implements the OpenAI `tools` protocol (`tool_choice=auto`, function schema, `tool_calls` parsing, `usage` tokens).
 - **Tests**: +8 (407 total, full suite green) — `LlmPlannerToolCallTest` T1–T8: native path + mode recording, chat-only fallback to FREEFORM_JSON, retryable→chat fallback, non-retryable stop, multi-tool mapping, descriptor projection, empty tool calls, multi-provider tool-call chain.
 
+### On-device → cloud fallback with privacy gate (2026-08-13)
+- **Provider tiers** (06 §13.0): `ProviderTier { ON_DEVICE, CLOUD }` on `LlmProvider` (defaults CLOUD, so existing providers are unaffected); `LlmProviderRegistry.onDeviceProviders()` / `cloudProviders()` tier filtering.
+- **"Allow cloud planner" opt-in** (06 §13.2): `LlmPlanner.cloudFallbackEnabled` (default `false`, privacy-first) — once an ON_DEVICE provider has been attempted, escalation to a CLOUD provider requires the opt-in; without it the failure surfaces as `CLOUD_FALLBACK_DISABLED` refusal and no data leaves the device.
+- **Standard error codes**: `LlmErrorCode.CAPABILITY_EXCEEDED` (on-device `Refuse(CAPABILITY)` signal) and `CLOUD_FALLBACK_DISABLED` (privacy gate refusal).
+- **Tests**: +10 (417 total, full suite green) — `LlmPlannerOnDeviceFallbackTest` O1–O10: local success, refusal without opt-in, opt-in escalation, gate guards all on-device failures, non-retryable stop, attempted-id reporting, cloud-only regression, no-cloud chain, registry tier filtering, on-device TOOL_CALL + gate.
+
 ### Removed
 - Removed the Phase-0 code skeleton and build system to make the repository a clean **design-only** baseline. Deleted:
   - All source modules: `mcos-sdk`, `mcos-runtime`, `mcos-android`, `plugins/mcos-plugin-{hello,system,camera}` (7 Kotlin source files + 1 test + `plugin.json`).

@@ -43,6 +43,11 @@ import kotlinx.serialization.json.jsonPrimitive
  * @param fallbacks Additional [LlmProvider]s tried in order when the primary
  *        fails with a retryable error (§17 V1 multi-provider fallback chain,
  *        §18.1 "On-device fallback": on-device failure routes to cloud).
+ * @param cloudFallbackEnabled Whether an ON_DEVICE provider may escalate to a
+ *        CLOUD provider on failure (06 §13.2 "Allow cloud planner" opt-in).
+ *        Defaults to `false` -- without the opt-in, an on-device failure
+ *        surfaces as a refusal and no data leaves the device (privacy-first
+ *        default, [08 §9](./08-security.md)).
  */
 class LlmPlanner(
     private val provider: LlmProvider,
@@ -50,6 +55,7 @@ class LlmPlanner(
     private val memory: MemoryStore? = null,
     private val parser: DslParser = DslParser,
     private val fallbacks: List<LlmProvider> = emptyList(),
+    private val cloudFallbackEnabled: Boolean = false,
 ) {
 
     // ---- System prompt ---------------------------------------------------
@@ -193,9 +199,30 @@ class LlmPlanner(
         val chain = listOf(provider) + fallbacks
         var lastErr: LlmResponse.Err? = null
         var attemptedIds = mutableListOf<String>()
+        var triedOnDevice = false
 
         for (p in chain) {
+            // Privacy gate (06 §13.2): once an ON_DEVICE provider has been
+            // attempted, escalation to a CLOUD provider requires the explicit
+            // "Allow cloud planner" opt-in. Without it the failure surfaces as
+            // a refusal and no data leaves the device.
+            if (triedOnDevice && p.tier == ProviderTier.CLOUD && !cloudFallbackEnabled) {
+                return LlmPlan(
+                    commands = emptyList(),
+                    rawDsl = "",
+                    thoughts = "On-device provider failed and cloud fallback is disabled -- " +
+                        "enable \"Allow cloud planner\" to escalate (privacy gate)",
+                    error = LlmResponse.Err(
+                        LlmErrorCode.CLOUD_FALLBACK_DISABLED,
+                        "Cloud fallback is disabled by privacy policy; enable \"Allow cloud planner\" in settings",
+                        false
+                    ),
+                    providerId = attemptedIds.lastOrNull()
+                )
+            }
+
             attemptedIds += p.id
+            if (p.tier == ProviderTier.ON_DEVICE) triedOnDevice = true
             val mode = resolveMode(p)
             when (mode) {
                 PlanMode.NATIVE_TOOL_CALL -> {

@@ -37,6 +37,18 @@ class LlmProviderRegistry {
         providers.values.filter { capability in it.capabilities }
 
     /**
+     * On-device providers (06 §13.0), in priority order. Used to build an
+     * on-device-first fallback chain; escalation beyond these requires the
+     * "Allow cloud planner" opt-in (06 §13.2).
+     */
+    fun onDeviceProviders(): List<LlmProvider> =
+        providers.values.filter { it.tier == ProviderTier.ON_DEVICE }
+
+    /** Cloud providers, in priority order. */
+    fun cloudProviders(): List<LlmProvider> =
+        providers.values.filter { it.tier == ProviderTier.CLOUD }
+
+    /**
      * Providers whose [LlmProvider.probe] returns [LlmProbeResult.Ok],
      * in priority order. Unhealthy providers are excluded from routing
      * (06 §18.1 "On-device fallback" — a failed on-device probe routes to cloud).
