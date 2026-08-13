@@ -7,6 +7,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -158,7 +159,18 @@ class TypedEventBus(
     private val scope: CoroutineScope =
         externalScope ?: CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-    private val runEvents = MutableSharedFlow<RuntimeEvent>(replay = 256, extraBufferCapacity = 64)
+    // P2-F4: onBufferOverflow = DROP_OLDEST ensures that when the buffer
+    // is full, a newly published event displaces the oldest buffered one
+    // instead of being silently discarded by tryEmit. This matters most
+    // for terminal events (RunSucceeded/RunFailed/RunCancelled): without
+    // DROP_OLDEST a burst of progress events can fill the buffer and cause
+    // the terminal event to be dropped, leaving observe() collectors
+    // hanging forever.
+    private val runEvents = MutableSharedFlow<RuntimeEvent>(
+        replay = 256,
+        extraBufferCapacity = 64,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
     private val subscriptions = ConcurrentHashMap<Long, Subscriber>()
     private val ids = AtomicLong(0)
 
