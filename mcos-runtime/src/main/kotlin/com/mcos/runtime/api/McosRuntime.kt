@@ -91,6 +91,20 @@ class McosRuntime internal constructor(
     private val activeRuns = ConcurrentHashMap<String, Job>()
 
     /**
+     * Owned coroutine scope for all run executions (P0-C2).
+     *
+     * Previously `execute()` created a fresh `CoroutineScope(Dispatchers.Default)`
+     * per call — an *orphan* scope with no parent, never cancelled, leaking one
+     * scope (and its dispatcher resources) per run. This owned scope fixes that:
+     *  - Every run launched by [execute] is a child of this scope, so
+     *    [shutdown] cleanly cancels them all.
+     *  - The [SupervisorJob] means one run's failure does not cancel sibling
+     *    runs (structured concurrency with failure isolation).
+     *  - [activeRuns] entries are removed from each run's `finally` block.
+     */
+    private val runScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /**
      * Internal plan produced by payload parsing.
      *
      * Commands are executed linearly through the executor; workflows are
@@ -157,8 +171,9 @@ class McosRuntime internal constructor(
             return ExecuteHandle(runId, ExecutionStatus.COMPLETED)
         }
 
-        // Launch execution in a coroutine
-        val job = CoroutineScope(Dispatchers.Default).launch {
+        // Launch execution as a child of the owned runScope (P0-C2), so the
+        // runtime owns the run's lifecycle and shutdown() cancels it cleanly.
+        val job = runScope.launch {
             val startTime = System.currentTimeMillis()
             try {
                 when (plan) {
@@ -241,6 +256,21 @@ class McosRuntime internal constructor(
      */
     fun cancel(runId: String) {
         activeRuns[runId]?.cancel()
+    }
+
+    /**
+     * Shut down the runtime: cancel every in-flight run and release the owned
+     * coroutine scope (P0-C2). Idempotent; safe to call once the runtime is no
+     * longer needed (e.g. from the host's `onDestroy`). After shutdown, new
+     * [execute] calls will launch on a cancelled scope and complete immediately
+     * as cancelled — callers should not reuse a shut-down runtime.
+     */
+    fun shutdown() {
+        // Cancel every active run; the SupervisorJob's children are cancelled
+        // in bulk by cancelling the scope's job as well.
+        activeRuns.values.forEach { it.cancel() }
+        activeRuns.clear()
+        runScope.cancel()
     }
 
     /**
