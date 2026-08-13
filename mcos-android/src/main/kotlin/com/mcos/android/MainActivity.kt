@@ -30,12 +30,19 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mcos.android.host.ActivityResultBridge
 import com.mcos.android.host.AndroidHostServices
+import com.mcos.android.host.AndroidLlmHttpTransport
+import com.mcos.android.host.AndroidSecureStore
 import com.mcos.plugin.camera.CameraPlugin
 import com.mcos.plugin.files.FilesPlugin
 import com.mcos.plugin.hello.HelloPlugin
 import com.mcos.plugin.system.SystemPlugin
 import com.mcos.runtime.api.*
 import com.mcos.runtime.executor.Executor
+import com.mcos.runtime.llm.ChatOrchestrator
+import com.mcos.runtime.llm.LlmConfig
+import com.mcos.runtime.llm.LlmPlanner
+import com.mcos.runtime.llm.OpenAiLlmProvider
+import com.mcos.runtime.llm.PromptInjectionDetector
 import com.mcos.runtime.permission.PermissionKernel
 import com.mcos.runtime.registry.CommandRegistry
 import com.mcos.runtime.security.AuthStampSigner
@@ -47,6 +54,9 @@ import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 
+/** SharedPreferences key holding the LLM API key (managed via [AndroidSecureStore]). */
+private const val LLM_API_KEY = "llm_api_key"
+
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -54,6 +64,7 @@ class MainActivity : ComponentActivity() {
 
         val resultBridge = ActivityResultBridge()
         val hostServices = AndroidHostServices(this, resultBridge)
+        val secureStore = AndroidSecureStore(this)
         val registry = CommandRegistry()
 
         val runtime = McosRuntime.Builder()
@@ -73,7 +84,7 @@ class MainActivity : ComponentActivity() {
         val plugins = listOf(HelloPlugin(), SystemPlugin(), CameraPlugin(), FilesPlugin())
 
         setContent {
-            MCOSApp(runtime, hostServices, plugins, resultBridge)
+            MCOSApp(runtime, hostServices, plugins, resultBridge, secureStore)
         }
     }
 }
@@ -88,6 +99,7 @@ fun MCOSApp(
     hostServices: HostServices,
     plugins: List<McosPlugin>,
     resultBridge: ActivityResultBridge,
+    secureStore: AndroidSecureStore,
 ) {
     val scope = rememberCoroutineScope()
 
@@ -116,11 +128,36 @@ fun MCOSApp(
     var previewText by remember { mutableStateOf<String?>(null) }
     var lastArtifacts by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
 
+    // ── LLM chat state ─────────────────────────────────────────────────
+    var nlText by remember { mutableStateOf("") }
+    var apiKey by remember { mutableStateOf("") }
+
+    // Load the persisted API key once on startup.
+    LaunchedEffect(Unit) {
+        apiKey = secureStore.get(LLM_API_KEY) ?: ""
+    }
+
     val registry = runtime.registry()
     val commandIds = remember { registry.allCommands().map { it.id } }
 
     val timeFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
     fun now() = timeFormat.format(Date())
+
+    // ── plugin loading (idempotent) ────────────────────────────────────
+    suspend fun loadPlugins() {
+        if (pluginsLoaded) return
+        for (plugin in plugins) {
+            events.add("[${now()}] Loading ${plugin.manifest.name} v${plugin.manifest.version}")
+            try {
+                registry.register(plugin)
+                plugin.onLoad(hostServices)
+                events.add("[${now()}]   └─ OK (${plugin.handlers().size} handlers)")
+            } catch (e: Exception) {
+                events.add("[WARN]   └─ ${e.message}")
+            }
+        }
+        pluginsLoaded = true
+    }
 
     // ── execute ────────────────────────────────────────────────────────
     fun run() {
@@ -143,19 +180,7 @@ fun MCOSApp(
                 preview.warnings.forEach { events.add("[WARN] $it") }
 
                 // 2. Load plugins (once)
-                if (!pluginsLoaded) {
-                    for (plugin in plugins) {
-                        events.add("[${now()}] Loading ${plugin.manifest.name} v${plugin.manifest.version}")
-                        try {
-                            registry.register(plugin)
-                            plugin.onLoad(hostServices)
-                            events.add("[${now()}]   └─ OK (${plugin.handlers().size} handlers)")
-                        } catch (e: Exception) {
-                            events.add("[WARN]   └─ ${e.message}")
-                        }
-                    }
-                    pluginsLoaded = true
-                }
+                loadPlugins()
 
                 // 3. Execute
                 events.add("[${now()}] Executing…")
@@ -165,45 +190,9 @@ fun MCOSApp(
 
                 // 4. Collect events
                 runtime.observe(handle.runId).collect { event ->
-                    when (event) {
-                        is RuntimeEvent.RunStarted ->
-                            events.add("[${now()}] ■ Run ${event.runId.take(8)}… started")
-
-                        is RuntimeEvent.StepStarted ->
-                            events.add("[${now()}] ▶ ${event.commandId}")
-
-                        is RuntimeEvent.Progress ->
-                            events.add(
-                                "[${now()}]   ${event.percent?.let { "$it% " } ?: ""}${event.message ?: "in progress…"}"
-                            )
-
-                        is RuntimeEvent.ArtifactEmitted -> {
-                            events.add(
-                                "[${now()}]   artifact ${event.type}: ${event.uri} (${event.mimeType ?: "?"})"
-                            )
-                            lastArtifacts = lastArtifacts + (event.type to event.uri)
-                        }
-
-                        is RuntimeEvent.LogEmitted ->
-                            events.add("[${event.level}] ${event.message}")
-
-                        is RuntimeEvent.ConfirmationNeeded ->
-                            events.add("[${now()}] confirm: ${event.commandId} — ${event.reason}")
-
-                        is RuntimeEvent.StepSucceeded ->
-                            events.add("[${now()}] ✓ ${event.commandId} (${event.durationMs}ms)")
-
-                        is RuntimeEvent.StepFailed ->
-                            events.add("[${now()}] ✗ ${event.commandId}: ${event.error}")
-
-                        is RuntimeEvent.RunSucceeded ->
-                            events.add("[${now()}] ■ Done (${event.durationMs}ms)")
-
-                        is RuntimeEvent.RunFailed ->
-                            events.add("[ERROR] Run failed: ${event.error}")
-
-                        is RuntimeEvent.RunCancelled ->
-                            events.add("[${now()}] ■ Cancelled")
+                    events.add(event.toLogLine(now()))
+                    if (event is RuntimeEvent.ArtifactEmitted) {
+                        lastArtifacts = lastArtifacts + (event.type to event.uri)
                     }
                 }
 
@@ -220,6 +209,67 @@ fun MCOSApp(
                             dslText = "sys.notify(title=\"MCOS\", text=\"Compressed ${imageUris.size} image(s)\")"
                             events.add("[${now()}] → 已生成通知命令，再次执行即可")
                         }
+                    }
+                }
+            } catch (e: Exception) {
+                events.add("[ERROR] ${e.javaClass.simpleName}: ${e.message}")
+            } finally {
+                isExecuting = false
+            }
+        }
+    }
+
+    // ── LLM chat (NL → plan → execute) ────────────────────────────────
+    fun chat() {
+        if (isExecuting || nlText.isBlank()) return
+        isExecuting = true
+        events.clear()
+
+        val key = apiKey.trim()
+        if (key.isBlank()) {
+            events.add("[WARN] Set an LLM API key in the AI Chat card first.")
+            isExecuting = false
+            return
+        }
+
+        scope.launch {
+            try {
+                // Persist the key so it survives restarts.
+                secureStore.put(LLM_API_KEY, key)
+                loadPlugins()
+
+                events.add("[${now()}] Planning “${nlText.take(60)}”…")
+                val orchestrator = ChatOrchestrator(
+                    planner = LlmPlanner(
+                        provider = OpenAiLlmProvider(
+                            config = LlmConfig(apiKey = key),
+                            transport = AndroidLlmHttpTransport(),
+                        ),
+                        registry = registry,
+                    ),
+                    runtime = runtime,
+                    injectionDetector = PromptInjectionDetector(),
+                )
+                val result = orchestrator.chat(nlText)
+
+                // Plan feedback
+                if (result.plan.isSuccess) {
+                    events.add("[${now()}] Plan: ${result.plan.commands.size} command(s)")
+                    events.add(result.plan.rawDsl)
+                    if (result.plan.rawDsl.isNotBlank()) {
+                        dslText = result.plan.rawDsl
+                        events.add("[${now()}] → DSL pre-filled, press Run to execute manually.")
+                    }
+                } else {
+                    events.add("[ERROR] Planning failed: ${result.plan.error?.message}")
+                }
+
+                // Outcome + execution events
+                events.add(if (result.success) "[${now()}] ✓ ${result.summary}" else "[WARN] ${result.summary}")
+                result.events.forEach { event ->
+                    events.add(event.toLogLine(now()))
+                    if (event is RuntimeEvent.ArtifactEmitted) {
+                        lastArtifacts = lastArtifacts + (event.type to event.uri)
                     }
                 }
             } catch (e: Exception) {
@@ -334,6 +384,87 @@ fun MCOSApp(
                         }
                     }
                     Spacer(Modifier.height(8.dp))
+                }
+
+                // ── AI Chat card ───────────────────────────────────────
+                Card(
+                    Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                    shape = RoundedCornerShape(10.dp),
+                ) {
+                    Column(Modifier.padding(10.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "AI Chat",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                            Spacer(Modifier.weight(1f))
+                            Text(
+                                if (apiKey.isBlank()) "no API key" else "key \u2026${apiKey.takeLast(4)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (apiKey.isBlank()) Color(0xFFEF5350) else MaterialTheme.colorScheme.secondary,
+                            )
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        OutlinedTextField(
+                            value = nlText,
+                            onValueChange = { nlText = it },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp, max = 76.dp),
+                            textStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+                            placeholder = {
+                                Text("Ask in natural language, e.g. take a photo and notify me\u2026")
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                            keyboardActions = KeyboardActions(onDone = { chat() }),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f),
+                                cursorColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Button(
+                                onClick = { chat() },
+                                enabled = !isExecuting && nlText.isNotBlank() && apiKey.isNotBlank(),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary
+                                ),
+                            ) {
+                                if (isExecuting) {
+                                    CircularProgressIndicator(
+                                        Modifier.size(16.dp), strokeWidth = 2.dp,
+                                        color = MaterialTheme.colorScheme.onPrimary,
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                }
+                                Text(if (isExecuting) "Thinking\u2026" else "Chat")
+                            }
+                            OutlinedTextField(
+                                value = apiKey,
+                                onValueChange = { apiKey = it },
+                                modifier = Modifier.weight(1f),
+                                singleLine = true,
+                                textStyle = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                                placeholder = { Text("OpenAI API key\u2026") },
+                                shape = RoundedCornerShape(8.dp),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                    unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f),
+                                    cursorColor = MaterialTheme.colorScheme.primary,
+                                ),
+                            )
+                        }
+                    }
                 }
 
                 // ── DSL input card ─────────────────────────────────────
@@ -506,4 +637,24 @@ fun MCOSApp(
             }
         }
     }
+}
+
+/**
+ * Render a [RuntimeEvent] as a single log line for the output console.
+ * Shared by the DSL runner and the AI Chat pipeline.
+ */
+private fun RuntimeEvent.toLogLine(time: String): String = when (this) {
+    is RuntimeEvent.RunStarted -> "[$time] ■ Run ${runId.take(8)}… started"
+    is RuntimeEvent.StepStarted -> "[$time] ▶ ${commandId}"
+    is RuntimeEvent.Progress ->
+        "[$time]   ${percent?.let { "$it% " } ?: ""}${message ?: "in progress…"}"
+    is RuntimeEvent.ArtifactEmitted ->
+        "[$time]   artifact ${type}: ${uri} (${mimeType ?: "?"})"
+    is RuntimeEvent.LogEmitted -> "[${level}] ${message}"
+    is RuntimeEvent.ConfirmationNeeded -> "[$time] confirm: ${commandId} — ${reason}"
+    is RuntimeEvent.StepSucceeded -> "[$time] ✓ ${commandId} (${durationMs}ms)"
+    is RuntimeEvent.StepFailed -> "[$time] ✗ ${commandId}: ${error}"
+    is RuntimeEvent.RunSucceeded -> "[$time] ■ Done (${durationMs}ms)"
+    is RuntimeEvent.RunFailed -> "[ERROR] Run failed: ${error}"
+    is RuntimeEvent.RunCancelled -> "[$time] ■ Cancelled"
 }
