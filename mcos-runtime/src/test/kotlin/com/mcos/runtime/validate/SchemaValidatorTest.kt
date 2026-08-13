@@ -476,4 +476,106 @@ class SchemaValidatorTest {
         assertIs<ValidationResult.Invalid>(result)
         assertEquals("/config/timeout", result.errors[0].path)
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // V20-V23: null type, additionalProperties, pattern (regression)
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `V20-null type matches JsonNull only`() {
+        // P0-P1 regression: `type: "null"` must accept JsonNull and reject
+        // everything else. Previously the branch fell through to `else -> true`
+        // and accepted ANY value, including non-null.
+        val schema = buildJsonObject {
+            put("type", JsonPrimitive("object"))
+            put("properties", buildJsonObject {
+                put("v", buildJsonObject { put("type", JsonPrimitive("null")) })
+            })
+        }
+
+        // Null value → valid
+        assertIs<ValidationResult.Valid>(validator.validate(
+            buildJsonObject { put("v", JsonNull) }, schema
+        ))
+
+        // Non-null value → invalid (the key fix: previously accepted)
+        val result = validator.validate(
+            buildJsonObject { put("v", JsonPrimitive(42)) },
+            schema,
+        )
+        assertIs<ValidationResult.Invalid>(result)
+        assertEquals("null", result.errors[0].expected)
+    }
+
+    @Test
+    fun `V21-additionalProperties false rejects undeclared fields`() {
+        val schema = buildJsonObject {
+            put("type", JsonPrimitive("object"))
+            put("properties", buildJsonObject {
+                put("name", buildJsonObject { put("type", JsonPrimitive("string")) })
+            })
+            put("additionalProperties", JsonPrimitive(false))
+        }
+
+        // Declared field → valid
+        assertIs<ValidationResult.Valid>(validator.validate(
+            buildJsonObject { put("name", JsonPrimitive("alice")) }, schema
+        ))
+
+        // Extra undeclared field → invalid
+        val result = validator.validate(
+            buildJsonObject {
+                put("name", JsonPrimitive("alice"))
+                put("role", JsonPrimitive("admin")) // not declared
+            },
+            schema,
+        )
+        assertIs<ValidationResult.Invalid>(result)
+        assertTrue(result.errors.any { it.path == "/role" }, "should flag /role: ${result.errors}")
+    }
+
+    @Test
+    fun `V22-pattern rejects non-matching string`() {
+        val schema = buildJsonObject {
+            put("type", JsonPrimitive("object"))
+            put("properties", buildJsonObject {
+                put("email", buildJsonObject {
+                    put("type", JsonPrimitive("string"))
+                    put("pattern", JsonPrimitive("^[^@]+@[^@]+\$"))
+                })
+            })
+        }
+
+        assertIs<ValidationResult.Valid>(validator.validate(
+            buildJsonObject { put("email", JsonPrimitive("a@b.com")) }, schema
+        ))
+
+        val result = validator.validate(
+            buildJsonObject { put("email", JsonPrimitive("no-at-sign")) },
+            schema,
+        )
+        assertIs<ValidationResult.Invalid>(result)
+        assertTrue(result.errors.any { it.expected.startsWith("pattern") })
+    }
+
+    @Test
+    fun `V23-invalid regex pattern surfaces as validation error`() {
+        // A malformed pattern must NOT silently accept everything; it should
+        // produce a validation error citing the bad pattern.
+        val schema = buildJsonObject {
+            put("type", JsonPrimitive("object"))
+            put("properties", buildJsonObject {
+                put("v", buildJsonObject {
+                    put("type", JsonPrimitive("string"))
+                    put("pattern", JsonPrimitive("[unclosed")) // invalid regex
+                })
+            })
+        }
+        val result = validator.validate(
+            buildJsonObject { put("v", JsonPrimitive("anything")) },
+            schema,
+        )
+        assertIs<ValidationResult.Invalid>(result)
+        assertTrue(result.errors.any { it.expected.startsWith("pattern (invalid") })
+    }
 }
