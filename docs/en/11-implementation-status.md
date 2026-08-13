@@ -1,7 +1,7 @@
 # MCOS Implementation Status
 
 > **Status:** Living document  
-> **Last Updated:** 2026-08-12  
+> **Last Updated:** 2026-08-13  
 > **Audience:** Contributors and evaluators who need to know **what is spec-only vs. what still needs to be built**.
 
 MCOS has shipped the **P1 MVP and most of P2**: the Command Protocol, Runtime, Plugin SDK, and shell are implemented in Kotlin across `mcos-sdk`, `mcos-runtime`, `mcos-android` and four plugins. The tables below mark each subsystem **implemented / partial / not started**, citing the commits that landed the code. Rows that remain spec-only are the remaining work.
@@ -77,6 +77,7 @@ Status legend: ✅ implemented · 🟡 partial · ⬜ spec-only (not started). L
 | **Executor** | [03](./03-runtime.md) §9 | P1 | ✅ `executor/Executor` (steps, artifacts, confirm, cancellation, rate-limit) |
 | **Audit Log** | [03](./03-runtime.md) §13, [08](./08-security.md) §14 | P1 (basic) | ✅ `audit/AuditLog` (append, filter, rotate, sha256 + HMAC chain) |
 | **Planner Bridge** | [06](./06-agent.md) | P1 (one provider) | ✅ `llm/` LlmPlanner + OpenAiLlmProvider + ChatOrchestrator; not wired into Android UI |
+| **Planner (multi-provider)** | [06](./06-agent.md) §17 V1 | P2 | ✅ `llm/LlmProviderRegistry` — capability model (`Capability`: CHAT/PLAN/TOOL_CALL/EMBED), health probes (`probe()`), priority-ordered fallback chain in `LlmPlanner` (retryable error → next provider; §18.1 on-device→cloud fallback) |
 | **Network Egress Policy** | [08](./08-security.md) §12 (`decideEgress`) | P1 | ✅ `security/NetworkEgressPolicy.decideEgress` |
 | **Prompt Injection Detection** | [08](./08-security.md) §11 | P1 (compiler-side) | ✅ `llm/PromptInjectionDetector` |
 | **Rate Limiting** | [08](./08-security.md) §10 | P1 (per-plugin/min) | ✅ `security/RateLimiter` (per-plugin/min) |
@@ -91,7 +92,7 @@ Status legend: ✅ implemented · 🟡 partial · ⬜ spec-only (not started). L
 
 > **Done:** the `DslParser` (the highest-leverage first step) shipped together with the rest of the P1 pipeline. The P1 safety floor is closed: `decideConfirmation`, `decideEgress`, prompt-injection checks, rate limiting, **`{{secret}}` template resolution (§9.2)** and **crash-loop quarantine (§15.3)** are all implemented.
 >
-> **Test baseline (2026-08-12):** 410 tests across all modules — parser fixtures, executor, permission, audit (incl. `x-mcos-secret` redaction), workflow (W1-W6), event bus (8), memory (M1-M33 + episodic E1-E14 + summarizer S1-S11), secret resolver, crash quarantine, plugins, Android.
+> **Test baseline (2026-08-13):** 399 tests across all modules — parser fixtures, executor, permission, audit (incl. `x-mcos-secret` redaction), workflow (W1-W6), event bus (8), memory (M1-M33 + episodic E1-E14 + summarizer S1-S11), secret resolver, crash quarantine, plugins, multi-provider (R1-R8 registry + F1-F6 fallback chain), Android.
 
 ---
 
@@ -158,9 +159,9 @@ Steps 1–7 and 10 are **implemented** (2026-08-12); 8–9 are partially wired t
 7. ✅ **Audit (basic + HMAC chain)** — run records appended locally. Per [03](./03-runtime.md) §13.
 8. 🟡 **Real plugin handlers** — `camera.capture` / `sys.notify` wired to Android APIs via `AndroidHostServices`; confirmation UI pending. Per [04](./04-plugin-sdk.md) §7.
 9. 🟡 **`files` plugin** — `photo.search` / `photo.compress` implemented; Android gallery search pending. Per [10](./10-roadmap.md) §4.3.
-10. ✅ **One LLM provider** — `LlmPlanner` + OpenAI provider; utterance → single command / short sequence. Per [06](./06-agent.md) §3. Android chat UI not connected.
+10. ✅ **Multi-provider Planner** — `LlmProvider` capability model (`Capability`: CHAT/PLAN/TOOL_CALL/EMBED), `LlmProviderRegistry` (registration, capability routing, health probes), and a priority-ordered fallback chain in `LlmPlanner` (retryable error → next provider; §18.1 on-device→cloud fallback). Per [06](./06-agent.md) §17 V1. Android chat UI still not connected.
 
-**Next up (suggested):** wire the Planner into the Android chat shell (needs an API key), then multi-provider Planner probes (06 §17), then the cloud-sync Memory tier (§16).
+**Next up (suggested):** wire the Planner into the Android chat shell (needs an API key), then PlanMode `NATIVE_TOOL_CALL` + on-device model fallback chain (06 §17), then the cloud-sync Memory tier (§16).
 
 ---
 
