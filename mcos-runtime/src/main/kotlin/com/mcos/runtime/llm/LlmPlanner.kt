@@ -302,7 +302,7 @@ class LlmPlanner(
                     }
                 }
                 PlanMode.CONSTRAINED -> {
-                    val response = p.constrainedChat(messages, buildIrJsonSchema())
+                    val response = p.constrainedChat(messages, buildGrammar(p, tools))
                     when (response) {
                         is LlmResponse.Ok ->
                             return parseIrJson(response.content, providerId = p.id).copy(planMode = mode)
@@ -347,6 +347,21 @@ class LlmPlanner(
             Capability.TOOL_CALL in p.capabilities -> PlanMode.NATIVE_TOOL_CALL
             Capability.CONSTRAINED in p.capabilities -> PlanMode.CONSTRAINED
             else -> PlanMode.FREEFORM_JSON
+        }
+
+    /**
+     * Pick the highest-fidelity grammar representation for the provider
+     * (06 §3.2 V2): a real llama.cpp GBNF grammar when the provider advertises
+     * [GrammarFormat.GBNF] (llama.cpp / vLLM guided_grammar), otherwise the
+     * portable IR JSON Schema ([GrammarFormat.JSON_SCHEMA] -- OpenAI
+     * response_format, vLLM guided_json, Outlines json_schema).
+     */
+    private fun buildGrammar(p: LlmProvider, tools: List<ToolDescriptor>): LlmGrammar =
+        when {
+            GrammarFormat.GBNF in p.grammarFormats ->
+                LlmGrammar.gbnf(GbnfGrammar.buildIrGrammar(tools))
+            else ->
+                LlmGrammar.jsonSchema(buildIrJsonSchema())
         }
 
     /**
