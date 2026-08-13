@@ -264,9 +264,13 @@ class SystemPlugin : McosPlugin {
                 ?: throw McosException("SCHEMA_VIOLATION", "Missing required arg: text")
 
             val notifications = services?.notifications
-            val channel = notifications?.notify(title, text)
+                // P0-F1: when no notification service is available the command
+                // must NOT report a fake success — callers (and the audit trail)
+                // would believe the notification was delivered. Surface a clear
+                // UNAVAILABLE error instead.
+                ?: throw McosException("UNAVAILABLE", "Notification service is not available on this host")
+            val channel = notifications.notify(title, text)
 
-            // Fallback for hosts without a notification service (JVM MVP).
             return CommandResult.Ok(
                 value = buildJsonObject {
                     put("status", JsonPrimitive("notified"))
