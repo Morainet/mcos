@@ -632,6 +632,61 @@ class WorkflowEngineTest {
     }
 
     // ═══════════════════════════════════════════════════════════════
+    // W25: Retry with composite step — retryOnCodes inspects all new results (P2-F1)
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `W25-retry retryOnCodes checks all results from composite step not just last`() = runBlocking {
+        // A Sequential step produces two failure results. The first carries a
+        // retryable code ("RETRY_ME"), the second a non-retryable code ("NOPE").
+        // With the old lastOrNull() logic, only "NOPE" was examined and retry
+        // was incorrectly suppressed. The fix inspects the full slice and
+        // retries when ANY result code matches retryOnCodes.
+        var attempts = 0
+        val plugin = createPlugin("t25", "1.0.0", mapOf(
+            "retryable" to object : CommandHandler {
+                override suspend fun invoke(ctx: ExecutionContext): CommandResult =
+                    CommandResult.Err("RETRY_ME", "retryable failure", true)
+            },
+            "permanent" to object : CommandHandler {
+                override suspend fun invoke(ctx: ExecutionContext): CommandResult =
+                    CommandResult.Err("NOPE", "permanent failure", false)
+            },
+            // Succeeds on the second attempt so the retry can eventually complete.
+            "succeedSecond" to object : CommandHandler {
+                override suspend fun invoke(ctx: ExecutionContext): CommandResult {
+                    attempts++
+                    return if (attempts >= 2) {
+                        CommandResult.Ok(JsonPrimitive("done"))
+                    } else {
+                        CommandResult.Err("RETRY_ME", "not yet", true)
+                    }
+                }
+            }
+        ))
+        registry.register(plugin)
+
+        // Build a Retry that wraps a Sequential producing two errors on the
+        // first attempt, then succeeds on the second.
+        val result = engine.execute(
+            WorkflowStep.Retry(
+                step = WorkflowStep.Sequential(listOf(
+                    WorkflowStep.Command("succeedSecond"),
+                    WorkflowStep.Command("permanent")
+                )),
+                maxRetries = 3,
+                backoffMs = 5,
+                retryOnCodes = setOf("RETRY_ME"),
+                idempotent = true,
+            )
+        )
+        // The retry should have attempted at least twice (retry was NOT
+        // suppressed by the trailing "NOPE" code).
+        assertTrue(attempts >= 2, "retry should not be suppressed by non-matching last code: attempts=$attempts")
+        Unit
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     // Helpers
     // ═══════════════════════════════════════════════════════════════
 
