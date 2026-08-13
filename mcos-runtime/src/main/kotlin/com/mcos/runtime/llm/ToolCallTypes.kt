@@ -86,4 +86,17 @@ data class TokenUsage(
  * - [FREEFORM_JSON]: plain chat + DSL text output; works with any
  *   [Capability.CHAT] provider.
  */
-enum class PlanMode { NATIVE_TOOL_CALL, FREEFORM_JSON }
+enum class PlanMode {
+    /** Native tool-calling: the model emits structured tool calls (06 §3.2). */
+    NATIVE_TOOL_CALL,
+
+    /** Freeform output: model replies with MCOS DSL text (universal fallback). */
+    FREEFORM_JSON,
+
+    /**
+     * Grammar-constrained decoding (06 §3.2 V2): model output is constrained
+     * by the injected IR JSON Schema; the reply is a single valid IR JSON
+     * object (`invoke` / `sequence` / `clarify` / `refuse`).
+     */
+    CONSTRAINED,
+}

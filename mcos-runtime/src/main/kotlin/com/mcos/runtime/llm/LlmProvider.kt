@@ -74,6 +74,13 @@ enum class Capability {
     /** Native tool-calling (NATIVE_TOOL_CALL mode). */
     TOOL_CALL,
 
+    /**
+     * Grammar-constrained decoding (CONSTRAINED mode, 06 §3.2 V2): the model
+     * output is constrained by the injected IR JSON Schema (llama.cpp GBNF,
+     * Outlines, Gemini structured output, OpenAI response_format, …).
+     */
+    CONSTRAINED,
+
     /** Embedding endpoint (catalog retrieval, semantic index). */
     EMBED,
 }
@@ -177,6 +184,28 @@ interface LlmProvider {
     ): ToolCallResponse = ToolCallResponse.Err(
         "LLM_TOOL_CALL_UNSUPPORTED",
         "Provider $id does not advertise TOOL_CALL",
+        false
+    )
+
+    /**
+     * Grammar-constrained planning request used in CONSTRAINED mode (06 §3.2 V2).
+     *
+     * Only providers advertising [Capability.CONSTRAINED] are routed here. The
+     * [grammar] is the MCOS IR JSON Schema injected as a decoding grammar
+     * (llama.cpp GBNF, Outlines, Gemini structured output, OpenAI
+     * response_format, …); the model's reply MUST be a single JSON object
+     * conforming to that schema.
+     *
+     * The default implementation reports that constrained decoding is
+     * unsupported (non-retryable), so providers without grammar support are
+     * unaffected and fall back to [PlanMode.FREEFORM_JSON].
+     */
+    suspend fun constrainedChat(
+        messages: List<ChatMessage>,
+        grammar: String,
+    ): LlmResponse = LlmResponse.Err(
+        LlmErrorCode.CAPABILITY_EXCEEDED,
+        "Provider $id does not advertise CONSTRAINED (grammar-constrained decoding)",
         false
     )
 

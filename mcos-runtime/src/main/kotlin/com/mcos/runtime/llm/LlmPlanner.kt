@@ -7,9 +7,11 @@ import com.mcos.runtime.memory.MemoryStore
 import com.mcos.runtime.parse.DslParser
 import com.mcos.runtime.registry.CommandRegistry
 import com.mcos.sdk.CommandDescriptor
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -64,7 +66,10 @@ class LlmPlanner(
      * Build the system prompt that tells the LLM which commands are available
      * and how to format the DSL output.
      */
-    suspend fun buildSystemPrompt(): String {
+    suspend fun buildSystemPrompt(mode: PlanMode = PlanMode.FREEFORM_JSON): String {
+        if (mode == PlanMode.CONSTRAINED) {
+            return buildConstrainedSystemPrompt()
+        }
         val commands = registry.allCommands()
         return buildString {
             appendLine("You are MCOS Agent -- a mobile command operating system assistant.")
@@ -92,6 +97,40 @@ class LlmPlanner(
             appendLine("3. Output ONLY the DSL. No explanations, no markdown fences, no extra text.")
             appendLine("4. If a request is impossible with the available commands, output an empty response.")
             appendLine("5. Use correct parameter types: strings must be quoted, numbers/bools unquoted.")
+        }
+    }
+
+    /**
+     * System prompt for CONSTRAINED mode (06 §3.2 V2): the model replies with a
+     * single IR JSON object whose shape is enforced by the injected grammar
+     * (built by [buildIrJsonSchema]); the schema text itself is appended by the
+     * provider's constrained endpoint, so it is not duplicated here.
+     */
+    private suspend fun buildConstrainedSystemPrompt(): String {
+        val commands = registry.allCommands()
+        return buildString {
+            appendLine("You are MCOS Agent -- a mobile command operating system assistant.")
+            appendLine()
+            appendLine("Your job: convert the user's natural language request into a single MCOS IR JSON object.")
+            appendLine()
+            appendLine(buildCommandsSection(commands))
+            appendLine()
+            appendLine(buildMemorySection())
+            appendLine("## Output Format (CONSTRAINED)")
+            appendLine()
+            appendLine("Reply with exactly one JSON object conforming to the IR JSON Schema that follows your instructions:")
+            appendLine()
+            appendLine("  {\"type\":\"invoke\",\"command\":\"camera.capture\",\"args\":{\"flash\":\"off\"}}")
+            appendLine("  {\"type\":\"sequence\",\"steps\":[{\"command\":\"hello.greet\",\"args\":{\"name\":\"MCOS\"}}]} ")
+            appendLine("  {\"type\":\"clarify\",\"question\":\"Which camera -- front or back?\"}")
+            appendLine("  {\"type\":\"refuse\",\"reason\":\"No command can perform that request.\"}")
+            appendLine()
+            appendLine("## Critical Rules")
+            appendLine()
+            appendLine("1. ONLY use commands listed above. Never invent new command IDs.")
+            appendLine("2. `invoke` runs one command; `sequence` runs several in order; `clarify` asks a question; `refuse` declines.")
+            appendLine("3. `args` keys must be parameter names from the command schema; values use correct JSON types (strings quoted).")
+            appendLine("4. Output ONLY the JSON object. No explanations, no markdown fences, no extra text.")
         }
     }
 
@@ -189,11 +228,6 @@ class LlmPlanner(
      * @return [LlmPlan] with parsed commands or error details.
      */
     suspend fun plan(naturalLanguage: String): LlmPlan {
-        val systemPrompt = buildSystemPrompt()
-        val messages = listOf(
-            ChatMessage("system", systemPrompt),
-            ChatMessage("user", naturalLanguage)
-        )
         val tools = buildToolDescriptors()
 
         val chain = listOf(provider) + fallbacks
@@ -224,6 +258,18 @@ class LlmPlanner(
             attemptedIds += p.id
             if (p.tier == ProviderTier.ON_DEVICE) triedOnDevice = true
             val mode = resolveMode(p)
+            val messages = when (mode) {
+                PlanMode.CONSTRAINED ->
+                    listOf(
+                        ChatMessage("system", buildSystemPrompt(mode)),
+                        ChatMessage("user", naturalLanguage)
+                    )
+                else ->
+                    listOf(
+                        ChatMessage("system", buildSystemPrompt()),
+                        ChatMessage("user", naturalLanguage)
+                    )
+            }
             when (mode) {
                 PlanMode.NATIVE_TOOL_CALL -> {
                     val response = p.toolCall(messages, tools)
@@ -255,6 +301,17 @@ class LlmPlanner(
                         }
                     }
                 }
+                PlanMode.CONSTRAINED -> {
+                    val response = p.constrainedChat(messages, buildIrJsonSchema())
+                    when (response) {
+                        is LlmResponse.Ok ->
+                            return parseIrJson(response.content, providerId = p.id).copy(planMode = mode)
+                        is LlmResponse.Err -> {
+                            lastErr = response
+                            if (!response.retryable) break // fatal: no point falling back
+                        }
+                    }
+                }
                 PlanMode.FREEFORM_JSON -> {
                     val response = p.chat(messages)
                     when (response) {
@@ -282,12 +339,48 @@ class LlmPlanner(
     // ---- Planning mode ---------------------------------------------------
 
     /**
-     * Pick the planning mode for a provider based on its capabilities (06 §3.2):
-     * TOOL_CALL providers use [PlanMode.NATIVE_TOOL_CALL], everything else
-     * falls back to [PlanMode.FREEFORM_JSON].
+     * Pick the highest-fidelity planning mode a provider's capabilities allow
+     * (06 §3.2): NATIVE_TOOL_CALL > CONSTRAINED > FREEFORM_JSON.
      */
     private fun resolveMode(p: LlmProvider): PlanMode =
-        if (Capability.TOOL_CALL in p.capabilities) PlanMode.NATIVE_TOOL_CALL else PlanMode.FREEFORM_JSON
+        when {
+            Capability.TOOL_CALL in p.capabilities -> PlanMode.NATIVE_TOOL_CALL
+            Capability.CONSTRAINED in p.capabilities -> PlanMode.CONSTRAINED
+            else -> PlanMode.FREEFORM_JSON
+        }
+
+    /**
+     * The MCOS IR JSON Schema (06 §3.2 / §9.0) injected as a decoding grammar
+     * in CONSTRAINED mode. Providers with real grammar support (llama.cpp GBNF,
+     * Outlines) constrain sampling with it; API providers receive it as a
+     * structured-output hint / appended to the system message.
+     */
+    internal fun buildIrJsonSchema(): String = """
+        {
+          "${'$'}schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "required": ["type"],
+          "properties": {
+            "type": { "enum": ["invoke", "sequence", "clarify", "refuse"] },
+            "command": { "type": "string", "description": "Command ID, e.g. camera.capture (required for invoke)" },
+            "args": { "type": "object", "description": "Named arguments matching the command's parameter schema" },
+            "steps": {
+              "type": "array",
+              "description": "Ordered commands for sequence",
+              "items": {
+                "type": "object",
+                "required": ["command"],
+                "properties": {
+                  "command": { "type": "string" },
+                  "args": { "type": "object" }
+                }
+              }
+            },
+            "question": { "type": "string", "description": "Clarifying question for clarify" },
+            "reason": { "type": "string", "description": "Refusal reason for refuse" }
+          }
+        }
+    """.trimIndent()
 
     /**
      * Project registry commands onto [ToolDescriptor]s for NATIVE_TOOL_CALL
@@ -392,10 +485,106 @@ class LlmPlanner(
      * Extract the content of a fenced code block (```mcos, ```dsl, or plain ```).
      */
     private fun extractFencedBlock(text: String): String? {
-        val fenceRegex = Regex("```(?:mcos|dsl)?\\s*\\n(.*?)```", RegexOption.DOT_MATCHES_ALL)
+        val fenceRegex = Regex("```(?:mcos|dsl|json)?\\s*\\n(.*?)```", RegexOption.DOT_MATCHES_ALL)
         val match = fenceRegex.find(text)
         return match?.groupValues?.get(1)?.trim()
     }
+
+    /**
+     * Parse the LLM's CONSTRAINED-mode reply -- a single IR JSON object -- into
+     * executable [Command]s (06 §3.2 V2).
+     *
+     * Supports the four IR terminal types:
+     * - `invoke`: one command with named args
+     * - `sequence`: ordered list of `{command, args}` steps
+     * - `clarify`: model needs more information (empty plan, no error)
+     * - `refuse`: model declines (empty plan, no error)
+     *
+     * Malformed or unknown output produces a retryable `LLM_PARSE_ERROR` so the
+     * fallback chain can try another provider.
+     */
+    internal fun parseIrJson(raw: String, providerId: String? = null): LlmPlan {
+        val trimmed = raw.trim()
+        val cleaned = extractFencedBlock(trimmed) ?: trimmed
+
+        val json = try {
+            Json.parseToJsonElement(cleaned)
+        } catch (e: Exception) {
+            return irParseError(raw, providerId, "not valid JSON: ${e.message?.take(160)}")
+        }
+        if (json !is JsonObject) {
+            return irParseError(raw, providerId, "expected a JSON object, got ${json::class.simpleName}")
+        }
+
+        val type = json["type"]?.jsonPrimitive?.content
+        return when (type) {
+            "invoke" -> {
+                val command = json["command"]?.jsonPrimitive?.content
+                if (command.isNullOrBlank()) {
+                    irParseError(raw, providerId, "invoke requires a non-empty 'command'")
+                } else {
+                    val args = json["args"] as? JsonObject ?: JsonObject(emptyMap())
+                    LlmPlan(
+                        commands = listOf(Command(command, args)),
+                        rawDsl = raw,
+                        thoughts = "IR invoke: $command",
+                        error = null,
+                        providerId = providerId
+                    )
+                }
+            }
+            "sequence" -> {
+                val steps = json["steps"] as? JsonArray ?: buildJsonArray { }
+                val commands = steps.mapNotNull { step ->
+                    val obj = step as? JsonObject ?: return@mapNotNull null
+                    val command = obj["command"]?.jsonPrimitive?.content ?: return@mapNotNull null
+                    val args = obj["args"] as? JsonObject ?: JsonObject(emptyMap())
+                    Command(command, args)
+                }
+                if (steps.isEmpty()) {
+                    irParseError(raw, providerId, "sequence requires a non-empty 'steps' array")
+                } else if (commands.isEmpty()) {
+                    irParseError(raw, providerId, "sequence steps must be objects with a 'command'")
+                } else {
+                    LlmPlan(
+                        commands = commands,
+                        rawDsl = raw,
+                        thoughts = "IR sequence: ${commands.size} step(s)",
+                        error = null,
+                        providerId = providerId
+                    )
+                }
+            }
+            "clarify" -> LlmPlan(
+                commands = emptyList(),
+                rawDsl = raw,
+                thoughts = "IR clarify: ${json["question"]?.jsonPrimitive?.content ?: "no question"}",
+                error = null,
+                providerId = providerId
+            )
+            "refuse" -> LlmPlan(
+                commands = emptyList(),
+                rawDsl = raw,
+                thoughts = "IR refuse: ${json["reason"]?.jsonPrimitive?.content ?: "no reason"}",
+                error = null,
+                providerId = providerId
+            )
+            else -> irParseError(raw, providerId, "unknown IR type: ${type ?: "<missing>"}")
+        }
+    }
+
+    private fun irParseError(raw: String, providerId: String?, detail: String): LlmPlan =
+        LlmPlan(
+            commands = emptyList(),
+            rawDsl = raw,
+            thoughts = null,
+            error = LlmResponse.Err(
+                "LLM_PARSE_ERROR",
+                "Failed to parse CONSTRAINED IR JSON output: $detail",
+                true
+            ),
+            providerId = providerId
+        )
 
     // ---- IR -> Command conversion ----------------------------------------
 

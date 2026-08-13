@@ -78,7 +78,7 @@ mcos/
 | **Scheduler** | [03](./03-runtime.md) §8 | P1 | 🟡 `McosRuntime` 内进程内 FIFO 队列；尚无优先级通道 |
 | **Executor** | [03](./03-runtime.md) §9 | P1 | ✅ `executor/Executor`（步骤、产物、确认、取消、限流） |
 | **Audit 日志** | [03](./03-runtime.md) §13, [08](./08-security.md) §14 | P1（基础） | ✅ `audit/AuditLog`（append、filter、rotate、sha256 + HMAC 链） |
-| **Planner 桥** | [06](./06-agent.md) | P1（单一 provider） | ✅ `llm/` LlmPlanner + OpenAiLlmProvider + ChatOrchestrator，通过可插拔 `LlmHttpTransport`（JDK `HttpClient` 默认 + Android `HttpURLConnection`）接入 Android 聊天外壳；API key 经 `AndroidSecureStore` 持久化 |
+| **Planner 桥** | [06](./06-agent.md) | P1（单一 provider） | ✅ `llm/` LlmPlanner + OpenAiLlmProvider + ChatOrchestrator，通过可插拔 `LlmHttpTransport`（JDK `HttpClient` 默认 + Android `HttpURLConnection`）接入 Android 聊天外壳；API key 经 `AndroidSecureStore` 持久化；三种 PlanMode——NATIVE_TOOL_CALL / FREEFORM_JSON / CONSTRAINED |
 | **Network Egress 策略** | [08](./08-security.md) §12（`decideEgress`） | P1 | ✅ `security/NetworkEgressPolicy.decideEgress` |
 | **Prompt Injection 检测** | [08](./08-security.md) §11 | P1（编译器侧） | ✅ `llm/PromptInjectionDetector` |
 | **Rate Limiting** | [08](./08-security.md) §10 | P1（每插件/分钟） | ✅ `security/RateLimiter`（每插件/分钟） |
@@ -93,7 +93,7 @@ mcos/
 
 > **已完成：** `DslParser`（最高杠杆的第一步）与其余 P1 流水线一同交付。P1 安全底线中 `decideConfirmation`、`decideEgress`、prompt-injection 检查与 rate limiting 均已实现；**crash 隔离与 `{{secret}}` 模板仍为空白**。
 >
-> **测试基线（2026-08-13）：** 全模块 490 个测试——parser fixture、executor、permission、audit（含 `x-mcos-secret` 脱敏）、workflow（W1-W6）、event bus（8）、memory（M1-M33 + 情景 E1-E14 + 摘要 S1-S11）、secret 解析器、crash 隔离、插件、多 provider（R1-R8 registry + F1-F6 回退链 + T1-T8 原生工具调用 + O1-O10 本地隐私闸门 + **T-transport 7 个测试：provider↔transport 错误映射 + 对本地 HTTP 服务器的真实 JDK `HttpClient` 往返**）、Android。
+> **测试基线（2026-08-13）：** 全模块 504 个测试——parser fixture、executor、permission、audit（含 `x-mcos-secret` 脱敏）、workflow（W1-W6）、event bus（8）、memory（M1-M33 + 情景 E1-E14 + 摘要 S1-S11）、secret 解析器、crash 隔离、插件、多 provider（R1-R8 registry + F1-F6 回退链 + T1-T8 原生工具调用 + O1-O10 本地隐私闸门 + T-transport 7 + **C1-C14 CONSTRAINED：模式选择（TOOL_CALL > CONSTRAINED）、IR `invoke`/`sequence`/`clarify`/`refuse` 解析、畸形→`LLM_PARSE_ERROR`、可重试回退 + 不可重试终止、语法注入、`parseIrJson` 单元测试**）、Android。
 
 ---
 
@@ -164,8 +164,9 @@ mcos/
 11. ✅ **PlanMode `NATIVE_TOOL_CALL`**——按 provider 选择模式（TOOL_CALL → 原生工具调用，否则 FREEFORM_JSON）、`ToolCall`/`ToolDescriptor`/`TokenUsage` 类型、registry 命令投影（含尽力而为的示例解析）以及 `OpenAiLlmProvider` 中的 OpenAI `tools` 协议支持。按 [06](./06-agent.md) §3.2/§17 V1。
 12. ✅ **本地→云端回退与隐私闸门**——`LlmProvider` 上的 `ProviderTier`（ON_DEVICE/CLOUD）、`LlmPlanner.cloudFallbackEnabled`（"允许云端 planner" 显式开关，06 §13.2）以及隐私闸门：一旦 ON_DEVICE provider 失败，升级到 CLOUD 需要显式开启——否则失败以 `CLOUD_FALLBACK_DISABLED` 拒绝呈现，且数据不出设备。标准错误码 `CAPABILITY_EXCEEDED`/`CLOUD_FALLBACK_DISABLED`；`LlmProviderRegistry.onDeviceProviders()`/`cloudProviders()` 分层过滤。按 [06](./06-agent.md) §13.0/§13.2/§17 V2。
 13. ✅ **Android 聊天外壳（Planner 接入应用）**——可插拔 `LlmHttpTransport`（`llm/` 中的 `LlmHttpTransport`/`HttpTransportResponse`/`LlmTransportException`；JDK `HttpClient` 默认实现保持 JVM 测试绿色；`AndroidLlmHttpTransport` 使用 `HttpURLConnection`——Android 无 `java.net.http` 模块）、`OpenAiLlmProvider(transport=…)` 注入、Manifest 中的 `INTERNET` 权限，以及 `MainActivity` 中的 **AI Chat 卡片**（自然语言输入 → `ChatOrchestrator` → 计划/DSL 预填到 DSL 编辑器 → 执行事件记录；OpenAI API key 经 `AndroidSecureStore` 持久化）。按 [06](./06-agent.md) §17。
+14. ✅ **PlanMode `CONSTRAINED`（语法约束解码）**——`Capability.CONSTRAINED` + `PlanMode.CONSTRAINED`、`LlmProvider.constrainedChat(messages, grammar)`（默认 `CAPABILITY_EXCEEDED`，不可重试）、模式选择 `NATIVE_TOOL_CALL > CONSTRAINED > FREEFORM_JSON`、`buildIrJsonSchema()`（MCOS IR JSON Schema：`invoke`/`sequence`/`clarify`/`refuse`）以及 `parseIrJson()`——模型回复是单个 IR JSON 对象；畸形输出产生可重试的 `LLM_PARSE_ERROR`，回退链继续。`OpenAiLlmProvider` 用 OpenAI `response_format: json_object` + 将 schema 追加到 system 消息实现 constrainedChat（API 侧的近似实现；真正的语法见 llama.cpp GBNF / Outlines / Gemini）。CONSTRAINED 的 system prompt 只列出命令/记忆（无 DSL 格式段）。按 [06](./06-agent.md) §3.2 V2 / §17 V2。
 
-**下一步（建议）：** PlanMode `CONSTRAINED`（06 §17 V2），然后做云端同步 Memory 层（§16）。
+**下一步（建议）：** 云端同步 Memory 层（06 §16），然后为 CONSTRAINED 接入更高保真的语法注入（GBNF/Outlines 后端）与 PlanMode `LATENCY_TIERED`（§17 V3）。
 
 ---
 

@@ -28,7 +28,7 @@ class OpenAiLlmProvider(
     override val id: String get() = "openai"
 
     override val capabilities: Set<Capability> =
-        setOf(Capability.CHAT, Capability.TOOL_CALL)
+        setOf(Capability.CHAT, Capability.TOOL_CALL, Capability.CONSTRAINED)
 
     /**
      * Probe uses a minimal 1-token chat request to check connectivity
@@ -83,6 +83,40 @@ class OpenAiLlmProvider(
             }
         }
 
+    override suspend fun constrainedChat(
+        messages: List<ChatMessage>,
+        grammar: String,
+    ): LlmResponse =
+        withContext(Dispatchers.IO) {
+            try {
+                // Append the IR JSON Schema to the system message so the model
+                // sees the exact grammar, and pin response_format to a JSON
+                // object -- an OpenAI-side approximation of grammar-constrained
+                // decoding (real grammars: llama.cpp GBNF, Outlines, Gemini).
+                val constrainedMessages = messages.map { msg ->
+                    if (msg.role == "system") {
+                        msg.copy(content = msg.content + "\n\n## IR JSON Schema (grammar)\n$grammar")
+                    } else msg
+                }
+                val requestBody = buildRequestBody(constrainedMessages, responseFormatJsonObject = true)
+                val httpResponse = sendRequest(requestBody)
+
+                if (httpResponse.statusCode == 200) {
+                    parseOkResponse(httpResponse.body)
+                } else {
+                    parseErrorResponse(httpResponse.statusCode, httpResponse.body)
+                }
+            } catch (e: LlmTransportException) {
+                LlmResponse.Err(e.code, e.message, e.retryable)
+            } catch (e: java.net.ConnectException) {
+                LlmResponse.Err("LLM_CONNECT_ERROR", "Cannot reach LLM endpoint: ${e.message}", true)
+            } catch (e: java.io.IOException) {
+                LlmResponse.Err("LLM_NETWORK_ERROR", e.message ?: "Network error", true)
+            } catch (e: Exception) {
+                LlmResponse.Err("LLM_UNEXPECTED_ERROR", e.message ?: "Unexpected error", false)
+            }
+        }
+
     override suspend fun toolCall(
         messages: List<ChatMessage>,
         tools: List<ToolDescriptor>,
@@ -110,11 +144,19 @@ class OpenAiLlmProvider(
 
     // ---- Request building ------------------------------------------------
 
-    private fun buildRequestBody(messages: List<ChatMessage>): String =
+    private fun buildRequestBody(
+        messages: List<ChatMessage>,
+        responseFormatJsonObject: Boolean = false,
+    ): String =
         buildJsonObject {
             put("model", JsonPrimitive(config.model))
             put("max_tokens", JsonPrimitive(config.maxTokens))
             put("temperature", JsonPrimitive(config.temperature))
+            if (responseFormatJsonObject) {
+                put("response_format", buildJsonObject {
+                    put("type", JsonPrimitive("json_object"))
+                })
+            }
             put("messages", buildJsonArray {
                 messages.forEach { msg ->
                     add(buildJsonObject {
