@@ -55,11 +55,15 @@ class ChatOrchestrator(
      * without executing any commands.
      *
      * @param naturalLanguage The user's utterance, e.g. "打开客厅的灯".
+     * @param mode Optional [PlanMode] override passed to the planner; `null`
+     *        keeps the planner's default (automatic) behavior. Use
+     *        [PlanMode.LATENCY_TIERED] for latency-tiered routing
+     *        (06 §13.1/§15.1, parser/recipe fast paths before any LLM call).
      * @return [ChatResult] with the plan, execution results, and diagnostic info.
      */
-    suspend fun chat(naturalLanguage: String): ChatResult {
+    suspend fun chat(naturalLanguage: String, mode: PlanMode? = null): ChatResult {
         // Step 1: Plan (NL → Commands)
-        val plan = planner.plan(naturalLanguage)
+        val plan = planner.plan(naturalLanguage, mode)
 
         if (!plan.isSuccess) {
             return ChatResult(

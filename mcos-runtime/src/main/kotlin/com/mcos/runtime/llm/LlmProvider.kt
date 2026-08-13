@@ -52,7 +52,26 @@ data class LlmPlan(
      * The planning mode used to produce this plan (06 §3.2). Populated on
      * success; `null` when no provider was successfully used.
      */
-    val planMode: PlanMode? = null
+    val planMode: PlanMode? = null,
+
+    /**
+     * Utterance class assigned by the [UtteranceClassifier] in
+     * [PlanMode.LATENCY_TIERED] routing (06 §13.1). `null` outside that mode.
+     */
+    val utteranceClass: UtteranceClass? = null,
+
+    /**
+     * End-to-end planning latency in milliseconds, measured from when
+     * `plan()` started until the result was produced (06 §15.0 telemetry).
+     * `null` when not measured.
+     */
+    val latencyMs: Long? = null,
+
+    /**
+     * Diagnostic routing label for [PlanMode.LATENCY_TIERED] (06 §13.1):
+     * `direct-parser`, `recipe:<id>`, `llm:<providerId>`, or a failure path.
+     */
+    val route: String? = null,
 ) {
     /** True if the plan contains executable commands without errors. */
     val isSuccess: Boolean get() = error == null && commands.isNotEmpty()

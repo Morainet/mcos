@@ -99,4 +99,14 @@ enum class PlanMode {
      * object (`invoke` / `sequence` / `clarify` / `refuse`).
      */
     CONSTRAINED,
+
+    /**
+     * Latency-tiered routing (06 §13.1 routing strategy, §15.1 budget): the
+     * planner first classifies the utterance ([UtteranceClassifier]) and walks
+     * the cheapest path that can serve it -- exact CLI/DSL -> parser-only,
+     * known recipe -> local [RecipeMatcher], then ON_DEVICE providers before
+     * CLOUD providers (complex intents may invert this when cloud planning is
+     * opted in). Zero-latency paths skip the LLM entirely.
+     */
+    LATENCY_TIERED,
 }
