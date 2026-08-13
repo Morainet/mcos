@@ -78,6 +78,21 @@ class HelloPluginTest {
         plugin.onLoad(StubHelloHostServices())
         plugin.onUnload()
     }
+
+    @Test
+    fun `H6-manifest declares hello_world command for registry discovery`() {
+        // P0-F2 regression: the manifest must list its command(s) so the
+        // CommandRegistry can build a descriptor and make the command
+        // discoverable. Previously commands was empty and the plugin
+        // registered zero commands.
+        val cmds = plugin.manifest.commands
+        assertEquals(1, cmds.size, "manifest should declare exactly one command")
+        assertEquals("hello.world", cmds[0].id)
+        assertEquals("Hello World", cmds[0].title)
+        // The schema must be non-empty so the validator can run.
+        assertTrue(cmds[0].inputSchema.isNotEmpty(), "input schema should be declared")
+        Unit
+    }
 }
 
 class StubHelloHostServices : HostServices {
