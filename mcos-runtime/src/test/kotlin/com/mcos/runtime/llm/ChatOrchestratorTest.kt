@@ -264,6 +264,49 @@ class ChatOrchestratorTest {
         assertEquals("instruction_override", (detection as InjectionDetection.Suspected).reason)
     }
 
+    @Test
+    fun `O13-chat returns timeout failure when terminal event never arrives`() = runBlocking {
+        // P0-C4 regression: if the runtime never emits a terminal event (e.g.
+        // a long-running command still in flight when the orchestrator's event
+        // timeout fires), chat() must return a timeout failure instead of
+        // hanging forever. We simulate this with a slow command and a very
+        // short eventTimeoutMs.
+        val providerInfo = ProviderInfo("TestOrg", "https://example.com")
+        val slowHandler = object : CommandHandler {
+            override suspend fun invoke(ctx: ExecutionContext): CommandResult {
+                kotlinx.coroutines.delay(2000) // longer than the timeout below
+                return CommandResult.Ok(JsonObject(emptyMap()))
+            }
+        }
+        val slowPlugin = object : McosPlugin {
+            override val manifest = PluginManifest(
+                id = "test-slow", name = "Slow", version = "1.0.0",
+                minRuntimeVersion = "1.0", description = "slow",
+                provider = providerInfo, entry = "x",
+                commands = listOf(CommandManifestEntry(
+                    id = "test.slow", version = "1.0", title = "slow",
+                    description = "slow", sideEffectClass = SideEffectClass.read,
+                    inputSchema = JsonObject(emptyMap())
+                ))
+            )
+            override fun handlers() = mapOf("test.slow" to slowHandler)
+            override suspend fun onLoad(services: HostServices) {}
+            override suspend fun onUnload() {}
+        }
+        registry.register(slowPlugin)
+
+        val provider = FakeLlmProvider(listOf(LlmResponse.Ok("test.slow()")))
+        val orchestrator = ChatOrchestrator(
+            LlmPlanner(provider, registry), runtime, eventTimeoutMs = 80L
+        )
+
+        val result = orchestrator.chat("run the slow thing")
+
+        assertFalse(result.success, "should not succeed on timeout")
+        assertTrue(result.summary.contains("timed out"), "summary should mention timeout: ${result.summary}")
+        Unit
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // Helpers
     // ═══════════════════════════════════════════════════════════════
