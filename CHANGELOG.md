@@ -66,6 +66,13 @@ The repository has moved from design-only to a working implementation:
 - **Manifest**: added `android.permission.INTERNET`.
 - **Tests**: +7 (424 runtime / 490 total, full suite green) — `OpenAiLlmProviderTransportTest`: provider↔transport mapping (200 → Ok, non-200 → `LLM_API_ERROR`, `LlmTransportException` → typed code, `ConnectException` → `LLM_CONNECT_ERROR`, `IOException` → `LLM_NETWORK_ERROR`, toolCall error forwarding) + real `JdkLlmHttpTransport` round-trip against a local `HttpServer` verifying the `Authorization: Bearer` header and JSON body.
 
+### PlanMode CONSTRAINED — grammar-constrained decoding (2026-08-13)
+- **`Capability.CONSTRAINED`** + **`PlanMode.CONSTRAINED`** (06 §3.2 V2 / §17 V2); `LlmProvider.constrainedChat(messages, grammar)` with a non-retryable `CAPABILITY_EXCEEDED` default so non-grammar providers are untouched.
+- **Mode selection**: `NATIVE_TOOL_CALL > CONSTRAINED > FREEFORM_JSON` per provider capabilities.
+- **`buildIrJsonSchema()`**: the MCOS IR JSON Schema (`invoke` / `sequence` / `clarify` / `refuse`) injected as the decoding grammar; **`parseIrJson()`** parses the model's single IR JSON object into `Command`s — `invoke` (one command + args), `sequence` (ordered steps), `clarify`/`refuse` (empty plans, no error); malformed/unknown output → retryable `LLM_PARSE_ERROR` so the fallback chain continues.
+- **CONSTRAINED system prompt**: command list + memory only (no DSL format section); `OpenAiLlmProvider` implements constrainedChat via OpenAI `response_format: json_object` with the schema appended to the system message (API-side approximation — real grammars via llama.cpp GBNF / Outlines / Gemini later).
+- **Tests**: +14 (438 runtime / 504 total, full suite green) — `LlmPlannerConstrainedTest` C1-C14: mode selection & TOOL_CALL priority, IR invoke/sequence/clarify/refuse parsing, malformed & unknown-type errors, retryable fallback vs non-retryable stop, grammar injection, `parseIrJson` unit tests (fence stripping, missing command, empty sequence).
+
 ### Removed
 - Removed the Phase-0 code skeleton and build system to make the repository a clean **design-only** baseline. Deleted:
   - All source modules: `mcos-sdk`, `mcos-runtime`, `mcos-android`, `plugins/mcos-plugin-{hello,system,camera}` (7 Kotlin source files + 1 test + `plugin.json`).
