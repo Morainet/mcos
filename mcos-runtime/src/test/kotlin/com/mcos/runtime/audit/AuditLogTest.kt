@@ -340,4 +340,62 @@ class AuditLogTest {
         assertFalse(out.contains("\"k1\""), "api_key value must be redacted: $out")
         assertTrue(out.contains("REDACTED"))
     }
+
+    @Test
+    fun `A14-evict bulk-replaces records preserving order and correctness`() = runBlocking {
+        // P2-F2 regression: evict() was rewritten from per-element removeAt/
+        // remove (O(n²) on CopyOnWriteArrayList) to a single filter + clear
+        // + addAll. Verify the new path still correctly evicts by both count
+        // and age, and preserves chronological order.
+        auditLog.maxRecords = 5
+        auditLog.maxAgeMs = Long.MAX_VALUE // disable age eviction; test count only
+
+        val base = System.currentTimeMillis()
+        for (i in 1..10) {
+            auditLog.append(
+                RunRecord(
+                    runId = "run_$i",
+                    timestamp = base + i * 1000,
+                    commandId = "cmd.$i",
+                    totalDurationMs = 10,
+                    outcome = RunOutcome.OK
+                )
+            )
+        }
+        auditLog.flush()
+
+        // Only the 5 most-recent should survive, in newest-first order.
+        assertEquals(5, auditLog.count())
+        val runs = auditLog.getRuns()
+        assertEquals("cmd.10", runs[0].commandId)
+        assertEquals("cmd.6", runs[4].commandId)
+        assertNull(auditLog.getRun("run_1"))
+        assertNull(auditLog.getRun("run_5"))
+        Unit
+    }
+
+    @Test
+    fun `A15-evict by age removes all expired records in one pass`() = runBlocking {
+        // Verify that age-based eviction works after the bulk rewrite even
+        // when ALL records are expired.
+        val now = System.currentTimeMillis()
+        auditLog.maxRecords = Int.MAX_VALUE
+        auditLog.maxAgeMs = 1000
+
+        for (i in 1..5) {
+            auditLog.append(
+                RunRecord(
+                    runId = "old_$i",
+                    timestamp = now - 5000, // 5s ago → expired
+                    commandId = "cmd.old.$i",
+                    totalDurationMs = 10,
+                    outcome = RunOutcome.OK
+                )
+            )
+        }
+        auditLog.flush()
+
+        assertEquals(0, auditLog.count(), "all expired records should be evicted")
+        Unit
+    }
 }
