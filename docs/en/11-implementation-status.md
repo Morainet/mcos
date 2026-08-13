@@ -77,7 +77,7 @@ Status legend: ✅ implemented · 🟡 partial · ⬜ spec-only (not started). L
 | **Executor** | [03](./03-runtime.md) §9 | P1 | ✅ `executor/Executor` (steps, artifacts, confirm, cancellation, rate-limit) |
 | **Audit Log** | [03](./03-runtime.md) §13, [08](./08-security.md) §14 | P1 (basic) | ✅ `audit/AuditLog` (append, filter, rotate, sha256 + HMAC chain) |
 | **Planner Bridge** | [06](./06-agent.md) | P1 (one provider) | ✅ `llm/` LlmPlanner + OpenAiLlmProvider + ChatOrchestrator; not wired into Android UI |
-| **Planner (multi-provider)** | [06](./06-agent.md) §17 V1 | P2 | ✅ `llm/LlmProviderRegistry` — capability model (`Capability`: CHAT/PLAN/TOOL_CALL/EMBED), health probes (`probe()`), priority-ordered fallback chain in `LlmPlanner` (retryable error → next provider; §18.1 on-device→cloud fallback), **PlanMode `NATIVE_TOOL_CALL`** (`ToolCall`/`ToolDescriptor`/`TokenUsage`, per-provider mode selection, OpenAI `tools` protocol) |
+| **Planner (multi-provider)** | [06](./06-agent.md) §17 V1 | P2 | ✅ `llm/LlmProviderRegistry` — capability model (`Capability`: CHAT/PLAN/TOOL_CALL/EMBED), health probes (`probe()`), priority-ordered fallback chain in `LlmPlanner` (retryable error → next provider; §18.1 on-device→cloud fallback), **PlanMode `NATIVE_TOOL_CALL`** (`ToolCall`/`ToolDescriptor`/`TokenUsage`, per-provider mode selection, OpenAI `tools` protocol), **on-device→cloud privacy gate** (`ProviderTier`, "Allow cloud planner" opt-in, §13.2) |
 | **Network Egress Policy** | [08](./08-security.md) §12 (`decideEgress`) | P1 | ✅ `security/NetworkEgressPolicy.decideEgress` |
 | **Prompt Injection Detection** | [08](./08-security.md) §11 | P1 (compiler-side) | ✅ `llm/PromptInjectionDetector` |
 | **Rate Limiting** | [08](./08-security.md) §10 | P1 (per-plugin/min) | ✅ `security/RateLimiter` (per-plugin/min) |
@@ -92,7 +92,7 @@ Status legend: ✅ implemented · 🟡 partial · ⬜ spec-only (not started). L
 
 > **Done:** the `DslParser` (the highest-leverage first step) shipped together with the rest of the P1 pipeline. The P1 safety floor is closed: `decideConfirmation`, `decideEgress`, prompt-injection checks, rate limiting, **`{{secret}}` template resolution (§9.2)** and **crash-loop quarantine (§15.3)** are all implemented.
 >
-> **Test baseline (2026-08-13):** 407 tests across all modules — parser fixtures, executor, permission, audit (incl. `x-mcos-secret` redaction), workflow (W1-W6), event bus (8), memory (M1-M33 + episodic E1-E14 + summarizer S1-S11), secret resolver, crash quarantine, plugins, multi-provider (R1-R8 registry + F1-F6 fallback chain + T1-T8 native tool-calling), Android.
+> **Test baseline (2026-08-13):** 417 tests across all modules — parser fixtures, executor, permission, audit (incl. `x-mcos-secret` redaction), workflow (W1-W6), event bus (8), memory (M1-M33 + episodic E1-E14 + summarizer S1-S11), secret resolver, crash quarantine, plugins, multi-provider (R1-R8 registry + F1-F6 fallback chain + T1-T8 native tool-calling + O1-O10 on-device privacy gate), Android.
 
 ---
 
@@ -137,7 +137,7 @@ Aggregated from the "MVP vs V1" phasing tables in [05](./05-workflow.md) §15, [
 | Workflow | spec done | ✅ sequence | ✅ **implemented** parallel / if / loop / retry / try / confirm | — |
 | Event Bus | spec done | ✅ run-event channel | ✅ **implemented** full (envelopes, filters, isolation, backpressure) | — |
 | Memory | spec done | ✅ profile + remember | ✅ fuzzy refs + conflict detection + **episodic layer** (E1-E14) + **run-completion summarizer** (S1-S11, §9.4); cloud sync open | cloud sync |
-| Planner | spec done | ✅ 1 provider, chat→DSL | ✅ multi-provider + probes + NATIVE_TOOL_CALL ([06 §17](./06-agent.md)); CONSTRAINED open | — |
+| Planner | spec done | ✅ 1 provider, chat→DSL | ✅ multi-provider + probes + NATIVE_TOOL_CALL + on-device privacy gate ([06 §17](./06-agent.md)); CONSTRAINED open | — |
 | Plugins | spec done | ✅ hello + system + camera + files (20+ commands, [10 §4.3.1](./10-roadmap.md)) | ⬜ IoT + Intent | MCP spike (P2) / MCP production + marketplace (P3) |
 | Marketplace | spec done | — | ⬜ sideload debug | public index + signing ([09 §15](./09-marketplace.md)) |
 | Process Isolation | spec done | 🟡 best effort (in-process) | — | third-party default |
@@ -161,8 +161,9 @@ Steps 1–7 and 10 are **implemented** (2026-08-12); 8–9 are partially wired t
 9. 🟡 **`files` plugin** — `photo.search` / `photo.compress` implemented; Android gallery search pending. Per [10](./10-roadmap.md) §4.3.
 10. ✅ **Multi-provider Planner** — `LlmProvider` capability model (`Capability`: CHAT/PLAN/TOOL_CALL/EMBED), `LlmProviderRegistry` (registration, capability routing, health probes), and a priority-ordered fallback chain in `LlmPlanner` (retryable error → next provider; §18.1 on-device→cloud fallback). Per [06](./06-agent.md) §17 V1.
 11. ✅ **PlanMode `NATIVE_TOOL_CALL`** — per-provider mode selection (TOOL_CALL → native tool calling, else FREEFORM_JSON), `ToolCall`/`ToolDescriptor`/`TokenUsage` types, registry-command projection (incl. best-effort example parsing), and OpenAI `tools` protocol support in `OpenAiLlmProvider`. Per [06](./06-agent.md) §3.2/§17 V1.
+12. ✅ **On-device → cloud fallback with privacy gate** — `ProviderTier` (ON_DEVICE/CLOUD) on `LlmProvider`, `LlmPlanner.cloudFallbackEnabled` ("Allow cloud planner" opt-in, 06 §13.2) and a privacy gate: once an ON_DEVICE provider fails, escalation to CLOUD requires the opt-in — without it the failure surfaces as `CLOUD_FALLBACK_DISABLED` refusal and no data leaves the device. Standard codes `CAPABILITY_EXCEEDED`/`CLOUD_FALLBACK_DISABLED`; `LlmProviderRegistry.onDeviceProviders()`/`cloudProviders()` tier filtering. Per [06](./06-agent.md) §13.0/§13.2/§17 V2.
 
-**Next up (suggested):** wire the Planner into the Android chat shell (needs an API key), then PlanMode `CONSTRAINED` (06 §17 V2) + on-device model fallback chain (§18.1), then the cloud-sync Memory tier (§16).
+**Next up (suggested):** wire the Planner into the Android chat shell (needs an API key), then PlanMode `CONSTRAINED` (06 §17 V2), then the cloud-sync Memory tier (§16).
 
 ---
 
