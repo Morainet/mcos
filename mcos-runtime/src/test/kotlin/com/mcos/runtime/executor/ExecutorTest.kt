@@ -678,6 +678,152 @@ class ExecutorTest {
     }
 
     // ═══════════════════════════════════════════════════════════════
+    // E25-E28: Security pipeline regression tests (P0-S1/S2/S3)
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `E25-forged AuthStamp cannot bypass egress even with network scope`() = runBlocking {
+        // P0-S1 regression: egress must run AFTER signature verification.
+        // A caller forges a stamp granting network.evil.com; without the
+        // reorder, the egress check would read the forged grantsUsed and
+        // ALLOW egress to evil.com. With the fix, the forged signature is
+        // rejected first.
+        val signer = AuthStampSigner()
+        val executorWithAll = Executor(
+            registry, services,
+            egressPolicy = NetworkEgressPolicy(),
+            authStampSigner = signer,
+        )
+        val plugin = createPluginWithSideEffect(
+            id = "test.egressForge", version = "1.0.0",
+            commandId = "net.fetch", sideEffectClass = SideEffectClass.network,
+            handler = EchoHandler("ok")
+        )
+        registry.register(plugin)
+
+        val now = System.currentTimeMillis()
+        val forged = AuthStamp(
+            runId = "run_forge",
+            commandId = "net.fetch",
+            pluginId = "test.egressForge",
+            grantsUsed = setOf("network.evil.com"), // forged scope
+            issuedAt = now - 1_000,
+            expiresAt = now + 60_000,
+        )
+
+        val result = executorWithAll.execute(
+            "net.fetch",
+            buildJsonObject { put("url", JsonPrimitive("https://evil.com/api")) },
+            forged,
+        )
+        assertIs<CommandResult.Err>(result)
+        // Must be rejected for signature, NOT allowed through egress.
+        assertTrue(result.message.contains("signature"), "Should reject forged signature: ${result.message}")
+    }
+
+    @Test
+    fun `E26-global kill switch denies all network egress`() = runBlocking {
+        // P0-S2 regression: the global kill switch must reach decideEgress.
+        val executorWithKill = Executor(
+            registry, services,
+            egressPolicy = NetworkEgressPolicy(),
+            globalKillSwitch = { true },
+        )
+        val plugin = createPluginWithSideEffect(
+            id = "test.kill", version = "1.0.0",
+            commandId = "net.fetch", sideEffectClass = SideEffectClass.network,
+            handler = EchoHandler("ok")
+        )
+        registry.register(plugin)
+
+        val result = executorWithKill.execute(
+            "net.fetch",
+            buildJsonObject { put("url", JsonPrimitive("https://example.com/api")) },
+        )
+        assertIs<CommandResult.Err>(result)
+        assertTrue(result.message.contains("kill_switch"), "Should deny via kill switch: ${result.message}")
+    }
+
+    @Test
+    fun `E27-IDN homograph host is normalised before scope match`() = runBlocking {
+        // P0-S3 regression: a Unicode host must be Punycode-normalised so it
+        // cannot bypass a narrower scope. Here the granted scope is the ASCII
+        // "example.com" but the request targets a homograph; the egress check
+        // must deny (domain_not_in_scope), not allow.
+        val signer = AuthStampSigner()
+        val executorWithEgress = Executor(
+            registry, services,
+            egressPolicy = NetworkEgressPolicy(),
+            authStampSigner = signer,
+        )
+        val plugin = createPluginWithSideEffect(
+            id = "test.idn", version = "1.0.0",
+            commandId = "net.fetch", sideEffectClass = SideEffectClass.network,
+            handler = EchoHandler("ok")
+        )
+        registry.register(plugin)
+
+        val now = System.currentTimeMillis()
+        // Grant only the legitimate ASCII scope.
+        val stamp = signer.sign(AuthStamp(
+            runId = "run_idn",
+            commandId = "net.fetch",
+            pluginId = "test.idn",
+            grantsUsed = setOf("network.example.com"),
+            issuedAt = now - 1_000,
+            expiresAt = now + 60_000,
+        ))
+
+        // Request a homograph domain (ä ≈ a, visually similar but distinct).
+        val result = executorWithEgress.execute(
+            "net.fetch",
+            buildJsonObject { put("url", JsonPrimitive("https://exämple.com/api")) },
+            stamp,
+        )
+        assertIs<CommandResult.Err>(result)
+        assertTrue(
+            result.message.contains("domain_not_in_scope") || result.message.contains("no_network_scope"),
+            "Homograph host should be denied: ${result.message}"
+        )
+    }
+
+    @Test
+    fun `E28-egress allows when granted scope matches host`() = runBlocking {
+        // Positive control for E25-E27: a properly signed stamp with a
+        // matching network scope must be allowed through egress.
+        val signer = AuthStampSigner()
+        val executorWithEgress = Executor(
+            registry, services,
+            egressPolicy = NetworkEgressPolicy(),
+            authStampSigner = signer,
+        )
+        val plugin = createPluginWithSideEffect(
+            id = "test.allow", version = "1.0.0",
+            commandId = "net.fetch", sideEffectClass = SideEffectClass.network,
+            handler = EchoHandler("ok")
+        )
+        registry.register(plugin)
+
+        val now = System.currentTimeMillis()
+        val stamp = signer.sign(AuthStamp(
+            runId = "run_allow",
+            commandId = "net.fetch",
+            pluginId = "test.allow",
+            grantsUsed = setOf("network.example.com"),
+            issuedAt = now - 1_000,
+            expiresAt = now + 60_000,
+        ))
+
+        val result = executorWithEgress.execute(
+            "net.fetch",
+            buildJsonObject { put("url", JsonPrimitive("https://example.com/api")) },
+            stamp,
+        )
+        assertIs<CommandResult.Ok>(result)
+        Unit
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     // Helpers
     // ═══════════════════════════════════════════════════════════════
 
