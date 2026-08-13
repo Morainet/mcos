@@ -171,8 +171,13 @@ class EventBusTest {
         bus.subscribe(EventFilter(typePrefix = "s.")) { healthy.add(it.type) }
 
         bus.publishEvent(envelope("s.ev"))
+        // Wait for BOTH the healthy subscriber to receive AND the throwing
+        // subscriber's error to be audited. Both happen asynchronously on
+        // Dispatchers.Default; checking only `healthy` first can race the
+        // error-audit (P1-E1 timing: the per-subscriber publish lock slightly
+        // reorders delivery vs. the error audit).
         withTimeout(2_000) {
-            while (healthy.isEmpty()) delay(10)
+            while (healthy.isEmpty() || errors.isEmpty()) delay(10)
         }
 
         assertEquals(listOf("s.ev"), healthy)
@@ -216,6 +221,50 @@ class EventBusTest {
         assertTrue("expected drops, got ${drops.get()}", drops.get() > 0)
         assertEquals(40, received.get() + drops.get())
         bus.dispose()
+    }
+
+    @Test
+    fun concurrentPublishersNeverSilentlyLoseEvents() = runBlocking {
+        // P1-E1 regression: with the per-subscriber lock, concurrent
+        // publishers must not interleave their drop+send sequences in a way
+        // that drops an event but never audits it. Every event ends up either
+        // delivered or audited as a drop — none vanish silently.
+        val drops = AtomicInteger(0)
+        val bus = TypedEventBus(
+            auditSink = object : EventAuditSink {
+                override fun onSubscriberError(eventType: String, subscriptionId: Long, error: Throwable) {
+                    error("unexpected subscriber error")
+                }
+
+                override fun onBackpressureDrop(eventType: String, subscriptionId: Long) {
+                    drops.incrementAndGet()
+                }
+            },
+            channelCapacity = 4, // small so we actually hit backpressure
+        )
+
+        val received = AtomicInteger(0)
+        bus.subscribe(EventFilter(typePrefix = "race.")) {
+            delay(20) // slow consumer → buffer fills
+            received.incrementAndGet()
+        }
+
+        // Fire 100 events from 10 concurrent threads.
+        val threads = (1..10).map { t ->
+            Thread {
+                repeat(10) { i -> bus.publishEvent(envelope("race.$t.$i")) }
+            }
+        }
+        threads.forEach { it.start() }
+        threads.forEach { it.join() }
+
+        // Drain: every event is accounted for (delivered + dropped == 100).
+        withTimeout(10_000) {
+            while (received.get() + drops.get() < 100) delay(10)
+        }
+        assertEquals(100, received.get() + drops.get())
+        bus.dispose()
+        Unit
     }
 
     // ─── Run-event channel (P1 compatibility) ────────────────────────────
