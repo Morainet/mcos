@@ -19,7 +19,7 @@ The repository has moved from design-only to a working implementation:
 - **Workflow** (P2 full): `WorkflowEngine` — sequential/parallel/if/loop/retry/try/confirm; named `WorkflowStore`; `WorkflowJson` decode; wired into `McosRuntime.runWorkflow` with plan preview.
 - **Event Bus** (P2 full): typed `EventEnvelope` + `EventFilter` (typePrefix + deep-equality `where`), per-subscriber isolation under `SupervisorJob`, bounded channels with drop-oldest backpressure + `EventAuditSink`; P1 run-event channel kept.
 - **Memory** (P2 core): TTL, semantic tags, 4-step fuzzy `resolveRef` with confidence + reason, `CREATED`/`UPDATED`/`CONFLICT` write semantics with cross-path dedup and superseded history.
-- **LLM**: `LlmPlanner`, `OpenAiLlmProvider`, `ChatOrchestrator` (runtime side; Android UI not connected).
+- **LLM**: `LlmPlanner`, `OpenAiLlmProvider`, `ChatOrchestrator` (runtime side; now also wired into the Android chat shell, see below).
 - **Android shell**: Jetpack Compose CLI/Chat UI, `AndroidHostServices` (notifications, camera, files), `ActivityResultBridge`.
 - **Tests**: 361 across all modules (fixtures, executor, permission, audit, workflow W1–W6, event bus ×8, memory M1–M33, plugins, Android).
 - **Docs**: `docs/en/11-implementation-status.md` rewritten from "design-only" to the live status matrix above.
@@ -58,6 +58,13 @@ The repository has moved from design-only to a working implementation:
 - **"Allow cloud planner" opt-in** (06 §13.2): `LlmPlanner.cloudFallbackEnabled` (default `false`, privacy-first) — once an ON_DEVICE provider has been attempted, escalation to a CLOUD provider requires the opt-in; without it the failure surfaces as `CLOUD_FALLBACK_DISABLED` refusal and no data leaves the device.
 - **Standard error codes**: `LlmErrorCode.CAPABILITY_EXCEEDED` (on-device `Refuse(CAPABILITY)` signal) and `CLOUD_FALLBACK_DISABLED` (privacy gate refusal).
 - **Tests**: +10 (417 total, full suite green) — `LlmPlannerOnDeviceFallbackTest` O1–O10: local success, refusal without opt-in, opt-in escalation, gate guards all on-device failures, non-retryable stop, attempted-id reporting, cloud-only regression, no-cloud chain, registry tier filtering, on-device TOOL_CALL + gate.
+
+### Android chat shell wired to the Planner (2026-08-13)
+- **Pluggable LLM HTTP transport** (`llm/LlmHttpTransport`): `LlmHttpTransport` interface + `HttpTransportResponse` + `LlmTransportException` (typed timeout errors); `JdkLlmHttpTransport` (JDK `HttpClient`) stays the default so JVM tests and desktop use are unchanged; `OpenAiLlmProvider` now takes `transport:` as a constructor parameter.
+- **Android-compatible transport**: `AndroidLlmHttpTransport` (mcos-android, `HttpURLConnection` on `Dispatchers.IO`) — Android has no `java.net.http` module, so this is the transport the app injects. Error mapping mirrors the JDK transport: timeouts → `LLM_TIMEOUT`, `ConnectException`/`IOException` → `LLM_CONNECT_ERROR`/`LLM_NETWORK_ERROR` via the provider's existing catch clauses.
+- **AI Chat card in `MainActivity`**: natural-language input → `ChatOrchestrator` → plan preview + DSL prefilled into the DSL editor + run events logged in the console; `LlmPlanner` built with the registry-backed provider (mode selection, injection detection active). API key persisted via `AndroidSecureStore` (SharedPreferences) and loaded on startup.
+- **Manifest**: added `android.permission.INTERNET`.
+- **Tests**: +7 (424 runtime / 490 total, full suite green) — `OpenAiLlmProviderTransportTest`: provider↔transport mapping (200 → Ok, non-200 → `LLM_API_ERROR`, `LlmTransportException` → typed code, `ConnectException` → `LLM_CONNECT_ERROR`, `IOException` → `LLM_NETWORK_ERROR`, toolCall error forwarding) + real `JdkLlmHttpTransport` round-trip against a local `HttpServer` verifying the `Authorization: Bearer` header and JSON body.
 
 ### Removed
 - Removed the Phase-0 code skeleton and build system to make the repository a clean **design-only** baseline. Deleted:

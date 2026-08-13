@@ -10,16 +10,19 @@ import kotlinx.serialization.json.jsonPrimitive
 /**
  * OpenAI-compatible [LlmProvider] implementation.
  *
- * Uses `java.net.http.HttpClient` (built into JDK 11+) -- no external
- * HTTP library required.
- *
  * Compatible with any provider that speaks the OpenAI Chat Completions API,
  * including self-hosted vLLM/LiteLLM endpoints.
  *
+ * HTTP transport is pluggable ([LlmHttpTransport]): the JVM default uses the
+ * JDK 11+ `HttpClient`; Android injects an `HttpURLConnection`-based transport
+ * because the `java.net.http` module is not available on Android.
+ *
  * @param config Connection and model configuration.
+ * @param transport HTTP transport used for requests.
  */
 class OpenAiLlmProvider(
-    private val config: LlmConfig
+    private val config: LlmConfig,
+    private val transport: LlmHttpTransport = JdkLlmHttpTransport(),
 ) : LlmProvider {
 
     override val id: String get() = "openai"
@@ -45,12 +48,12 @@ class OpenAiLlmProvider(
                     })
                 }.toString()
                 val httpResponse = sendRequest(requestBody)
-                if (httpResponse.statusCode() == 200) {
+                if (httpResponse.statusCode == 200) {
                     LlmProbeResult.Ok
                 } else {
                     LlmProbeResult.Err(
                         "LLM_API_ERROR",
-                        "Probe failed with HTTP ${httpResponse.statusCode()}"
+                        "Probe failed with HTTP ${httpResponse.statusCode}"
                     )
                 }
             } catch (e: Exception) {
@@ -64,15 +67,15 @@ class OpenAiLlmProvider(
                 val requestBody = buildRequestBody(messages)
                 val httpResponse = sendRequest(requestBody)
 
-                if (httpResponse.statusCode() == 200) {
-                    parseOkResponse(httpResponse.body())
+                if (httpResponse.statusCode == 200) {
+                    parseOkResponse(httpResponse.body)
                 } else {
-                    parseErrorResponse(httpResponse.statusCode(), httpResponse.body())
+                    parseErrorResponse(httpResponse.statusCode, httpResponse.body)
                 }
+            } catch (e: LlmTransportException) {
+                LlmResponse.Err(e.code, e.message, e.retryable)
             } catch (e: java.net.ConnectException) {
                 LlmResponse.Err("LLM_CONNECT_ERROR", "Cannot reach LLM endpoint: ${e.message}", true)
-            } catch (e: java.net.http.HttpTimeoutException) {
-                LlmResponse.Err("LLM_TIMEOUT", "LLM request timed out", true)
             } catch (e: java.io.IOException) {
                 LlmResponse.Err("LLM_NETWORK_ERROR", e.message ?: "Network error", true)
             } catch (e: Exception) {
@@ -89,15 +92,15 @@ class OpenAiLlmProvider(
                 val requestBody = buildToolCallRequestBody(messages, tools)
                 val httpResponse = sendRequest(requestBody)
 
-                if (httpResponse.statusCode() == 200) {
-                    parseToolCallResponse(httpResponse.body())
+                if (httpResponse.statusCode == 200) {
+                    parseToolCallResponse(httpResponse.body)
                 } else {
-                    parseToolCallError(httpResponse.statusCode(), httpResponse.body())
+                    parseToolCallError(httpResponse.statusCode, httpResponse.body)
                 }
+            } catch (e: LlmTransportException) {
+                ToolCallResponse.Err(e.code, e.message, e.retryable)
             } catch (e: java.net.ConnectException) {
                 ToolCallResponse.Err("LLM_CONNECT_ERROR", "Cannot reach LLM endpoint: ${e.message}", true)
-            } catch (e: java.net.http.HttpTimeoutException) {
-                ToolCallResponse.Err("LLM_TIMEOUT", "LLM request timed out", true)
             } catch (e: java.io.IOException) {
                 ToolCallResponse.Err("LLM_NETWORK_ERROR", e.message ?: "Network error", true)
             } catch (e: Exception) {
@@ -153,21 +156,14 @@ class OpenAiLlmProvider(
             })
         }.toString()
 
-    private suspend fun sendRequest(body: String): java.net.http.HttpResponse<String> {
-        val client = java.net.http.HttpClient.newBuilder()
-            .connectTimeout(java.time.Duration.ofMillis(config.connectTimeoutMs))
-            .build()
-
-        val request = java.net.http.HttpRequest.newBuilder()
-            .uri(java.net.URI.create(config.endpoint))
-            .header("Content-Type", "application/json")
-            .header("Authorization", "Bearer ${config.apiKey}")
-            .timeout(java.time.Duration.ofMillis(config.requestTimeoutMs))
-            .POST(java.net.http.HttpRequest.BodyPublishers.ofString(body))
-            .build()
-
-        return client.send(request, java.net.http.HttpResponse.BodyHandlers.ofString())
-    }
+    private suspend fun sendRequest(body: String): HttpTransportResponse =
+        transport.postJson(
+            url = config.endpoint,
+            apiKey = config.apiKey,
+            body = body,
+            connectTimeoutMs = config.connectTimeoutMs,
+            requestTimeoutMs = config.requestTimeoutMs,
+        )
 
     // ---- Response parsing ------------------------------------------------
 
