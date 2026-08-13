@@ -325,13 +325,11 @@ class SystemPlugin : McosPlugin {
                     }
                 )
             } else {
-                // Read mode (MVP: return stub since real clipboard needs Android)
-                CommandResult.Ok(
-                    value = buildJsonObject {
-                        put("operation", JsonPrimitive("read"))
-                        put("text", JsonPrimitive(""))
-                    }
-                )
+                // Read mode — no clipboard capability is available on this
+                // host, so surface UNAVAILABLE rather than a fake Ok that
+                // the caller cannot distinguish from a genuinely empty
+                // clipboard.
+                throw McosException("UNAVAILABLE", "Clipboard read is not available on this host")
             }
         }
     }
@@ -406,75 +404,40 @@ class SystemPlugin : McosPlugin {
     }
 
     // ─── Device query handlers ────────────────────────────────────────────
+    //
+    // P2-F3: These handlers previously returned hardcoded fake data
+    // (battery=85%, ssid="MCOS-Network", lat=22.5431, etc.) and reported
+    // Ok, which polluted the audit trail with fabricated telemetry. There
+    // is currently no device-info capability on HostServices, so they now
+    // surface a clear UNAVAILABLE error — consistent with NotifyHandler —
+    // until a real capability is wired.
+
+    private fun deviceUnavailable(name: String): Nothing =
+        throw McosException("UNAVAILABLE", "$name is not available on this host")
 
     inner class BatteryHandler : CommandHandler {
-        override suspend fun invoke(ctx: ExecutionContext): CommandResult {
-            return CommandResult.Ok(
-                value = buildJsonObject {
-                    put("level", JsonPrimitive(85))
-                    put("charging", JsonPrimitive(true))
-                    put("temperature", JsonPrimitive(32.5f))
-                    put("health", JsonPrimitive("good"))
-                    put("technology", JsonPrimitive("Li-ion"))
-                }
-            )
-        }
+        override suspend fun invoke(ctx: ExecutionContext): CommandResult =
+            deviceUnavailable("Battery query")
     }
 
     inner class WifiHandler : CommandHandler {
-        override suspend fun invoke(ctx: ExecutionContext): CommandResult {
-            return CommandResult.Ok(
-                value = buildJsonObject {
-                    put("connected", JsonPrimitive(true))
-                    put("ssid", JsonPrimitive("MCOS-Network"))
-                    put("signalStrength", JsonPrimitive(-45))
-                    put("frequency", JsonPrimitive("5GHz"))
-                    put("ipAddress", JsonPrimitive("192.168.1.100"))
-                }
-            )
-        }
+        override suspend fun invoke(ctx: ExecutionContext): CommandResult =
+            deviceUnavailable("Wi-Fi query")
     }
 
     inner class ScreenHandler : CommandHandler {
-        override suspend fun invoke(ctx: ExecutionContext): CommandResult {
-            return CommandResult.Ok(
-                value = buildJsonObject {
-                    put("width", JsonPrimitive(1080))
-                    put("height", JsonPrimitive(2400))
-                    put("density", JsonPrimitive(2.75f))
-                    put("orientation", JsonPrimitive("portrait"))
-                    put("refreshRate", JsonPrimitive(120))
-                }
-            )
-        }
+        override suspend fun invoke(ctx: ExecutionContext): CommandResult =
+            deviceUnavailable("Screen query")
     }
 
     inner class VolumeHandler : CommandHandler {
-        override suspend fun invoke(ctx: ExecutionContext): CommandResult {
-            return CommandResult.Ok(
-                value = buildJsonObject {
-                    put("media", JsonPrimitive(10))
-                    put("ring", JsonPrimitive(7))
-                    put("alarm", JsonPrimitive(15))
-                    put("notification", JsonPrimitive(5))
-                    put("voiceCall", JsonPrimitive(8))
-                }
-            )
-        }
+        override suspend fun invoke(ctx: ExecutionContext): CommandResult =
+            deviceUnavailable("Volume query")
     }
 
     inner class LocationHandler : CommandHandler {
-        override suspend fun invoke(ctx: ExecutionContext): CommandResult {
-            return CommandResult.Ok(
-                value = buildJsonObject {
-                    put("latitude", JsonPrimitive(22.5431))
-                    put("longitude", JsonPrimitive(114.0579))
-                    put("accuracy", JsonPrimitive(15.0f))
-                    put("provider", JsonPrimitive("gps"))
-                    put("timestamp", JsonPrimitive(System.currentTimeMillis()))
-                }
-            )
-        }
+        override suspend fun invoke(ctx: ExecutionContext): CommandResult =
+            deviceUnavailable("Location query")
     }
 
     inner class BrightnessHandler : CommandHandler {
@@ -483,7 +446,9 @@ class SystemPlugin : McosPlugin {
             val level = args["level"]?.jsonPrimitive?.intOrNull
 
             return if (level != null) {
-                // Set mode
+                // Set mode — validate schema even though the device capability
+                // is unavailable, so callers get a deterministic error before
+                // the UNAVAILABLE surfaces.
                 if (level < 0 || level > 255) {
                     throw McosException(
                         "SCHEMA_VIOLATION",
@@ -491,21 +456,9 @@ class SystemPlugin : McosPlugin {
                         details = buildJsonObject { put("level", JsonPrimitive(level)) }
                     )
                 }
-                CommandResult.Ok(
-                    value = buildJsonObject {
-                        put("mode", JsonPrimitive("set"))
-                        put("level", JsonPrimitive(level))
-                    }
-                )
+                deviceUnavailable("Brightness set")
             } else {
-                // Query mode
-                CommandResult.Ok(
-                    value = buildJsonObject {
-                        put("mode", JsonPrimitive("query"))
-                        put("level", JsonPrimitive(128))
-                        put("auto", JsonPrimitive(false))
-                    }
-                )
+                deviceUnavailable("Brightness query")
             }
         }
     }
