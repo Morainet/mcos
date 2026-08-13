@@ -174,6 +174,11 @@ class LlmPlanner(
      * [fallbacks] chain in order (§17 V1). Non-retryable errors stop the
      * chain immediately.
      *
+     * Each provider is called through the highest-fidelity mode its
+     * capabilities allow (06 §3.2): TOOL_CALL providers via
+     * [PlanMode.NATIVE_TOOL_CALL] ([LlmProvider.toolCall]), everything else
+     * via [PlanMode.FREEFORM_JSON] ([LlmProvider.chat] + DSL parsing).
+     *
      * @param naturalLanguage The user's request, e.g. "take a photo and share it".
      * @return [LlmPlan] with parsed commands or error details.
      */
@@ -183,6 +188,7 @@ class LlmPlanner(
             ChatMessage("system", systemPrompt),
             ChatMessage("user", naturalLanguage)
         )
+        val tools = buildToolDescriptors()
 
         val chain = listOf(provider) + fallbacks
         var lastErr: LlmResponse.Err? = null
@@ -190,12 +196,48 @@ class LlmPlanner(
 
         for (p in chain) {
             attemptedIds += p.id
-            val response = p.chat(messages)
-            when (response) {
-                is LlmResponse.Ok -> return parseResponse(response.content, providerId = p.id)
-                is LlmResponse.Err -> {
-                    lastErr = response
-                    if (!response.retryable) break // fatal: no point falling back
+            val mode = resolveMode(p)
+            when (mode) {
+                PlanMode.NATIVE_TOOL_CALL -> {
+                    val response = p.toolCall(messages, tools)
+                    when (response) {
+                        is ToolCallResponse.Ok -> {
+                            if (response.toolCalls.isEmpty()) {
+                                return LlmPlan(
+                                    commands = emptyList(),
+                                    rawDsl = "",
+                                    thoughts = "Model returned no tool calls -- request may be out of scope for available commands",
+                                    error = null,
+                                    providerId = p.id,
+                                    planMode = mode
+                                )
+                            }
+                            val commands = response.toolCalls.map { Command(it.command, it.args) }
+                            return LlmPlan(
+                                commands = commands,
+                                rawDsl = "",
+                                thoughts = "Model proposed ${commands.size} tool call(s) (native tool calling)",
+                                error = null,
+                                providerId = p.id,
+                                planMode = mode
+                            )
+                        }
+                        is ToolCallResponse.Err -> {
+                            lastErr = LlmResponse.Err(response.code, response.message, response.retryable)
+                            if (!response.retryable) break // fatal: no point falling back
+                        }
+                    }
+                }
+                PlanMode.FREEFORM_JSON -> {
+                    val response = p.chat(messages)
+                    when (response) {
+                        is LlmResponse.Ok ->
+                            return parseResponse(response.content, providerId = p.id).copy(planMode = mode)
+                        is LlmResponse.Err -> {
+                            lastErr = response
+                            if (!response.retryable) break // fatal: no point falling back
+                        }
+                    }
                 }
             }
         }
@@ -209,6 +251,39 @@ class LlmPlanner(
             providerId = attemptedIds.lastOrNull()
         )
     }
+
+    // ---- Planning mode ---------------------------------------------------
+
+    /**
+     * Pick the planning mode for a provider based on its capabilities (06 §3.2):
+     * TOOL_CALL providers use [PlanMode.NATIVE_TOOL_CALL], everything else
+     * falls back to [PlanMode.FREEFORM_JSON].
+     */
+    private fun resolveMode(p: LlmProvider): PlanMode =
+        if (Capability.TOOL_CALL in p.capabilities) PlanMode.NATIVE_TOOL_CALL else PlanMode.FREEFORM_JSON
+
+    /**
+     * Project registry commands onto [ToolDescriptor]s for NATIVE_TOOL_CALL
+     * (06 §3.0). Registry command examples (DSL strings) are best-effort
+     * parsed into their argument objects; unparseable examples are skipped.
+     */
+    private fun buildToolDescriptors(): List<ToolDescriptor> =
+        registry.allCommands().map { cmd ->
+            ToolDescriptor(
+                command = cmd.id,
+                description = cmd.description,
+                inputSchema = cmd.inputSchema,
+                examples = cmd.examples.mapNotNull { dsl ->
+                    when (val r = parser.parse(dsl)) {
+                        is ParseResult.Ok -> when (val ir = r.ir) {
+                            is ExecutionIr.Invoke -> ir.invoke.args
+                            else -> null
+                        }
+                        is ParseResult.Err -> null
+                    }
+                }
+            )
+        }
 
     // ---- Response parsing ------------------------------------------------
 

@@ -46,6 +46,13 @@ The repository has moved from design-only to a working implementation:
 - **`OpenAiLlmProvider`**: overrides `id = "openai"` and implements `probe()` as a 1-token connectivity check.
 - **Tests**: +14 (399 total, full suite green) — `LlmProviderRegistryTest` R1–R8 (registration, duplicate-id rejection, capability filtering, health filtering) + `LlmPlannerFallbackTest` F1–F6 (primary success, retryable→fallback, non-retryable stop, all-fail, multi-hop, no-fallback).
 
+### PlanMode NATIVE_TOOL_CALL (2026-08-13)
+- **Tool-calling types** (06 §3.0): `llm/ToolCallTypes` — `ToolCall` / `ToolDescriptor` / `ToolCallResponse` / `TokenUsage` + `PlanMode` enum (`NATIVE_TOOL_CALL` / `FREEFORM_JSON`).
+- **Mode selection** (06 §3.2): `LlmPlanner.plan` chooses per provider — `TOOL_CALL` capability → `NATIVE_TOOL_CALL` via `LlmProvider.toolCall`, otherwise `FREEFORM_JSON` (chat + DSL). `LlmProvider.toolCall` defaults to an "unsupported" response, so chat-only providers are unaffected.
+- **ToolDescriptor projection**: registry commands projected onto `ToolDescriptor`s with best-effort example DSL→args parsing; `LlmPlan` now records `planMode` alongside `providerId` for audit.
+- **`OpenAiLlmProvider`**: advertises `TOOL_CALL` and implements the OpenAI `tools` protocol (`tool_choice=auto`, function schema, `tool_calls` parsing, `usage` tokens).
+- **Tests**: +8 (407 total, full suite green) — `LlmPlannerToolCallTest` T1–T8: native path + mode recording, chat-only fallback to FREEFORM_JSON, retryable→chat fallback, non-retryable stop, multi-tool mapping, descriptor projection, empty tool calls, multi-provider tool-call chain.
+
 ### Removed
 - Removed the Phase-0 code skeleton and build system to make the repository a clean **design-only** baseline. Deleted:
   - All source modules: `mcos-sdk`, `mcos-runtime`, `mcos-android`, `plugins/mcos-plugin-{hello,system,camera}` (7 Kotlin source files + 1 test + `plugin.json`).
