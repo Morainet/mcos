@@ -144,8 +144,15 @@ class AuditLog {
      * Sends a sentinel through the channel and waits for it to be consumed,
      * which guarantees all previously sent records have been written.
      * Useful for tests and for ensuring durability before shutdown.
+     *
+     * If the writer coroutine is not running (e.g. [start] was never called
+     * or the scope was already stopped), this returns immediately rather than
+     * deadlocking forever on a sentinel that will never be consumed (P0-C5).
      */
     suspend fun flush() {
+        // No active writer to drain the channel — nothing to wait for.
+        val job = writerJob
+        if (job == null || !job.isActive) return
         val sentinel = CompletableDeferred<Unit>()
         writerChannel.trySend(ChannelMsg.Flush(sentinel))
         sentinel.await()
@@ -275,9 +282,11 @@ class AuditLog {
             lower.contains("token") ||
             lower.contains("secret") ||
             lower.contains("apikey") ||
-            lower.contains("apikey") ||
             lower.contains("api_key") ||
-            lower.contains("credential")
+            lower.contains("credential") ||
+            lower.contains("authorization") ||
+            lower.contains("bearer") ||
+            lower.contains("cookie")
     }
 
     // ─── HMAC ──────────────────────────────────────────────────────────
