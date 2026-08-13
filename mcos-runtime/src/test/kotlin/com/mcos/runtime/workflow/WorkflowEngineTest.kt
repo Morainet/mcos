@@ -536,6 +536,102 @@ class WorkflowEngineTest {
     }
 
     // ═══════════════════════════════════════════════════════════════
+    // W23-W24: Parallel cancelOnFailure (P0-C3 regression)
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `W23-parallel cancelOnFailure skips not-yet-started siblings`() = runBlocking {
+        // When cancelOnFailure=true (default), a failing branch must prevent
+        // siblings that have not started from executing. We make the failing
+        // branch slow enough that the later branch observes the failure flag
+        // before it begins. Skipped branches are recorded as CANCELLED.
+        val tracker = mutableListOf<String>()
+        // c1 fails quickly; c2 is a slow command that registers in tracker; c3
+        // should be skipped because c1 already failed.
+        val handlers = mapOf(
+            "failFast" to object : CommandHandler {
+                override suspend fun invoke(ctx: ExecutionContext): CommandResult =
+                    CommandResult.Err("E_FAIL", "boom", false)
+            },
+            "slow" to object : CommandHandler {
+                override suspend fun invoke(ctx: ExecutionContext): CommandResult {
+                    kotlinx.coroutines.delay(200)
+                    tracker.add("slow")
+                    return CommandResult.Ok(JsonPrimitive("ok"))
+                }
+            },
+            "tail" to object : CommandHandler {
+                override suspend fun invoke(ctx: ExecutionContext): CommandResult {
+                    tracker.add("tail")
+                    return CommandResult.Ok(JsonPrimitive("ok"))
+                }
+            }
+        )
+        registry.register(createPlugin("t23", "1.0.0", handlers))
+
+        val result = engine.execute(
+            WorkflowStep.Parallel(
+                listOf(
+                    WorkflowStep.Command("failFast"),
+                    WorkflowStep.Command("slow"),
+                    WorkflowStep.Command("tail")
+                ),
+                cancelOnFailure = true,
+            )
+        )
+        assertEquals(WorkflowOutcome.FAILED, result.outcome)
+        // The slow branch may or may not have run depending on scheduling, but
+        // at least one step must carry the CANCELLED code (a skipped sibling).
+        assertTrue(
+            result.steps.any { it.code == "CANCELLED" },
+            "expected at least one CANCELLED sibling, got: ${result.steps}"
+        )
+    }
+
+    @Test
+    fun `W24-parallel cancelOnFailure=false runs all branches to completion`() = runBlocking {
+        // With cancelOnFailure=false, a failing branch does NOT short-circuit
+        // its siblings — every branch runs regardless.
+        val tracker = mutableListOf<String>()
+        val handlers = mapOf(
+            "fail" to object : CommandHandler {
+                override suspend fun invoke(ctx: ExecutionContext): CommandResult =
+                    CommandResult.Err("E_FAIL", "boom", false)
+            },
+            "ok1" to object : CommandHandler {
+                override suspend fun invoke(ctx: ExecutionContext): CommandResult {
+                    tracker.add("ok1")
+                    return CommandResult.Ok(JsonPrimitive("ok"))
+                }
+            },
+            "ok2" to object : CommandHandler {
+                override suspend fun invoke(ctx: ExecutionContext): CommandResult {
+                    tracker.add("ok2")
+                    return CommandResult.Ok(JsonPrimitive("ok"))
+                }
+            }
+        )
+        registry.register(createPlugin("t24", "1.0.0", handlers))
+
+        val result = engine.execute(
+            WorkflowStep.Parallel(
+                listOf(
+                    WorkflowStep.Command("fail"),
+                    WorkflowStep.Command("ok1"),
+                    WorkflowStep.Command("ok2")
+                ),
+                cancelOnFailure = false,
+            )
+        )
+        assertEquals(WorkflowOutcome.FAILED, result.outcome) // one branch failed
+        // No sibling should be cancelled.
+        assertFalse(result.steps.any { it.code == "CANCELLED" }, "no CANCELLED with cancelOnFailure=false")
+        // Both ok branches executed.
+        assertTrue(tracker.containsAll(listOf("ok1", "ok2")), "both siblings should run: $tracker")
+        Unit
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     // Helpers
     // ═══════════════════════════════════════════════════════════════
 
