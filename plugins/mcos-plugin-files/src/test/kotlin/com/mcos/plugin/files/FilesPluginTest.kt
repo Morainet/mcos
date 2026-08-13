@@ -118,6 +118,43 @@ class FilesPluginTest {
         p.onUnload()
     }
 
+    @Test
+    fun `F9-file_search glob wildcard matches correctly`() = runBlocking {
+        // P1-F1 regression: `*.jpg` must match `file1.jpg` but not `file2.png`.
+        // The previous implementation used Regex.escape(pattern) which wraps
+        // the whole pattern in \Q...\E, so the subsequent .replace("\\*",".*")
+        // never finds the escaped '*' — and the glob silently matches nothing.
+        val handler = plugin.handlers()["file.search"]!!
+
+        // *.jpg → should match only file1.jpg
+        val jpgArgs = buildJsonObject { put("pattern", JsonPrimitive("*.jpg")) }
+        val jpgCtx = execCtx("file.search", jpgArgs)
+        val jpgResult = handler.invoke(jpgCtx)
+        assertTrue(jpgResult is CommandResult.Ok)
+        val jpgObj = (jpgResult as CommandResult.Ok).value!!.jsonObject
+        val jpgCount = jpgObj["count"]!!.jsonPrimitive.content.toInt()
+        assertEquals(1, jpgCount, "*.jpg should match exactly file1.jpg")
+
+        // *.png → should match only file2.png
+        val pngArgs = buildJsonObject { put("pattern", JsonPrimitive("*.png")) }
+        val pngCtx = execCtx("file.search", pngArgs)
+        val pngResult = handler.invoke(pngCtx)
+        assertTrue(pngResult is CommandResult.Ok)
+        val pngCount = (pngResult as CommandResult.Ok).value!!.jsonObject["count"]!!
+            .jsonPrimitive.content.toInt()
+        assertEquals(1, pngCount, "*.png should match exactly file2.png")
+
+        // file?.jpg → '?' matches one char, so file1.jpg matches
+        val qArgs = buildJsonObject { put("pattern", JsonPrimitive("file?.jpg")) }
+        val qCtx = execCtx("file.search", qArgs)
+        val qResult = handler.invoke(qCtx)
+        assertTrue(qResult is CommandResult.Ok)
+        val qCount = (qResult as CommandResult.Ok).value!!.jsonObject["count"]!!
+            .jsonPrimitive.content.toInt()
+        assertEquals(1, qCount, "file?.jpg should match file1.jpg")
+        Unit
+    }
+
     // ─── Helpers ──────────────────────────────────────────────────────────
 
     private fun execCtx(commandId: String, args: JsonObject): ExecutionContext {
