@@ -46,7 +46,13 @@ data class LlmPlan(
      * The provider that produced this plan (or, on failure, the last provider
      * attempted). Populated when the planner has a fallback chain (§17 V1).
      */
-    val providerId: String? = null
+    val providerId: String? = null,
+
+    /**
+     * The planning mode used to produce this plan (06 §3.2). Populated on
+     * success; `null` when no provider was successfully used.
+     */
+    val planMode: PlanMode? = null
 ) {
     /** True if the plan contains executable commands without errors. */
     val isSuccess: Boolean get() = error == null && commands.isNotEmpty()
@@ -114,6 +120,26 @@ interface LlmProvider {
      * @return [LlmResponse.Ok] with the model's text, or [LlmResponse.Err] on failure.
      */
     suspend fun chat(messages: List<ChatMessage>): LlmResponse
+
+    /**
+     * Structured tool-calling request used in NATIVE_TOOL_CALL planning mode
+     * (06 §3.0). Only providers advertising [Capability.TOOL_CALL] are routed
+     * here; the default implementation reports that tool calling is
+     * unsupported, so chat-only providers are unaffected.
+     *
+     * @param messages Ordered list of chat messages (system -> user -> ...).
+     * @param tools Available commands projected as [ToolDescriptor]s.
+     * @return [ToolCallResponse.Ok] with the model's proposed tool calls, or
+     *         [ToolCallResponse.Err] on failure.
+     */
+    suspend fun toolCall(
+        messages: List<ChatMessage>,
+        tools: List<ToolDescriptor>,
+    ): ToolCallResponse = ToolCallResponse.Err(
+        "LLM_TOOL_CALL_UNSUPPORTED",
+        "Provider $id does not advertise TOOL_CALL",
+        false
+    )
 
     /**
      * Health probe used by [LlmProviderRegistry] to exclude unhealthy
