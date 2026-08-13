@@ -37,7 +37,14 @@ The repository has moved from design-only to a working implementation:
 ### Episodic Memory wired into run completion (2026-08-13)
 - **RunSummarizer** (07 §9.4): `memory/RunSummarizer` — `McosRuntime.runCommands`/`runWorkflow` now record an `EpisodicRecord` at every terminal outcome (SUCCESS / FAILED / CANCELLED). Summary text comes from the raw DSL payload (truncated to 160 chars, single-line), falling back to the command-id listing; entities are memory paths (`people.tom`, `places.office`, …) extracted from command args under known namespaces.
 - **Builder**: `McosRuntime.Builder.withEpisodicMemory(...)` + `episodicMemory()` accessor (defaults to a fresh `EpisodicMemory`); planner first-use check (§8.3) reachable as `runtime.episodicMemory().hasExecuted(...)`.
-- **Tests**: +11 (410 total) — `RunSummarizerTest` S1–S11: summary building, namespace-scoped entity extraction (incl. nested args), outcome recording, and full `McosRuntime` integration for DSL / failing / workflow runs.
+- **Tests**: +11 — `RunSummarizerTest` S1–S11: summary building, namespace-scoped entity extraction (incl. nested args), outcome recording, and full `McosRuntime` integration for DSL / failing / workflow runs.
+
+### Multi-provider Planner probes (2026-08-13)
+- **Capability model** (06 §3.0): `Capability` enum (`CHAT` / `PLAN` / `TOOL_CALL` / `EMBED`) + `LlmProvider.id` / `capabilities` (defaulted → fully backward compatible) + `LlmProbeResult` health model.
+- **`LlmProviderRegistry`** (06 §17 V1): `llm/LlmProviderRegistry` — priority-ordered registration, capability routing (`chatProviders` / `withCapability`), and `suspend healthyProviders()` / `primaryHealthy()` health-probe filtering (§18.1 on-device→cloud routing).
+- **Fallback chain**: `LlmPlanner` now accepts `fallbacks: List<LlmProvider>` — a retryable `LlmResponse.Err` from the primary provider walks the chain in order; non-retryable errors stop immediately. Each `LlmPlan` records `providerId` (which provider actually served it).
+- **`OpenAiLlmProvider`**: overrides `id = "openai"` and implements `probe()` as a 1-token connectivity check.
+- **Tests**: +14 (399 total, full suite green) — `LlmProviderRegistryTest` R1–R8 (registration, duplicate-id rejection, capability filtering, health filtering) + `LlmPlannerFallbackTest` F1–F6 (primary success, retryable→fallback, non-retryable stop, all-fail, multi-hop, no-fallback).
 
 ### Removed
 - Removed the Phase-0 code skeleton and build system to make the repository a clean **design-only** baseline. Deleted:

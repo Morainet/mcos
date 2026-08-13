@@ -34,18 +34,22 @@ import kotlinx.serialization.json.jsonPrimitive
  * }
  * ```
  *
- * @param provider The LLM backend (e.g. [OpenAiLlmProvider]).
+ * @param provider The primary LLM backend (e.g. [OpenAiLlmProvider]).
  * @param registry The [CommandRegistry] used to build the system prompt with
  *        available commands and their input schemas.
  * @param memory Optional [MemoryStore] for injecting user context (preferences,
  *        places, devices) into the system prompt.
  * @param parser The DSL parser; defaults to [DslParser].
+ * @param fallbacks Additional [LlmProvider]s tried in order when the primary
+ *        fails with a retryable error (§17 V1 multi-provider fallback chain,
+ *        §18.1 "On-device fallback": on-device failure routes to cloud).
  */
 class LlmPlanner(
     private val provider: LlmProvider,
     private val registry: CommandRegistry,
     private val memory: MemoryStore? = null,
     private val parser: DslParser = DslParser,
+    private val fallbacks: List<LlmProvider> = emptyList(),
 ) {
 
     // ---- System prompt ---------------------------------------------------
@@ -166,6 +170,10 @@ class LlmPlanner(
     /**
      * Translate natural language into a plan of executable commands.
      *
+     * Tries the primary [provider] first; on a retryable error, walks the
+     * [fallbacks] chain in order (§17 V1). Non-retryable errors stop the
+     * chain immediately.
+     *
      * @param naturalLanguage The user's request, e.g. "take a photo and share it".
      * @return [LlmPlan] with parsed commands or error details.
      */
@@ -176,16 +184,30 @@ class LlmPlanner(
             ChatMessage("user", naturalLanguage)
         )
 
-        val response = provider.chat(messages)
-        return when (response) {
-            is LlmResponse.Ok -> parseResponse(response.content)
-            is LlmResponse.Err -> LlmPlan(
-                commands = emptyList(),
-                rawDsl = "",
-                thoughts = "LLM call failed: ${response.message}",
-                error = response
-            )
+        val chain = listOf(provider) + fallbacks
+        var lastErr: LlmResponse.Err? = null
+        var attemptedIds = mutableListOf<String>()
+
+        for (p in chain) {
+            attemptedIds += p.id
+            val response = p.chat(messages)
+            when (response) {
+                is LlmResponse.Ok -> return parseResponse(response.content, providerId = p.id)
+                is LlmResponse.Err -> {
+                    lastErr = response
+                    if (!response.retryable) break // fatal: no point falling back
+                }
+            }
         }
+
+        return LlmPlan(
+            commands = emptyList(),
+            rawDsl = "",
+            thoughts = "LLM call failed: ${lastErr?.message ?: "no provider attempted"}" +
+                " (tried: ${attemptedIds.joinToString(", ")})",
+            error = lastErr,
+            providerId = attemptedIds.lastOrNull()
+        )
     }
 
     // ---- Response parsing ------------------------------------------------
@@ -198,7 +220,7 @@ class LlmPlanner(
      * - Leading/trailing whitespace
      * - Explanatory text (best-effort: tries to extract DSL block)
      */
-    internal fun parseResponse(raw: String): LlmPlan {
+    internal fun parseResponse(raw: String, providerId: String? = null): LlmPlan {
         var dsl = raw.trim()
 
         // Extract code block if LLM wrapped output in markdown fences
@@ -223,7 +245,8 @@ class LlmPlanner(
                 commands = emptyList(),
                 rawDsl = raw,
                 thoughts = "LLM returned empty response -- request may be out of scope for available commands",
-                error = null
+                error = null,
+                providerId = providerId
             )
         }
 
@@ -236,14 +259,16 @@ class LlmPlanner(
                         commands = emptyList(),
                         rawDsl = raw,
                         thoughts = "Parsed DSL contains no executable commands",
-                        error = null
+                        error = null,
+                        providerId = providerId
                     )
                 } else {
                     LlmPlan(
                         commands = commands,
                         rawDsl = raw,
                         thoughts = "Parsed ${commands.size} command(s) from LLM output",
-                        error = null
+                        error = null,
+                        providerId = providerId
                     )
                 }
             }
@@ -255,7 +280,8 @@ class LlmPlanner(
                     "LLM_PARSE_ERROR",
                     "Failed to parse LLM DSL output: ${result.message}",
                     true
-                )
+                ),
+                providerId = providerId
             )
         }
     }

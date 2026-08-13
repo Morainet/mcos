@@ -22,6 +22,39 @@ class OpenAiLlmProvider(
     private val config: LlmConfig
 ) : LlmProvider {
 
+    override val id: String get() = "openai"
+
+    /**
+     * Probe uses a minimal 1-token chat request to check connectivity
+     * without significant latency or cost.
+     */
+    override suspend fun probe(): LlmProbeResult =
+        withContext(Dispatchers.IO) {
+            try {
+                val requestBody = buildJsonObject {
+                    put("model", JsonPrimitive(config.model))
+                    put("max_tokens", JsonPrimitive(1))
+                    put("messages", buildJsonArray {
+                        add(buildJsonObject {
+                            put("role", JsonPrimitive("user"))
+                            put("content", JsonPrimitive("ping"))
+                        })
+                    })
+                }.toString()
+                val httpResponse = sendRequest(requestBody)
+                if (httpResponse.statusCode() == 200) {
+                    LlmProbeResult.Ok
+                } else {
+                    LlmProbeResult.Err(
+                        "LLM_API_ERROR",
+                        "Probe failed with HTTP ${httpResponse.statusCode()}"
+                    )
+                }
+            } catch (e: Exception) {
+                LlmProbeResult.Err("LLM_PROBE_ERROR", e.message ?: "Probe failed")
+            }
+        }
+
     override suspend fun chat(messages: List<ChatMessage>): LlmResponse =
         withContext(Dispatchers.IO) {
             try {
