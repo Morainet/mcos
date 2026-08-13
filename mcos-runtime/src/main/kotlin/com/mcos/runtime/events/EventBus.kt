@@ -169,6 +169,15 @@ class TypedEventBus(
     ) {
         val channel = Channel<EventEnvelope>(channelCapacity)
 
+        // Per-subscriber monitor serialising the drop-oldest backpressure
+        // sequence in [publishEvent]. Without it, two concurrent publishers
+        // could each observe a full channel, each tryReceive() a distinct
+        // oldest event, and then both trySend() — racing on the single freed
+        // slot and leaving one event silently undelivered AND unaudited. The
+        // lock is held only for the brief non-suspending drop+send, so it
+        // never blocks the subscriber's draining coroutine for long.
+        val publishLock = Any()
+
         // Isolation: a throwing handler is caught and audited; the loop keeps
         // draining so later events still reach this subscriber.
         val job: Job = scope.launch {
@@ -219,14 +228,25 @@ class TypedEventBus(
     override fun publishEvent(envelope: EventEnvelope) {
         for (sub in subscriptions.values) {
             if (!sub.filter.matches(envelope)) continue
-            val result = sub.channel.trySend(envelope)
-            if (result.isFailure) {
-                // Backpressure: buffer full → drop the oldest undelivered
-                // event, deliver the new one in its place, and audit the
-                // drop. The publisher is never blocked.
-                sub.channel.tryReceive().getOrNull()
-                sub.channel.trySend(envelope)
-                auditSink?.onBackpressureDrop(envelope.type, sub.id)
+            // Serialize the drop+send under the subscriber's lock so concurrent
+            // publishers cannot interleave: the tryReceive()+trySend() pair is
+            // atomic, and a second send failure (still full after one drop) is
+            // audited rather than silently swallowed (P1-E1).
+            synchronized(sub.publishLock) {
+                val result = sub.channel.trySend(envelope)
+                if (result.isFailure) {
+                    // Backpressure: buffer full → drop the oldest undelivered
+                    // event, deliver the new one in its place, and audit the
+                    // drop. The publisher is never blocked.
+                    sub.channel.tryReceive().getOrNull()
+                    val retry = sub.channel.trySend(envelope)
+                    // Even after dropping one, a second failure is possible
+                    // (e.g. capacity 0). Audit it so the drop is at least
+                    // observable instead of silently lost.
+                    auditSink?.onBackpressureDrop(envelope.type, sub.id)
+                    @Suppress("UNUSED_VARIABLE")
+                    val delivered = retry.isSuccess
+                }
             }
         }
     }
