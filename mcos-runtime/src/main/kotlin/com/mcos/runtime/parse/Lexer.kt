@@ -102,7 +102,7 @@ class Lexer(private val input: String) {
         val quote = chars[pos]
         advance() // skip opening quote
         val sb = StringBuilder()
-        while (pos < chars.size && chars[pos] != quote) {
+        readLoop@ while (pos < chars.size && chars[pos] != quote) {
             if (chars[pos] == '\\') {
                 advance() // skip backslash
                 if (pos >= chars.size) {
@@ -119,6 +119,21 @@ class Lexer(private val input: String) {
                     '"' -> sb.append('"')
                     '\'' -> sb.append('\'')
                     '/' -> sb.append('/')
+                    'u' -> {
+                        // \uXXXX — 4 hex digits, per JSON spec (RFC 8259 §7).
+                        // The DSL shares the JSON string grammar, so Unicode
+                        // escapes must be honoured. Fewer than 4 hex digits, or
+                        // hitting EOF mid-escape, is an unterminated-string
+                        // error rather than silent literal retention of "\u".
+                        advance() // consume the 'u'
+                        val codePoint = readHexEscape(startLine, startColumn)
+                            ?: return Token(TokenType.ERROR, "invalid_unicode_escape", startLine, startColumn)
+                        sb.appendCodePoint(codePoint)
+                        // readHexEscape already consumed all 4 hex digits; skip
+                        // the trailing advance() below that the single-char
+                        // escapes rely on.
+                        continue@readLoop
+                    }
                     else -> {
                         sb.append('\\')
                         sb.append(escaped)
@@ -222,6 +237,33 @@ class Lexer(private val input: String) {
                 else -> return
             }
         }
+    }
+
+    /**
+     * Read exactly 4 hex digits following a `\u` escape and return the decoded
+     * code point, or null if fewer than 4 hex digits remain (or EOF is hit).
+     * The leading `u` has already been consumed by the caller.
+     */
+    private fun readHexEscape(startLine: Int, startColumn: Int): Int? {
+        var code = 0
+        repeat(4) {
+            if (pos >= chars.size) return null
+            val c = chars[pos]
+            if (!isHexDigit(c)) return null
+            code = (code shl 4) or hexValue(c)
+            advance()
+        }
+        return code
+    }
+
+    private fun isHexDigit(c: Char): Boolean =
+        c in '0'..'9' || c in 'a'..'f' || c in 'A'..'F'
+
+    private fun hexValue(c: Char): Int = when (c) {
+        in '0'..'9' -> c - '0'
+        in 'a'..'f' -> c - 'a' + 10
+        in 'A'..'F' -> c - 'A' + 10
+        else -> 0
     }
 
     private fun advance() {
