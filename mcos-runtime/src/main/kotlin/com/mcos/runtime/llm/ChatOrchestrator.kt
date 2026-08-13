@@ -9,6 +9,7 @@ import com.mcos.sdk.CommandResult
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * End-to-end orchestrator that combines [LlmPlanner] with [McosRuntime]
@@ -34,11 +35,16 @@ import kotlinx.coroutines.launch
  * @param runtime The [McosRuntime] for executing the generated commands.
  * @param injectionDetector Optional [PromptInjectionDetector] that runs between
  *        planning and execution. If omitted, no injection checks are performed.
+ * @param eventTimeoutMs Hard ceiling on how long [chat] will wait for the
+ *        runtime to emit a terminal event (RunSucceeded/RunFailed/RunCancelled)
+ *        before giving up. Protects against indefinite hangs when a terminal
+ *        event is dropped by the SharedFlow buffer (P0-C4). Default 30s.
  */
 class ChatOrchestrator(
     private val planner: LlmPlanner,
     private val runtime: McosRuntime,
     private val injectionDetector: PromptInjectionDetector? = null,
+    private val eventTimeoutMs: Long = 30_000L,
 ) {
     /**
      * Process a natural language request end-to-end.
@@ -91,22 +97,38 @@ class ChatOrchestrator(
 
         val events = mutableListOf<RuntimeEvent>()
 
-        // Collect events until a terminal event arrives.
-        // SharedFlow never completes, so we cancel the collector manually
-        // when RunSucceeded / RunFailed / RunCancelled is received.
-        coroutineScope {
-            val collectorJob = launch {
-                runtime.observe(handle.runId).collect { event ->
-                    events.add(event)
-                    when (event) {
-                        is RuntimeEvent.RunSucceeded,
-                        is RuntimeEvent.RunFailed,
-                        is RuntimeEvent.RunCancelled -> cancel()
-                        else -> { /* progress — keep collecting */ }
+        // Collect events until a terminal event arrives, or until [eventTimeoutMs]
+        // elapses — whichever comes first (P0-C4). SharedFlow never completes on
+        // its own, so without the timeout a dropped terminal event (buffer
+        // overflow on the runtime's SharedFlow) would leave `collect` hanging
+        // forever and [chat] would never return.
+        val timedOut = withTimeoutOrNull(eventTimeoutMs) {
+            coroutineScope {
+                val collectorJob = launch {
+                    runtime.observe(handle.runId).collect { event ->
+                        events.add(event)
+                        when (event) {
+                            is RuntimeEvent.RunSucceeded,
+                            is RuntimeEvent.RunFailed,
+                            is RuntimeEvent.RunCancelled -> cancel()
+                            else -> { /* progress — keep collecting */ }
+                        }
                     }
                 }
+                collectorJob.join()
             }
-            collectorJob.join()
+        } == null
+
+        // On timeout, surface whatever events arrived as a failure rather than
+        // hanging the caller indefinitely.
+        if (timedOut) {
+            return ChatResult(
+                plan = plan,
+                results = emptyList(),
+                events = events,
+                success = false,
+                summary = "Execution timed out waiting for terminal event after ${eventTimeoutMs}ms",
+            )
         }
 
         // Step 3: Build summary
