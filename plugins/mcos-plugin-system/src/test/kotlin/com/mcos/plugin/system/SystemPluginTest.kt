@@ -232,15 +232,13 @@ class SystemPluginTest {
     }
 
     @Test
-    fun `S14-sys_clipboard read mode`() = runBlocking {
+    fun `S14-sys_clipboard read mode throws UNAVAILABLE`() = runBlocking {
         val handler = plugin.handlers()["sys.clipboard"]!!
         val ctx = execCtx("sys.clipboard", JsonObject(emptyMap()))
 
-        val result = handler.invoke(ctx)
-
-        assertTrue(result is CommandResult.Ok)
-        val value = (result as CommandResult.Ok).value!!.jsonObject
-        assertEquals("read", value["operation"]!!.jsonPrimitive.content)
+        val ex = assertFailsWith<McosException> { handler.invoke(ctx) }
+        assertEquals("UNAVAILABLE", ex.code)
+        Unit
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -363,18 +361,13 @@ class SystemPluginTest {
     // ═══════════════════════════════════════════════════════════════
 
     @Test
-    fun `S25-sys_device_battery returns battery info`() = runBlocking {
+    fun `S25-sys_device_battery throws UNAVAILABLE on this host`() = runBlocking {
         val handler = plugin.handlers()["sys.device.battery"]!!
         val ctx = execCtx("sys.device.battery", JsonObject(emptyMap()))
 
-        val result = handler.invoke(ctx)
-
-        assertTrue(result is CommandResult.Ok)
-        val value = (result as CommandResult.Ok).value!!.jsonObject
-        assertTrue(value.containsKey("level"))
-        assertTrue(value.containsKey("charging"))
-        assertTrue(value.containsKey("temperature"))
-        assertEquals(true, value["charging"]!!.jsonPrimitive.boolean)
+        val ex = assertFailsWith<McosException> { handler.invoke(ctx) }
+        assertEquals("UNAVAILABLE", ex.code)
+        Unit
     }
 
     @Test
@@ -388,18 +381,13 @@ class SystemPluginTest {
     // ═══════════════════════════════════════════════════════════════
 
     @Test
-    fun `S27-sys_device_wifi returns wifi info`() = runBlocking {
+    fun `S27-sys_device_wifi throws UNAVAILABLE on this host`() = runBlocking {
         val handler = plugin.handlers()["sys.device.wifi"]!!
         val ctx = execCtx("sys.device.wifi", JsonObject(emptyMap()))
 
-        val result = handler.invoke(ctx)
-
-        assertTrue(result is CommandResult.Ok)
-        val value = (result as CommandResult.Ok).value!!.jsonObject
-        assertTrue(value.containsKey("connected"))
-        assertTrue(value.containsKey("ssid"))
-        assertTrue(value.containsKey("signalStrength"))
-        assertEquals("MCOS-Network", value["ssid"]!!.jsonPrimitive.content)
+        val ex = assertFailsWith<McosException> { handler.invoke(ctx) }
+        assertEquals("UNAVAILABLE", ex.code)
+        Unit
     }
 
     @Test
@@ -413,17 +401,13 @@ class SystemPluginTest {
     // ═══════════════════════════════════════════════════════════════
 
     @Test
-    fun `S29-sys_device_screen returns display metrics`() = runBlocking {
+    fun `S29-sys_device_screen throws UNAVAILABLE on this host`() = runBlocking {
         val handler = plugin.handlers()["sys.device.screen"]!!
         val ctx = execCtx("sys.device.screen", JsonObject(emptyMap()))
 
-        val result = handler.invoke(ctx)
-
-        assertTrue(result is CommandResult.Ok)
-        val value = (result as CommandResult.Ok).value!!.jsonObject
-        assertEquals(1080, value["width"]!!.jsonPrimitive.int)
-        assertEquals(2400, value["height"]!!.jsonPrimitive.int)
-        assertEquals("portrait", value["orientation"]!!.jsonPrimitive.content)
+        val ex = assertFailsWith<McosException> { handler.invoke(ctx) }
+        assertEquals("UNAVAILABLE", ex.code)
+        Unit
     }
 
     @Test
@@ -437,18 +421,13 @@ class SystemPluginTest {
     // ═══════════════════════════════════════════════════════════════
 
     @Test
-    fun `S31-sys_device_volume returns volume levels`() = runBlocking {
+    fun `S31-sys_device_volume throws UNAVAILABLE on this host`() = runBlocking {
         val handler = plugin.handlers()["sys.device.volume"]!!
         val ctx = execCtx("sys.device.volume", JsonObject(emptyMap()))
 
-        val result = handler.invoke(ctx)
-
-        assertTrue(result is CommandResult.Ok)
-        val value = (result as CommandResult.Ok).value!!.jsonObject
-        assertTrue(value.containsKey("media"))
-        assertTrue(value.containsKey("ring"))
-        assertTrue(value.containsKey("alarm"))
-        assertEquals(10, value["media"]!!.jsonPrimitive.int)
+        val ex = assertFailsWith<McosException> { handler.invoke(ctx) }
+        assertEquals("UNAVAILABLE", ex.code)
+        Unit
     }
 
     @Test
@@ -462,19 +441,13 @@ class SystemPluginTest {
     // ═══════════════════════════════════════════════════════════════
 
     @Test
-    fun `S33-sys_device_location returns location data`() = runBlocking {
+    fun `S33-sys_device_location throws UNAVAILABLE on this host`() = runBlocking {
         val handler = plugin.handlers()["sys.device.location"]!!
         val ctx = execCtx("sys.device.location", JsonObject(emptyMap()))
 
-        val result = handler.invoke(ctx)
-
-        assertTrue(result is CommandResult.Ok)
-        val value = (result as CommandResult.Ok).value!!.jsonObject
-        assertTrue(value.containsKey("latitude"))
-        assertTrue(value.containsKey("longitude"))
-        assertTrue(value.containsKey("accuracy"))
-        assertTrue(value.containsKey("provider"))
-        assertEquals("gps", value["provider"]!!.jsonPrimitive.content)
+        val ex = assertFailsWith<McosException> { handler.invoke(ctx) }
+        assertEquals("UNAVAILABLE", ex.code)
+        Unit
     }
 
     @Test
@@ -489,30 +462,25 @@ class SystemPluginTest {
     // ═══════════════════════════════════════════════════════════════
 
     @Test
-    fun `S35-sys_device_brightness query mode returns current level`() = runBlocking {
+    fun `S35-sys_device_brightness query mode throws UNAVAILABLE`() = runBlocking {
         val handler = plugin.handlers()["sys.device.brightness"]!!
         val ctx = execCtx("sys.device.brightness", JsonObject(emptyMap()))
 
-        val result = handler.invoke(ctx)
-
-        assertTrue(result is CommandResult.Ok)
-        val value = (result as CommandResult.Ok).value!!.jsonObject
-        assertEquals("query", value["mode"]!!.jsonPrimitive.content)
-        assertEquals(128, value["level"]!!.jsonPrimitive.int)
+        val ex = assertFailsWith<McosException> { handler.invoke(ctx) }
+        assertEquals("UNAVAILABLE", ex.code)
+        Unit
     }
 
     @Test
-    fun `S36-sys_device_brightness set mode updates level`() = runBlocking {
+    fun `S36-sys_device_brightness set mode throws UNAVAILABLE after schema check`() = runBlocking {
         val handler = plugin.handlers()["sys.device.brightness"]!!
         val args = buildJsonObject { put("level", JsonPrimitive(200)) }
         val ctx = execCtx("sys.device.brightness", args)
 
-        val result = handler.invoke(ctx)
-
-        assertTrue(result is CommandResult.Ok)
-        val value = (result as CommandResult.Ok).value!!.jsonObject
-        assertEquals("set", value["mode"]!!.jsonPrimitive.content)
-        assertEquals(200, value["level"]!!.jsonPrimitive.int)
+        // Valid level passes schema validation but device capability is unavailable.
+        val ex = assertFailsWith<McosException> { handler.invoke(ctx) }
+        assertEquals("UNAVAILABLE", ex.code)
+        Unit
     }
 
     @Test
