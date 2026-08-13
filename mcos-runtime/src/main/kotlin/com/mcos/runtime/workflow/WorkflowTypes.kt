@@ -23,8 +23,17 @@ sealed class WorkflowStep {
     /** Execute steps sequentially; stops on first failure */
     data class Sequential(val steps: List<WorkflowStep>) : WorkflowStep()
 
-    /** Execute steps in parallel; any failure aborts remaining steps */
-    data class Parallel(val steps: List<WorkflowStep>) : WorkflowStep()
+    /**
+     * Execute steps in parallel.
+     *
+     * @param cancelOnFailure When true (default), the first failing branch
+     *        cancels any sibling branches that have not yet completed: they
+     *        are skipped and recorded with code `CANCELLED_BY_SIBLING`. When
+     *        false, all branches run to completion regardless of sibling
+     *        outcomes (useful for independent, side-effect-free fan-out where
+     *        partial results matter).
+     */
+    data class Parallel(val steps: List<WorkflowStep>, val cancelOnFailure: Boolean = true) : WorkflowStep()
 
     /** Conditional branch: evaluates [condition] based on workflow state */
     data class If(
