@@ -188,13 +188,25 @@ interface LlmProvider {
     )
 
     /**
+     * Grammar formats this provider can decode against (06 §3.2 V2).
+     *
+     * The planner injects the highest-fidelity format the provider advertises:
+     * token-level [GrammarFormat.GBNF] grammars first, [GrammarFormat.JSON_SCHEMA]
+     * as the portable fallback. Defaults to [GrammarFormat.JSON_SCHEMA]
+     * (OpenAI `response_format`, vLLM `guided_json`, Outlines `json_schema`);
+     * providers with real grammars (llama.cpp / GGUF, vLLM `guided_grammar`)
+     * override with [GrammarFormat.GBNF].
+     */
+    val grammarFormats: Set<GrammarFormat> get() = setOf(GrammarFormat.JSON_SCHEMA)
+
+    /**
      * Grammar-constrained planning request used in CONSTRAINED mode (06 §3.2 V2).
      *
      * Only providers advertising [Capability.CONSTRAINED] are routed here. The
-     * [grammar] is the MCOS IR JSON Schema injected as a decoding grammar
-     * (llama.cpp GBNF, Outlines, Gemini structured output, OpenAI
-     * response_format, …); the model's reply MUST be a single JSON object
-     * conforming to that schema.
+     * [grammar] is the MCOS IR grammar in one of the provider's advertised
+     * [grammarFormats] (llama.cpp GBNF, Outlines, Gemini structured output,
+     * OpenAI response_format, …); the model's reply MUST be a single JSON
+     * object conforming to that grammar.
      *
      * The default implementation reports that constrained decoding is
      * unsupported (non-retryable), so providers without grammar support are
@@ -202,7 +214,7 @@ interface LlmProvider {
      */
     suspend fun constrainedChat(
         messages: List<ChatMessage>,
-        grammar: String,
+        grammar: LlmGrammar,
     ): LlmResponse = LlmResponse.Err(
         LlmErrorCode.CAPABILITY_EXCEEDED,
         "Provider $id does not advertise CONSTRAINED (grammar-constrained decoding)",

@@ -20,8 +20,8 @@ import kotlinx.serialization.json.jsonPrimitive
  * @param config Connection and model configuration.
  * @param transport HTTP transport used for requests.
  */
-class OpenAiLlmProvider(
-    private val config: LlmConfig,
+open class OpenAiLlmProvider(
+    protected val config: LlmConfig,
     private val transport: LlmHttpTransport = JdkLlmHttpTransport(),
 ) : LlmProvider {
 
@@ -85,17 +85,27 @@ class OpenAiLlmProvider(
 
     override suspend fun constrainedChat(
         messages: List<ChatMessage>,
-        grammar: String,
+        grammar: LlmGrammar,
     ): LlmResponse =
         withContext(Dispatchers.IO) {
             try {
+                // OpenAI-side approximation of grammar-constrained decoding:
+                // only JSON Schema can be injected (response_format + prompt);
+                // real token-level grammars (llama.cpp GBNF, Outlines) must be
+                // served by a backend that advertises GrammarFormat.GBNF.
+                if (grammar.format != GrammarFormat.JSON_SCHEMA) {
+                    return@withContext LlmResponse.Err(
+                        LlmErrorCode.CAPABILITY_EXCEEDED,
+                        "Provider $id can only decode JSON_SCHEMA grammars, got ${grammar.format}",
+                        false
+                    )
+                }
                 // Append the IR JSON Schema to the system message so the model
                 // sees the exact grammar, and pin response_format to a JSON
-                // object -- an OpenAI-side approximation of grammar-constrained
-                // decoding (real grammars: llama.cpp GBNF, Outlines, Gemini).
+                // object (06 §3.2 V2).
                 val constrainedMessages = messages.map { msg ->
                     if (msg.role == "system") {
-                        msg.copy(content = msg.content + "\n\n## IR JSON Schema (grammar)\n$grammar")
+                        msg.copy(content = msg.content + "\n\n## IR JSON Schema (grammar)\n${grammar.content}")
                     } else msg
                 }
                 val requestBody = buildRequestBody(constrainedMessages, responseFormatJsonObject = true)
@@ -198,7 +208,7 @@ class OpenAiLlmProvider(
             })
         }.toString()
 
-    private suspend fun sendRequest(body: String): HttpTransportResponse =
+    protected suspend fun sendRequest(body: String): HttpTransportResponse =
         transport.postJson(
             url = config.endpoint,
             apiKey = config.apiKey,
@@ -209,7 +219,7 @@ class OpenAiLlmProvider(
 
     // ---- Response parsing ------------------------------------------------
 
-    private fun parseOkResponse(responseBody: String): LlmResponse {
+    protected fun parseOkResponse(responseBody: String): LlmResponse {
         return try {
             val json = Json.parseToJsonElement(responseBody).jsonObject
             val choices = json["choices"]?.jsonArray
@@ -285,7 +295,7 @@ class OpenAiLlmProvider(
         )
     }
 
-    private fun parseErrorResponse(statusCode: Int, responseBody: String): LlmResponse {
+    protected fun parseErrorResponse(statusCode: Int, responseBody: String): LlmResponse {
         val errorMessage = try {
             val json = Json.parseToJsonElement(responseBody).jsonObject
             json["error"]?.jsonObject?.get("message")?.jsonPrimitive?.content

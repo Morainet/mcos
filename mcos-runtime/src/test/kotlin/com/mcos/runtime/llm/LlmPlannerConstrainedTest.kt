@@ -210,11 +210,45 @@ class LlmPlannerConstrainedTest {
 
         LlmPlanner(provider, registry).plan("say hi")
 
-        val grammar = provider.lastGrammar.orEmpty()
+        val grammar = provider.lastGrammar?.content.orEmpty()
         assertTrue(grammar.contains("\"invoke\""))
         assertTrue(grammar.contains("\"sequence\""))
         assertTrue(grammar.contains("\"clarify\""))
         assertTrue(grammar.contains("\"refuse\""))
+    }
+
+    @Test
+    fun `C9-default JSON Schema grammar is injected for JSON_SCHEMA providers`() = runBlocking {
+        val provider = ConstrainedFakeProvider(
+            "c9",
+            responses = listOf(LlmResponse.Ok("""{"type":"refuse","reason":"n/a"}"""))
+        )
+
+        LlmPlanner(provider, registry).plan("say hi")
+
+        val grammar = provider.lastGrammar
+        assertNotNull(grammar)
+        assertEquals(GrammarFormat.JSON_SCHEMA, grammar.format)
+        assertTrue(grammar.content.contains("\"invoke\""))
+    }
+
+    @Test
+    fun `C10-GBNF grammar is injected for GBNF-capable providers`() = runBlocking {
+        val provider = ConstrainedFakeProvider(
+            "c10",
+            responses = listOf(LlmResponse.Ok("""{"type":"refuse","reason":"n/a"}""")),
+            grammarFormats = setOf(GrammarFormat.GBNF)
+        )
+
+        LlmPlanner(provider, registry).plan("say hi")
+
+        val grammar = provider.lastGrammar
+        assertNotNull(grammar)
+        assertEquals(GrammarFormat.GBNF, grammar.format)
+        // Real llama.cpp GBNF: root rule enumerates cataloged commands.
+        assertTrue(grammar.content.contains("root ::= ws"))
+        assertTrue(grammar.content.contains("args-test_hello"))
+        assertTrue(grammar.content.contains("\"test.hello\""))
     }
 
     // ---- parseIrJson unit tests --------------------------------------------
@@ -287,6 +321,7 @@ class LlmPlannerConstrainedTest {
 class ConstrainedFakeProvider(
     override val id: String,
     private val responses: List<LlmResponse>,
+    override val grammarFormats: Set<GrammarFormat> = setOf(GrammarFormat.JSON_SCHEMA),
 ) : LlmProvider {
 
     override val capabilities: Set<Capability> =
@@ -298,7 +333,7 @@ class ConstrainedFakeProvider(
     var chatCalls: Int = 0
         private set
 
-    var lastGrammar: String? = null
+    var lastGrammar: LlmGrammar? = null
         private set
 
     override suspend fun chat(messages: List<ChatMessage>): LlmResponse {
@@ -306,7 +341,7 @@ class ConstrainedFakeProvider(
         return responses[minOf(chatCalls - 1, responses.lastIndex)]
     }
 
-    override suspend fun constrainedChat(messages: List<ChatMessage>, grammar: String): LlmResponse {
+    override suspend fun constrainedChat(messages: List<ChatMessage>, grammar: LlmGrammar): LlmResponse {
         constrainedCalls++
         lastGrammar = grammar
         return responses[minOf(constrainedCalls - 1, responses.lastIndex)]
