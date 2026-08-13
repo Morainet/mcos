@@ -214,17 +214,31 @@ class AuditLog {
     }
 
     private fun evict() {
-        // Evict by count
-        while (records.size > maxRecords) {
-            records.removeAt(0)
-        }
-        // Evict by age
+        if (records.isEmpty()) return
+
+        // Age eviction: drop everything older than the cutoff.
         val cutoff = System.currentTimeMillis() - maxAgeMs
-        // Iterate snapshot to avoid COW mutation during iteration
-        records.toList().forEach { rec ->
-            if (rec.timestamp < cutoff) {
-                records.remove(rec)
-            }
+
+        // Compute the retained sub-list in a single pass, then replace the
+        // backing list in one bulk operation. Doing this avoids the O(n²)
+        // cost of calling removeAt(0)/remove(rec) one element at a time on
+        // a CopyOnWriteArrayList, where every mutation copies the entire
+        // array. The writer is single-threaded, so a clear+addAll is safe.
+        val retained = records.filter { rec ->
+            // Count eviction: keep only the trailing maxRecords entries.
+            // (Handled below via takeLast for clarity.)
+            rec.timestamp >= cutoff
+        }
+
+        val afterAge = if (retained.size > maxRecords) {
+            retained.takeLast(maxRecords)
+        } else {
+            retained
+        }
+
+        if (afterAge.size != records.size) {
+            records.clear()
+            records.addAll(afterAge)
         }
     }
 
