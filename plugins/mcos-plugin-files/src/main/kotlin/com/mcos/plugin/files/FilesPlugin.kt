@@ -257,7 +257,12 @@ class FilesPlugin : McosPlugin {
 
         private fun matchGlob(name: String, pattern: String): Boolean {
             if (pattern == "*") return true
-            if (!pattern.contains("*")) return name.contains(pattern, ignoreCase = true)
+            // Only fall back to substring matching when the pattern has no glob
+            // wildcards at all. A pattern containing `?` must go through the
+            // regex path so the single-char wildcard is honoured.
+            if (!pattern.contains('*') && !pattern.contains('?')) {
+                return name.contains(pattern, ignoreCase = true)
+            }
             val regex = Regex.glob(pattern)
             return regex.matches(name)
         }
@@ -337,12 +342,33 @@ class FilesPlugin : McosPlugin {
     }
 
     companion object {
-        /** Simple glob → regex conversion. */
+        /**
+         * Glob → regex conversion.
+         *
+         * Builds the regex char-by-char: every regex metacharacter is escaped
+         * (so a literal `.` in the glob matches a `.`), while the two glob
+         * wildcards keep their special meaning:
+         *  - `*` → `.*`  (any run of characters)
+         *  - `?` → `.`   (exactly one character)
+         *
+         * We can NOT use `Regex.escape(pattern)` here: it wraps the whole
+         * literal run in `\Q...\E`, after which a `.replace("\\*", ".*")` can
+         * no longer find the escaped `*` — silently breaking glob matching.
+         */
         private fun Regex.Companion.glob(pattern: String): Regex {
-            val escaped = Regex.escape(pattern)
-                .replace("\\*", ".*")
-                .replace("\\?", ".")
-            return Regex("^$escaped$")
+            val sb = StringBuilder("^")
+            for (c in pattern) {
+                sb.append(when (c) {
+                    '*' -> ".*"
+                    '?' -> "."
+                    // Regex metacharacters that must be escaped to match literally.
+                    '.', '\\', '+', '(', ')', '[', ']', '{', '}', '^', '$', '|',
+                    '-', '/' -> "\\$c"
+                    else -> c.toString()
+                })
+            }
+            sb.append('$')
+            return Regex(sb.toString())
         }
     }
 }
