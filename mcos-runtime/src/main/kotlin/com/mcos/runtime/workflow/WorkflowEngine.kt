@@ -159,11 +159,35 @@ class WorkflowEngine(
         collector: MutableList<WorkflowStepResult>
     ): Boolean {
         return coroutineScope {
+            // P0-C3: when cancelOnFailure is set (default), the first branch to
+            // fail flips this flag; sibling branches that have not started yet
+            // observe it and skip without executing their side effects. Branches
+            // already in flight run to completion (structured cancellation of
+            // in-flight work is a P3 concern requiring cooperative checking
+            // inside commands).
+            val failed = java.util.concurrent.atomic.AtomicBoolean(false)
             val deferred = step.steps.map { s ->
                 async {
-                    val localCollector = mutableListOf<WorkflowStepResult>()
-                    val ok = executeStep(s, localCollector)
-                    localCollector to ok
+                    if (step.cancelOnFailure && failed.get()) {
+                        // A sibling already failed before this branch began —
+                        // skip it and record a CANCELLED result so callers can
+                        // tell skipped steps apart from executed ones.
+                        mutableListOf(
+                            WorkflowStepResult(
+                                commandId = null,
+                                ok = false,
+                                code = McosErrorCode.CANCELLED.name,
+                                message = "cancelled_by_sibling"
+                            )
+                        ) to false
+                    } else {
+                        val localCollector = mutableListOf<WorkflowStepResult>()
+                        val ok = executeStep(s, localCollector)
+                        if (!ok && step.cancelOnFailure) {
+                            failed.set(true)
+                        }
+                        localCollector to ok
+                    }
                 }
             }
             var allOk = true
