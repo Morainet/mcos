@@ -50,6 +50,11 @@ import kotlinx.serialization.json.jsonPrimitive
  *        Defaults to `false` -- without the opt-in, an on-device failure
  *        surfaces as a refusal and no data leaves the device (privacy-first
  *        default, [08 §9](./08-security.md)).
+ * @param recipes Known recipes served by the local [RecipeMatcher] in
+ *        [PlanMode.LATENCY_TIERED] (06 §13.1 FAQ / known recipes, zero latency).
+ * @param classifier Lightweight utterance classifier used by
+ *        [PlanMode.LATENCY_TIERED] routing (06 §13.1); defaults to the
+ *        keyword/heuristic implementation.
  */
 class LlmPlanner(
     private val provider: LlmProvider,
@@ -58,7 +63,11 @@ class LlmPlanner(
     private val parser: DslParser = DslParser,
     private val fallbacks: List<LlmProvider> = emptyList(),
     private val cloudFallbackEnabled: Boolean = false,
+    private val recipes: List<Recipe> = emptyList(),
+    private val classifier: UtteranceClassifier = UtteranceClassifier(),
 ) {
+
+    private val recipeMatcher: RecipeMatcher = RecipeMatcher(recipes)
 
     // ---- System prompt ---------------------------------------------------
 
@@ -227,10 +236,119 @@ class LlmPlanner(
      * @param naturalLanguage The user's request, e.g. "take a photo and share it".
      * @return [LlmPlan] with parsed commands or error details.
      */
-    suspend fun plan(naturalLanguage: String): LlmPlan {
+    suspend fun plan(naturalLanguage: String, mode: PlanMode? = null): LlmPlan {
         val tools = buildToolDescriptors()
+        if (mode == PlanMode.LATENCY_TIERED) {
+            return planTiered(naturalLanguage, tools)
+        }
+        return runLlmChain(listOf(provider) + fallbacks, naturalLanguage, tools)
+    }
 
-        val chain = listOf(provider) + fallbacks
+    /**
+     * Latency-tiered routing planner (06 §13.1 routing strategy, §15.1 budget).
+     *
+     * Walks the cheapest serving path that can satisfy the utterance class:
+     *
+     * 1. [UtteranceClass.EXACT_CLI] -- the utterance already is DSL syntax:
+     *    parser-only, no LLM round-trip.
+     * 2. [UtteranceClass.KNOWN_RECIPE] -- local [RecipeMatcher] emits the
+     *    recipe DSL: zero latency, no LLM round-trip.
+     * 3. LLM chain, tier-ordered: ON_DEVICE providers first (p95 <= 800 ms),
+     *    CLOUD providers last (p95 <= 3000 ms). Complex intents invert the
+     *    order when cloud planning is opted in (06 §13.1 "complex -> cloud").
+     *    [UtteranceClass.PRIVACY_SENSITIVE] always prefers on-device; the
+     *    §13.2 privacy gate still guards any on-device -> cloud escalation.
+     *
+     * Telemetry: `utteranceClass`, `latencyMs` (06 §15.0) and a `route` label
+     * are attached to the returned [LlmPlan].
+     */
+    private suspend fun planTiered(naturalLanguage: String, tools: List<ToolDescriptor>): LlmPlan {
+        val startNanos = System.nanoTime()
+        val cls = classifier.classify(naturalLanguage, recipes)
+
+        fun withTelemetry(plan: LlmPlan, route: String): LlmPlan = plan.copy(
+            utteranceClass = cls,
+            latencyMs = (System.nanoTime() - startNanos) / 1_000_000,
+            route = route,
+        )
+
+        // 1. Parser-only path for utterances that already are valid DSL.
+        if (cls == UtteranceClass.EXACT_CLI) {
+            when (val r = parser.parse(naturalLanguage)) {
+                is ParseResult.Ok -> {
+                    val commands = extractCommands(r.ir)
+                    if (commands.isNotEmpty()) {
+                        return withTelemetry(
+                            LlmPlan(
+                                commands = commands,
+                                rawDsl = naturalLanguage,
+                                thoughts = "Utterance parsed directly as DSL (parser-only path)",
+                                error = null,
+                            ),
+                            "direct-parser"
+                        )
+                    }
+                }
+                is ParseResult.Err -> Unit // malformed DSL -> fall through to LLM chain
+            }
+        }
+
+        // 2. Local recipe path (06 §13.1 FAQ / known recipes, zero latency).
+        if (cls == UtteranceClass.KNOWN_RECIPE) {
+            val recipe = recipeMatcher.match(naturalLanguage)
+            if (recipe != null) {
+                when (val r = parser.parse(recipe.dsl)) {
+                    is ParseResult.Ok -> {
+                        val commands = extractCommands(r.ir)
+                        if (commands.isNotEmpty()) {
+                            return withTelemetry(
+                                LlmPlan(
+                                    commands = commands,
+                                    rawDsl = recipe.dsl,
+                                    thoughts = "Recipe matched: ${recipe.id}",
+                                    error = null,
+                                ),
+                                "recipe:${recipe.id}"
+                            )
+                        }
+                    }
+                    is ParseResult.Err -> Unit // broken recipe -> fall through to LLM chain
+                }
+            }
+        }
+
+        // 3. LLM chain ordered by latency tier.
+        val chain = tieredChain(listOf(provider) + fallbacks, cls)
+        val llmPlan = runLlmChain(chain, naturalLanguage, tools)
+        return withTelemetry(llmPlan, "llm:${llmPlan.providerId ?: "none"}")
+    }
+
+    /**
+     * Order a provider chain by latency tier (06 §13.1, §15.1): ON_DEVICE
+     * first by default; a [UtteranceClass.COMPLEX] intent inverts to CLOUD
+     * first when cloud planning is opted in. [UtteranceClass.PRIVACY_SENSITIVE]
+     * always keeps on-device first regardless of opt-in.
+     */
+    private fun tieredChain(chain: List<LlmProvider>, cls: UtteranceClass): List<LlmProvider> {
+        val onDevice = chain.filter { it.tier == ProviderTier.ON_DEVICE }
+        val cloud = chain.filter { it.tier == ProviderTier.CLOUD }
+        val cloudFirst = cls == UtteranceClass.COMPLEX &&
+            cloudFallbackEnabled &&
+            cloud.isNotEmpty()
+        return if (cloudFirst) cloud + onDevice else onDevice + cloud
+    }
+
+    /**
+     * Walk a provider chain in order: try each provider through the
+     * highest-fidelity mode its capabilities allow (06 §3.2), stop on success
+     * or on a non-retryable error. The §13.2 privacy gate refuses on-device ->
+     * cloud escalation unless [cloudFallbackEnabled] is set.
+     */
+    private suspend fun runLlmChain(
+        chain: List<LlmProvider>,
+        naturalLanguage: String,
+        tools: List<ToolDescriptor>,
+    ): LlmPlan {
         var lastErr: LlmResponse.Err? = null
         var attemptedIds = mutableListOf<String>()
         var triedOnDevice = false
@@ -322,6 +440,16 @@ class LlmPlanner(
                             if (!response.retryable) break // fatal: no point falling back
                         }
                     }
+                }
+                PlanMode.LATENCY_TIERED -> {
+                    // resolveMode never selects LATENCY_TIERED; it is handled
+                    // by planTiered before the chain runs.
+                    lastErr = LlmResponse.Err(
+                        "INTERNAL",
+                        "LATENCY_TIERED is handled outside the provider chain",
+                        false
+                    )
+                    break
                 }
             }
         }
