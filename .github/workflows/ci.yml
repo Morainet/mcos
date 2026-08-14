@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel superseded runs on the same ref to save minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ── Fast safety net: the 598 JVM tests + golden fixture gate ─────────────
+  # Pure Kotlin/JVM modules (sdk, runtime, 4 plugins). No Android SDK needed,
+  # so this is the quick-feedback gate that blocks regressions on every push.
+  jvm-tests:
+    name: JVM tests + fixture gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Golden fixture gate (DSL ↔ IR round-trip)
+        run: >-
+          ./gradlew :mcos-runtime:test --tests
+          "com.mcos.runtime.parse.DslParserTest"
+          --console=plain --no-daemon
+
+      - name: Run all JVM module tests
+        run: >-
+          ./gradlew
+          :mcos-sdk:test
+          :mcos-runtime:test
+          :plugins:mcos-plugin-hello:test
+          :plugins:mcos-plugin-system:test
+          :plugins:mcos-plugin-camera:test
+          :plugins:mcos-plugin-files:test
+          --console=plain --no-daemon
+
+      - name: Upload test reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: jvm-test-reports
+          path: "**/build/reports/tests/test/**"
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # ── Android app compiles ─────────────────────────────────────────────────
+  # Validates the Compose shell (mcos-android) still builds against the runtime.
+  # Needs the Android SDK, so it is a separate, slower job.
+  android-build:
+    name: Android build (assembleDebug)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Assemble debug APK
+        run: ./gradlew :mcos-android:assembleDebug --console=plain --no-daemon
+
+      - name: Upload debug APK
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcos-debug-apk
+          path: "mcos-android/build/outputs/apk/debug/*.apk"
+          if-no-files-found: ignore
+          retention-days: 7
