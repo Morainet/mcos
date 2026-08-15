@@ -1,5 +1,6 @@
 package com.mcos.runtime.registry
 
+import com.mcos.runtime.security.TrustLevel
 import com.mcos.sdk.*
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -417,6 +418,54 @@ class CommandRegistryTest {
         assertFailsWith<IllegalArgumentException> { SemanticVersion.parse("1") }
         assertFailsWith<IllegalArgumentException> { SemanticVersion.parse("a.b.c") }
         assertFailsWith<IllegalArgumentException> { SemanticVersion.parse("1.0.0.0") }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // R22-R24: Trust level on registration ([08-security.md §7])
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `R22-registration records trust level`() {
+        val plugin = createPlugin(
+            id = "example.trusted",
+            version = "1.0.0",
+            commands = mapOf("trust.cmd" to EchoHandler(""))
+        )
+        val result = registry.register(plugin, TrustLevel.MARKETPLACE_VERIFIED)
+
+        assertIs<RegisterResult.Ok>(result)
+        val resolved = registry.resolve("trust.cmd")
+        assertIs<ResolveResult.Found>(resolved)
+        assertEquals(TrustLevel.MARKETPLACE_VERIFIED, resolved.entry.trustLevel)
+    }
+
+    @Test
+    fun `R23-registration defaults to builtin trust`() {
+        val plugin = createPlugin(
+            id = "example.builtin",
+            version = "1.0.0",
+            commands = mapOf("builtin.cmd" to EchoHandler(""))
+        )
+        registry.register(plugin)
+
+        val resolved = registry.resolve("builtin.cmd")
+        assertIs<ResolveResult.Found>(resolved)
+        assertEquals(TrustLevel.BUILTIN, resolved.entry.trustLevel)
+    }
+
+    @Test
+    fun `R24-untrusted plugin is rejected and not registered`() {
+        val plugin = createPlugin(
+            id = "example.evil",
+            version = "1.0.0",
+            commands = mapOf("evil.cmd" to EchoHandler(""))
+        )
+        val result = registry.register(plugin, TrustLevel.UNTRUSTED)
+
+        assertIs<RegisterResult.Rejected>(result)
+        assertEquals("example.evil", result.pluginId)
+        // Must not be resolvable afterwards.
+        assertIs<ResolveResult.NotFound>(registry.resolve("evil.cmd"))
     }
 
     // ═══════════════════════════════════════════════════════════════
