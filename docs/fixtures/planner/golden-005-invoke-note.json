@@ -1,0 +1,15 @@
+{
+  "id": "golden-005-invoke-note",
+  "utterance": "记个备忘录：明天上午九点开会",
+  "expectedType": "invoke",
+  "mode": "freeform",
+  "llmReply": "notes.create(text=\"明天上午九点开会\")",
+  "expectedIr": {
+    "commands": [
+      { "id": "notes.create", "args": { "text": "$ref:user-statement" } }
+    ]
+  },
+  "registryFixture": ["notes.create"],
+  "memoryFixture": {},
+  "notes": "Single-command plan via freeform DSL. The note text is bound from the user's utterance."
+}

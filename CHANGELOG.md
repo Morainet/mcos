@@ -10,6 +10,12 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### NL→IR golden evaluation suite (2026-08-15)
+- **Golden fixtures (06 §16.0)**: `docs/fixtures/planner/` — 7 cases covering `invoke` (camera / notes / navigation×memory disambiguation), `sequence` (compress → email with `$ref:memory` binding), `clarify` (ambiguous camera), `refuse` (off-topic + empty catalog) and destructive `invoke` (confirmation is the executor's job, not the planner's). Each fixture pins `utterance`/`expectedType`/`mode`/`llmReply`/`expectedIr`/`registryFixture`/`memoryFixture`.
+- **Evaluation harness (06 §16.1)**: `NlIrEvaluation` runs every fixture through the real `LlmPlanner` pipeline — `GoldLlmProvider` routes by `mode` (`constrained`→`constrainedChat` IR JSON, `freeform`→`chat` DSL) and answers the fixture's stub reply — then asserts *structure* (command ids, step order, arg-key presence; `$ref:` bindings only need a non-empty value) and aggregates compile accuracy / mis-refusal rate / mis-execution rate / clarify correctness / mean latency.
+- **Regression gate (06 §16.2)**: `NlIrGoldenSuiteTest` — fixture well-formedness, suite-level 100% structure accuracy with 0 mis-execution / 0 mis-refusal, and per-fixture structural matching. Re-run the whole suite on any system-prompt / adapter / compiler change.
+- **Tests**: +3 (total 612). Docs: implementation-status marks §16 evaluation ✅.
+
 ### Gallery search over the real media store (2026-08-15)
 - **SDK**: `FileService.searchPhotos(mimeType, afterMs, beforeMs, limit)` with a best-effort default implementation (lists `media://images`, filters client-side); `FileEntry.dateModifiedMs` lets hosts expose capture/modify time.
 - **`files` plugin**: `photo.search` resolves `date` (`today`/`yesterday`/`this_week`/`this_month`) and ISO-8601 `after`/`before` into local-timezone epoch millis and pushes them into the host query instead of ignoring them; `file.search` defaults its root to `media://images`. `location` remains advisory until an EXIF/GPS index exists (P3).

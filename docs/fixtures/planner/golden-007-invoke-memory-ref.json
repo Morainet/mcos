@@ -1,0 +1,15 @@
+{
+  "id": "golden-007-invoke-memory-ref",
+  "utterance": "导航回家",
+  "expectedType": "invoke",
+  "mode": "freeform",
+  "llmReply": "navigation.navigate(destination=\"天安门广场\")",
+  "expectedIr": {
+    "commands": [
+      { "id": "navigation.navigate", "args": { "destination": "$ref:memory:places.home" } }
+    ]
+  },
+  "registryFixture": ["navigation.navigate"],
+  "memoryFixture": { "places.home": "天安门广场" },
+  "notes": "Memory-resolved reference: '家' is bound from memory (places.home). The memory section is injected into the system prompt so the model can resolve the ref; the evaluation asserts the destination key exists and is non-empty."
+}

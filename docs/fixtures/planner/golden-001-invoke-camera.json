@@ -1,0 +1,15 @@
+{
+  "id": "golden-001-invoke-camera",
+  "utterance": "拍一张照片",
+  "expectedType": "invoke",
+  "mode": "constrained",
+  "llmReply": "{\"type\":\"invoke\",\"command\":\"camera.capture\",\"args\":{\"flash\":\"off\"}}",
+  "expectedIr": {
+    "commands": [
+      { "id": "camera.capture", "args": { "flash": "$ref:user-statement" } }
+    ]
+  },
+  "registryFixture": ["camera.capture"],
+  "memoryFixture": {},
+  "notes": "Single-command plan via grammar-constrained IR JSON. The flash arg is bound from the user's intent, so the evaluation asserts the key exists rather than an exact value."
+}
