@@ -5,6 +5,11 @@ import kotlinx.serialization.json.*
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import java.time.DayOfWeek
+import java.time.Instant
+import java.time.LocalDate
+import java.time.OffsetDateTime
+import java.time.ZoneId
 
 /**
  * Files plugin — file.list, file.search, photo.search, photo.compress.
@@ -226,7 +231,7 @@ class FilesPlugin : McosPlugin {
             val args = ctx.args.jsonObject
             val pattern = args["pattern"]?.jsonPrimitive?.content
                 ?: throw McosException("SCHEMA_VIOLATION", "Missing required arg: pattern")
-            val path = args["path"]?.jsonPrimitive?.content ?: ""
+            val path = args["path"]?.jsonPrimitive?.content ?: "media://images"
             val limit = args["limit"]?.jsonPrimitive?.intOrNull?.coerceIn(1, 500) ?: 50
 
             val s = services ?: throw McosException("UNAVAILABLE", "System services not available")
@@ -279,19 +284,26 @@ class FilesPlugin : McosPlugin {
 
             val s = services ?: throw McosException("UNAVAILABLE", "System services not available")
 
-            // Use FileService to list images from media store
-            val allPhotos = s.files.list("content://media/external/images/media", "image/*")
-            val filtered = allPhotos.take(limit)
+            // Resolve date filters to epoch millis (local timezone) and push
+            // them into the host query so the native media store applies the
+            // selection server-side instead of loading everything.
+            val bounds = resolveDateBounds(date, after, before, s.clock.nowMs())
+            val photos = s.files.searchPhotos(
+                mimeType = "image/*",
+                afterMs = bounds.afterMs,
+                beforeMs = bounds.beforeMs,
+                limit = limit,
+            )
 
             return CommandResult.Ok(
                 value = buildJsonObject {
-                    put("count", JsonPrimitive(filtered.size))
+                    put("count", JsonPrimitive(photos.size))
                     if (date != null) put("date", JsonPrimitive(date))
                     if (after != null) put("after", JsonPrimitive(after))
                     if (before != null) put("before", JsonPrimitive(before))
                     if (location != null) put("location", JsonPrimitive(location))
                     put("photos", buildJsonArray {
-                        filtered.forEach { entry ->
+                        photos.forEach { entry ->
                             add(buildJsonObject {
                                 put("name", JsonPrimitive(entry.name))
                                 put("uri", JsonPrimitive(entry.uri))
@@ -299,6 +311,8 @@ class FilesPlugin : McosPlugin {
                                     put("mimeType", JsonPrimitive(entry.mimeType))
                                 if (entry.size != null)
                                     put("size", JsonPrimitive(entry.size))
+                                if (entry.dateModifiedMs != null)
+                                    put("dateModifiedMs", JsonPrimitive(entry.dateModifiedMs))
                             })
                         }
                     })
@@ -370,5 +384,60 @@ class FilesPlugin : McosPlugin {
             sb.append('$')
             return Regex(sb.toString())
         }
+    }
+}
+
+/**
+ * Date-range bounds for `photo.search`, resolved to epoch millis.
+ */
+internal data class DateBounds(val afterMs: Long?, val beforeMs: Long?)
+
+/**
+ * Resolve `photo.search` time filters to epoch millis in the local timezone.
+ *
+ * `date` supplies the lower bound when `after` is absent:
+ *  - `today`      → 00:00 local time today
+ *  - `yesterday`  → 00:00 local time yesterday
+ *  - `this_week`  → 00:00 local time Monday of the current week
+ *  - `this_month` → 00:00 local time on the 1st of the current month
+ *
+ * `after`/`before` accept ISO-8601 dates (`2026-08-15`) or datetimes
+ * (`2026-08-15T10:30:00+08:00`); bare dates resolve to local midnight.
+ *
+ * @param nowMs current wall-clock millis, used only to derive "today".
+ */
+internal fun resolveDateBounds(
+    date: String?,
+    after: String?,
+    before: String?,
+    nowMs: Long,
+): DateBounds {
+    val zone = ZoneId.systemDefault()
+    val today = Instant.ofEpochMilli(nowMs).atZone(zone).toLocalDate()
+    val lowerFromShorthand = when (date) {
+        null -> null
+        "today" -> today.atStartOfDay(zone).toInstant().toEpochMilli()
+        "yesterday" -> today.minusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+        "this_week" -> today.with(DayOfWeek.MONDAY).atStartOfDay(zone).toInstant().toEpochMilli()
+        "this_month" -> today.withDayOfMonth(1).atStartOfDay(zone).toInstant().toEpochMilli()
+        else -> null
+    }
+    return DateBounds(
+        afterMs = parseIsoDate(after) ?: lowerFromShorthand,
+        beforeMs = parseIsoDate(before),
+    )
+}
+
+/** Parse an ISO-8601 date or datetime to epoch millis, or null when unparseable. */
+internal fun parseIsoDate(value: String?): Long? {
+    if (value == null) return null
+    val zone = ZoneId.systemDefault()
+    return try {
+        when {
+            value.length == 10 -> LocalDate.parse(value).atStartOfDay(zone).toInstant().toEpochMilli()
+            else -> OffsetDateTime.parse(value).toInstant().toEpochMilli()
+        }
+    } catch (_: Exception) {
+        null
     }
 }

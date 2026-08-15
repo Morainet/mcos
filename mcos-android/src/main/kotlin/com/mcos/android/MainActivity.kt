@@ -109,14 +109,22 @@ fun MCOSApp(
     }
     LaunchedEffect(resultLauncher) { resultBridge.attach(resultLauncher) }
 
-    // Request notification permission on Android 13+ so sys.notify works.
+    // Request runtime permissions so sys.notify and photo.search/compress work:
+    //  - POST_NOTIFICATIONS on API 33+ (notification posting)
+    //  - READ_MEDIA_IMAGES on API 33+ / READ_EXTERNAL_STORAGE below (media store)
     val permissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
+        ActivityResultContracts.RequestMultiplePermissions()
     ) { }
     LaunchedEffect(Unit) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        val needed = buildList {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                add(Manifest.permission.POST_NOTIFICATIONS)
+                add(Manifest.permission.READ_MEDIA_IMAGES)
+            } else {
+                add(Manifest.permission.READ_EXTERNAL_STORAGE)
+            }
         }
+        permissionLauncher.launch(needed.toTypedArray())
     }
 
     // ── state ──────────────────────────────────────────────────────────

@@ -10,6 +10,12 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### Gallery search over the real media store (2026-08-15)
+- **SDK**: `FileService.searchPhotos(mimeType, afterMs, beforeMs, limit)` with a best-effort default implementation (lists `media://images`, filters client-side); `FileEntry.dateModifiedMs` lets hosts expose capture/modify time.
+- **`files` plugin**: `photo.search` resolves `date` (`today`/`yesterday`/`this_week`/`this_month`) and ISO-8601 `after`/`before` into local-timezone epoch millis and pushes them into the host query instead of ignoring them; `file.search` defaults its root to `media://images`. `location` remains advisory until an EXIF/GPS index exists (P3).
+- **Android**: `AndroidFileService.searchPhotos` queries `MediaStore.Images` with a `DATE_ADDED` selection, newest-first sort and `LIMIT` push-down (API 31+); `list()` also accepts `content://media/external/...` prefixes (fixing the previous `photo.search` path that always returned empty) and fills `dateModifiedMs`; media reads tolerate `SecurityException`. Manifest declares `READ_MEDIA_IMAGES` (33+) / `READ_EXTERNAL_STORAGE` (≤32) and `MainActivity` requests them at startup alongside the notification permission.
+- **Tests**: +5 — F10–F14 (`date=today` → local midnight lower bound, ISO bounds forwarding, `limit` pass-through, `file.search` media-store default root, bound-resolution precedence). Total 609.
+
 ### Interactive confirmation flow closes the MVP gate (2026-08-15)
 - **Runtime (08-security.md §5)**: `CONFIRMATION_REQUIRED` no longer fails the run immediately. The run suspends and publishes `RuntimeEvent.ConfirmationNeeded` (now carrying `sideEffectClass`); the host answers via the new `McosRuntime.respondConfirmation(runId, commandId, ConfirmationDecision)`. `Approve` retries exactly that command with a signed, run-scoped `AuthStamp` (30 s TTL, grants mirrored from the descriptor — works for destructive/network/control too); `Reject` (or the 60 s default timeout, `Builder.withConfirmationTimeoutMs`) fails the run with an explicit rejection message.
 - **Android**: `MainActivity` renders a Material 3 `AlertDialog` on `ConfirmationNeeded` — command id, reason, and risk-level badge — with Allow/Deny wired to `respondConfirmation` (dismiss = deny).

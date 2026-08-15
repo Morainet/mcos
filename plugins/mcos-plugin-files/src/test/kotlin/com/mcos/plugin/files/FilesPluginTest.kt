@@ -4,6 +4,10 @@ import com.mcos.sdk.*
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.*
 import kotlin.test.*
+import java.time.Instant
+import java.time.LocalDate
+import java.time.OffsetDateTime
+import java.time.ZoneId
 
 /**
  * Conformance tests for FilesPlugin.
@@ -155,6 +159,92 @@ class FilesPluginTest {
         Unit
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // F10-F14: photo.search date filters + file.search media root
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `F10-photo_search date today resolves to local midnight lower bound`() = runBlocking {
+        val handler = plugin.handlers()["photo.search"]!!
+        val args = buildJsonObject { put("date", JsonPrimitive("today")) }
+        val ctx = execCtx("photo.search", args)
+
+        val result = handler.invoke(ctx)
+
+        assertTrue(result is CommandResult.Ok)
+        val fs = stubServices.files as StubFileService
+        val zone = ZoneId.systemDefault()
+        val todayStart = LocalDate.now(zone).atStartOfDay(zone).toInstant().toEpochMilli()
+        assertNotNull(fs.lastPhotoAfterMs, "date=today must push a lower bound")
+        assertEquals(todayStart, fs.lastPhotoAfterMs)
+        assertNull(fs.lastPhotoBeforeMs)
+        assertEquals("image/*", fs.lastPhotoMimeType)
+    }
+
+    @Test
+    fun `F11-photo_search iso date bounds forwarded to host`() = runBlocking {
+        val handler = plugin.handlers()["photo.search"]!!
+        val args = buildJsonObject {
+            put("after", JsonPrimitive("2026-08-01"))
+            put("before", JsonPrimitive("2026-08-15T23:59:59+08:00"))
+        }
+        val ctx = execCtx("photo.search", args)
+
+        val result = handler.invoke(ctx)
+
+        assertTrue(result is CommandResult.Ok)
+        val fs = stubServices.files as StubFileService
+        val zone = ZoneId.systemDefault()
+        val expectedAfter = LocalDate.parse("2026-08-01").atStartOfDay(zone).toInstant().toEpochMilli()
+        val expectedBefore = OffsetDateTime.parse("2026-08-15T23:59:59+08:00").toInstant().toEpochMilli()
+        assertEquals(expectedAfter, fs.lastPhotoAfterMs)
+        assertEquals(expectedBefore, fs.lastPhotoBeforeMs)
+    }
+
+    @Test
+    fun `F12-photo_search passes limit through to host query`() = runBlocking {
+        val handler = plugin.handlers()["photo.search"]!!
+        val args = buildJsonObject { put("limit", JsonPrimitive(10)) }
+        val ctx = execCtx("photo.search", args)
+
+        val result = handler.invoke(ctx)
+
+        assertTrue(result is CommandResult.Ok)
+        val fs = stubServices.files as StubFileService
+        assertEquals(10, fs.lastPhotoLimit)
+    }
+
+    @Test
+    fun `F13-file_search defaults to media store root`() = runBlocking {
+        val handler = plugin.handlers()["file.search"]!!
+        val args = buildJsonObject { put("pattern", JsonPrimitive("*")) }
+        val ctx = execCtx("file.search", args)
+
+        val result = handler.invoke(ctx)
+
+        assertTrue(result is CommandResult.Ok)
+        val fs = stubServices.files as StubFileService
+        assertEquals("media://images", fs.lastListUri)
+    }
+
+    @Test
+    fun `F14-resolveDateBounds shorthand and explicit override`() {
+        val zone = ZoneId.systemDefault()
+        val now = 1_758_000_000_000L
+        val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
+
+        // yesterday → previous local midnight, no upper bound
+        val yesterday = resolveDateBounds("yesterday", null, null, now)
+        val expected = today.minusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+        assertEquals(expected, yesterday.afterMs)
+        assertNull(yesterday.beforeMs)
+
+        // explicit after overrides the shorthand lower bound
+        val explicit = resolveDateBounds("today", "2026-08-01", null, now)
+        val expectedAfter = LocalDate.parse("2026-08-01").atStartOfDay(zone).toInstant().toEpochMilli()
+        assertEquals(expectedAfter, explicit.afterMs)
+    }
+
     // ─── Helpers ──────────────────────────────────────────────────────────
 
     private fun execCtx(commandId: String, args: JsonObject): ExecutionContext {
@@ -185,10 +275,33 @@ class StubFilesHostServices : HostServices {
 }
 
 class StubFileService : FileService {
+    var lastListUri: String? = null
+    var lastPhotoMimeType: String? = null
+    var lastPhotoAfterMs: Long? = null
+    var lastPhotoBeforeMs: Long? = null
+    var lastPhotoLimit: Int = -1
+
     override suspend fun list(uri: String, mimeType: String?): List<FileEntry> {
+        lastListUri = uri
         return listOf(
             FileEntry("$uri/file1.jpg", "file1.jpg", "image/jpeg", 1024),
             FileEntry("$uri/file2.png", "file2.png", "image/png", 2048),
+        )
+    }
+
+    override suspend fun searchPhotos(
+        mimeType: String,
+        afterMs: Long?,
+        beforeMs: Long?,
+        limit: Int,
+    ): List<FileEntry> {
+        lastPhotoMimeType = mimeType
+        lastPhotoAfterMs = afterMs
+        lastPhotoBeforeMs = beforeMs
+        lastPhotoLimit = limit
+        return listOf(
+            FileEntry("media://images/photo1.jpg", "photo1.jpg", "image/jpeg", 4096, dateModifiedMs = 1_700_000_000_000L),
+            FileEntry("media://images/photo2.jpg", "photo2.jpg", "image/jpeg", 2048, dateModifiedMs = 1_700_000_500_000L),
         )
     }
 }
