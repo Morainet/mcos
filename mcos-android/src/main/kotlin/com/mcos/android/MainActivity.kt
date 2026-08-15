@@ -46,8 +46,11 @@ import com.mcos.runtime.llm.OpenAiLlmProvider
 import com.mcos.runtime.llm.PromptInjectionDetector
 import com.mcos.runtime.llm.ProviderHealth
 import com.mcos.runtime.permission.PermissionKernel
+import com.mcos.runtime.plugin.LoadResult
 import com.mcos.runtime.registry.CommandRegistry
 import com.mcos.runtime.security.AuthStampSigner
+import com.mcos.runtime.security.EnterprisePolicy
+import com.mcos.runtime.security.EnterprisePolicySource
 import com.mcos.runtime.security.NetworkEgressPolicy
 import com.mcos.runtime.security.RateLimiter
 import com.mcos.sdk.HostServices
@@ -70,8 +73,18 @@ class MainActivity : ComponentActivity() {
         val secureStore = AndroidSecureStore(this)
         val registry = CommandRegistry()
 
+        // Enterprise policy (08-security.md §13 / 09-marketplace.md §6.5):
+        // sideloading is disabled by default (fail-closed). A host that
+        // whitelists sideloading would serve a policy with
+        // disableSideload=false; here the built-in plugins always load as
+        // BUILTIN regardless of this flag.
+        val enterprisePolicy = EnterprisePolicySource.fixed(
+            EnterprisePolicy(disableSideload = true)
+        )
+
         val runtime = McosRuntime.Builder()
             .withRegistry(registry)
+            .withEnterprisePolicySource(enterprisePolicy)
             .withExecutor(
                 Executor(
                     registry = registry,
@@ -193,14 +206,32 @@ fun MCOSApp(
     fun now() = timeFormat.format(Date())
 
     // ── plugin loading (idempotent) ────────────────────────────────────
+    // Built-in plugins are loaded through the runtime's install pipeline
+    // (09-marketplace.md §7.0): PluginTrustGate → CommandRegistry. They are
+    // marked `builtin = true` so they always register as BUILTIN; sideloaded
+    // packages arriving without a valid signature are denied by the trust
+    // gate (which consults the enterprise `disableSideload` policy).
     suspend fun loadPlugins() {
         if (pluginsLoaded) return
         for (plugin in plugins) {
             events.add("[${now()}] Loading ${plugin.manifest.name} v${plugin.manifest.version}")
             try {
-                registry.register(plugin)
-                plugin.onLoad(hostServices)
-                events.add("[${now()}]   └─ OK (${plugin.handlers().size} handlers)")
+                val result = runtime.loadPlugin(
+                    packageId = plugin.manifest.id,
+                    version = plugin.manifest.version,
+                    builtin = true,
+                    plugin = plugin,
+                )
+                when (result) {
+                    is LoadResult.Installed -> {
+                        plugin.onLoad(hostServices)
+                        events.add("[${now()}]   └─ OK (${plugin.handlers().size} handlers, ${result.trustLevel})")
+                    }
+                    is LoadResult.Denied ->
+                        events.add("[WARN]   └─ denied: ${result.code} — ${result.reason}")
+                    is LoadResult.Failed ->
+                        events.add("[WARN]   └─ failed: ${result.message}")
+                }
             } catch (e: Exception) {
                 events.add("[WARN]   └─ ${e.message}")
             }

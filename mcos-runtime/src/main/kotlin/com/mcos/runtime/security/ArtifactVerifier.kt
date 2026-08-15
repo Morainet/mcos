@@ -198,6 +198,29 @@ class InMemoryPublisherKeyStore : PublisherKeyStore {
         keys[key.keyId] = key
     }
 
+    /**
+     * Bootstrap the store with bundled public keys ([09-marketplace.md §6.3]
+     * "initial trust"). Idempotent: existing keys are preserved, new keys
+     * added.
+     */
+    fun bootstrap(bundled: List<PublisherKey>) {
+        for (key in bundled) {
+            keys.putIfAbsent(key.keyId, key)
+        }
+    }
+
+    /**
+     * Apply a revocation list pulled from `GET /v1/keys/revoked`
+     * ([09-marketplace.md §6.3]). Keys present in the list are marked
+     * [KeyStatus.REVOKED] (overwriting an ACTIVE entry); keys absent are
+     * untouched so unrelated publishers keep working.
+     */
+    fun applyRevoked(revoked: List<PublisherKey>) {
+        for (key in revoked) {
+            keys[key.keyId] = key.copy(status = KeyStatus.REVOKED)
+        }
+    }
+
     override fun get(keyId: String): PublisherKey? = keys[keyId]
 
     override fun publicKey(keyId: String): PublicKey? {
