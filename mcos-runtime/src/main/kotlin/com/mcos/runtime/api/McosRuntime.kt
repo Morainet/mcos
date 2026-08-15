@@ -6,19 +6,27 @@ import com.mcos.runtime.executor.Command
 import com.mcos.runtime.executor.Executor
 import com.mcos.runtime.ir.ExecutionIr
 import com.mcos.runtime.ir.ParseResult
+import com.mcos.runtime.marketplace.MarketplaceIndex
 import com.mcos.runtime.memory.EpisodicMemory
 import com.mcos.runtime.memory.EpisodicOutcome
 import com.mcos.runtime.memory.MemoryStore
 import com.mcos.runtime.memory.RunSummarizer
 import com.mcos.runtime.parse.DslParser
 import com.mcos.runtime.permission.PermissionKernel
+import com.mcos.runtime.plugin.LoadResult
+import com.mcos.runtime.plugin.PluginLoader
 import com.mcos.runtime.registry.CommandRegistry
 import com.mcos.runtime.registry.ResolveResult as RegistryResolveResult
+import com.mcos.runtime.security.ArtifactSignature
+import com.mcos.runtime.security.ArtifactVerifier
 import com.mcos.runtime.security.AuthStampSigner
 import com.mcos.runtime.security.CrashQuarantine
 import com.mcos.runtime.security.EnterprisePolicySource
+import com.mcos.runtime.security.InMemoryPublisherKeyStore
 import com.mcos.runtime.security.NetworkEgressPolicy
+import com.mcos.runtime.security.PluginTrustGate
 import com.mcos.runtime.security.RateLimiter
+import com.mcos.sdk.McosPlugin
 import com.mcos.runtime.workflow.WorkflowEngine
 import com.mcos.runtime.workflow.WorkflowJson
 import com.mcos.runtime.workflow.WorkflowOutcome
@@ -89,6 +97,8 @@ class McosRuntime internal constructor(
     private val episodicMemory: EpisodicMemory,
     private val authStampSigner: AuthStampSigner?,
     private val confirmationTimeoutMs: Long,
+    private val pluginLoader: PluginLoader,
+    private val marketplaceIndex: MarketplaceIndex?,
 ) {
     private val summarizer = RunSummarizer(episodicMemory)
     // ─── Confirmation flow (08-security.md §5) ──────────────────────────
@@ -341,6 +351,37 @@ class McosRuntime internal constructor(
      * Access the workflow store for registering/loading named workflows.
      */
     fun workflowStore(): WorkflowStore = workflowStore
+
+    /**
+     * Load a plugin into the runtime ([09-marketplace.md §7.0]). The plugin
+     * is first evaluated by the [PluginTrustGate] (which consults the
+     * enterprise policy, incl. `disableSideload`) and only registered when
+     * the trust decision allows it.
+     *
+     * @return [LoadResult] describing the outcome; see [LoadResult.Installed]
+     *         and [LoadResult.Denied].
+     */
+    fun loadPlugin(
+        packageId: String,
+        version: String,
+        payload: ByteArray? = null,
+        signature: ArtifactSignature? = null,
+        builtin: Boolean = false,
+        plugin: McosPlugin,
+    ): LoadResult = pluginLoader.load(
+        packageId = packageId,
+        version = version,
+        payload = payload,
+        signature = signature,
+        builtin = builtin,
+        plugin = plugin,
+    )
+
+    /**
+     * Access the marketplace index client, or null when the host did not
+     * configure one ([09-marketplace.md §4]).
+     */
+    fun marketplaceIndex(): MarketplaceIndex? = marketplaceIndex
 
     // ─── Internal helpers ────────────────────────────────────────────────
 
@@ -710,6 +751,15 @@ class McosRuntime internal constructor(
         // policy enforcement.
         private var enterprisePolicySource: EnterprisePolicySource? = null
 
+        // Plugin trust pipeline (09-marketplace.md §6). When no loader is
+        // injected, a default trust gate + verifier + in-memory key store is
+        // built so `loadPlugin` is fail-closed out of the box.
+        private var pluginLoader: PluginLoader? = null
+
+        // Marketplace index client (09-marketplace.md §4). Optional: only
+        // hosts that talk to a marketplace configure it.
+        private var marketplaceIndex: MarketplaceIndex? = null
+
         fun withParser(parser: DslParser) = apply { this.parser = parser }
         fun withRegistry(registry: CommandRegistry) = apply { this.registry = registry }
         fun withPermissionKernel(kernel: PermissionKernel) = apply { this.permissionKernel = kernel }
@@ -730,6 +780,19 @@ class McosRuntime internal constructor(
          */
         fun withEnterprisePolicySource(source: EnterprisePolicySource?) = apply { this.enterprisePolicySource = source }
 
+        /**
+         * Inject a custom plugin loader. When omitted, the default loader
+         * wraps a [PluginTrustGate] (fail-closed: no verifier, `debugBuild=false`)
+         * wired to the runtime's registry, so unsigned sideloads are denied
+         * unless the enterprise policy explicitly permits them.
+         */
+        fun withPluginLoader(loader: PluginLoader) = apply { this.pluginLoader = loader }
+
+        /**
+         * Attach a marketplace index client ([09-marketplace.md §4]).
+         */
+        fun withMarketplaceIndex(index: MarketplaceIndex?) = apply { this.marketplaceIndex = index }
+
         fun build(): McosRuntime {
             val reg = registry ?: CommandRegistry()
             val perm = permissionKernel ?: PermissionKernel()
@@ -747,6 +810,18 @@ class McosRuntime internal constructor(
             // flow steps and flat commands share one execution pipeline.
             val wfEngine = workflowEngine ?: WorkflowEngine(exec)
 
+            // Default trust pipeline: fail-closed PluginTrustGate over an
+            // empty in-memory key store. Hosts that verify marketplace
+            // artifacts inject a real verifier + key store via withPluginLoader.
+            val loader = pluginLoader ?: PluginLoader(
+                trustGate = PluginTrustGate(
+                    verifier = null,
+                    debugBuild = false,
+                    enterprisePolicy = { enterprisePolicySource?.current() },
+                ),
+                registry = reg,
+            )
+
             return McosRuntime(
                 parser = parser,
                 registry = reg,
@@ -759,6 +834,8 @@ class McosRuntime internal constructor(
                 episodicMemory = episodicMemory,
                 authStampSigner = authStampSigner,
                 confirmationTimeoutMs = confirmationTimeoutMs,
+                pluginLoader = loader,
+                marketplaceIndex = marketplaceIndex,
             )
         }
     }
