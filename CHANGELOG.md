@@ -10,6 +10,12 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### Planner probing policy + UI surfacing (2026-08-15)
+- **Probing policy (06 §17 V1)**: `LlmProbePolicy` — healthy results are cached for `cacheTtlMs` (routing no longer triggers a network round-trip per decision), failed providers are not re-probed within `failureCooldownMs`, a single probe is bounded by `probeTimeoutMs` (timeout → `LLM_PROBE_TIMEOUT`, treated as unhealthy), and providers are probed **in parallel** by default (`concurrent`).
+- **Health snapshots**: `ProviderHealth` (id/tier/capabilities/healthy/lastProbeAtMs/consecutiveFailures/errorCode/errorMessage) + `LlmProviderRegistry.healthSnapshot()` (zero network — for diagnostics and UI) + `probeAll()` (clears the cache and force-refreshes every provider). `healthyProviders()` / `primaryHealthy()` stay backward compatible under the default policy.
+- **Android UI**: the AI Chat card now shows a live provider health row (● ready / ○ down + error code) with a PROBE re-check button; typing the API key auto-probes after a 500 ms debounce.
+- **Tests**: +8 — `LlmProbePolicyTest` Q1–Q8 (TTL cache hit, failure cooldown, expiry re-probe, probe timeout, concurrent beats sequential, snapshot semantics, forced refresh). Total 620.
+
 ### NL→IR golden evaluation suite (2026-08-15)
 - **Golden fixtures (06 §16.0)**: `docs/fixtures/planner/` — 7 cases covering `invoke` (camera / notes / navigation×memory disambiguation), `sequence` (compress → email with `$ref:memory` binding), `clarify` (ambiguous camera), `refuse` (off-topic + empty catalog) and destructive `invoke` (confirmation is the executor's job, not the planner's). Each fixture pins `utterance`/`expectedType`/`mode`/`llmReply`/`expectedIr`/`registryFixture`/`memoryFixture`.
 - **Evaluation harness (06 §16.1)**: `NlIrEvaluation` runs every fixture through the real `LlmPlanner` pipeline — `GoldLlmProvider` routes by `mode` (`constrained`→`constrainedChat` IR JSON, `freeform`→`chat` DSL) and answers the fixture's stub reply — then asserts *structure* (command ids, step order, arg-key presence; `$ref:` bindings only need a non-empty value) and aggregates compile accuracy / mis-refusal rate / mis-execution rate / clarify correctness / mean latency.

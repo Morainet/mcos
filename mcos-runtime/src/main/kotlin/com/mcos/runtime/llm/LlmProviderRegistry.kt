@@ -1,15 +1,29 @@
 package com.mcos.runtime.llm
 
+import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withTimeoutOrNull
+
 /**
  * Registry of [LlmProvider]s with capability-based routing support
  * (06 §17 V1 multi-provider).
  *
  * Providers are stored in registration order, which defines priority:
  * earlier registrations are preferred by the fallback chain.
+ *
+ * Health probing follows [LlmProbePolicy]: results are cached (a healthy
+ * provider is not re-probed within `cacheTtlMs`, a failed provider not
+ * within `failureCooldownMs`), single probes are bounded by
+ * `probeTimeoutMs`, and all providers are probed in parallel by default.
  */
 class LlmProviderRegistry {
 
     private val providers: LinkedHashMap<String, LlmProvider> = LinkedHashMap()
+
+    /** Last known health per provider id; written by probes, read by snapshots. */
+    private val healthCache: ConcurrentHashMap<String, ProviderHealth> = ConcurrentHashMap()
 
     /**
      * Register a provider. Returns `true` if this id was not already
@@ -49,20 +63,103 @@ class LlmProviderRegistry {
         providers.values.filter { it.tier == ProviderTier.CLOUD }
 
     /**
-     * Providers whose [LlmProvider.probe] returns [LlmProbeResult.Ok],
-     * in priority order. Unhealthy providers are excluded from routing
+     * Providers whose most recent probe was healthy, in priority order.
+     * Unhealthy providers are excluded from routing
      * (06 §18.1 "On-device fallback" — a failed on-device probe routes to cloud).
+     *
+     * Probing follows [policy]: healthy results are cached for
+     * [LlmProbePolicy.cacheTtlMs], failed providers are not re-probed within
+     * [LlmProbePolicy.failureCooldownMs], a single probe is bounded by
+     * [LlmProbePolicy.probeTimeoutMs], and providers are probed in parallel
+     * when [LlmProbePolicy.concurrent] is true.
      */
-    suspend fun healthyProviders(): List<LlmProvider> {
-        val healthy = mutableListOf<LlmProvider>()
-        for (p in providers.values) {
-            if (p.probe() is LlmProbeResult.Ok) healthy += p
+    suspend fun healthyProviders(policy: LlmProbePolicy = LlmProbePolicy()): List<LlmProvider> =
+        if (policy.concurrent) {
+            coroutineScope {
+                providers.values.map { p ->
+                    async { p.id to probe(p, policy) }
+                }.awaitAll()
+            }
+                .filter { (_, healthy) -> healthy }
+                .mapNotNull { (id, _) -> providers[id] }
+        } else {
+            providers.values.filter { probe(it, policy) }
+        }
+
+    /** Highest-priority healthy provider, or `null` if none is healthy. */
+    suspend fun primaryHealthy(policy: LlmProbePolicy = LlmProbePolicy()): LlmProvider? =
+        healthyProviders(policy).firstOrNull()
+
+    /**
+     * Probe a single provider, honoring the cache. Returns `true` when the
+     * provider is healthy. Never throws: a probe timeout is reported as
+     * unhealthy ([LlmProbePolicy.probeTimeoutMs]).
+     */
+    private suspend fun probe(p: LlmProvider, policy: LlmProbePolicy): Boolean {
+        val now = System.currentTimeMillis()
+        val cached = healthCache[p.id]
+        if (cached != null) {
+            val last = cached.lastProbeAtMs ?: 0L
+            if (cached.healthy && now - last < policy.cacheTtlMs) return true
+            if (!cached.healthy && now - last < policy.failureCooldownMs) return false
+        }
+
+        val result = withTimeoutOrNull(policy.probeTimeoutMs) { p.probe() }
+            ?: LlmProbeResult.Err(
+                "LLM_PROBE_TIMEOUT",
+                "Probe exceeded ${policy.probeTimeoutMs}ms"
+            )
+
+        val healthy = result is LlmProbeResult.Ok
+        healthCache[p.id] = when (result) {
+            is LlmProbeResult.Ok -> ProviderHealth(
+                providerId = p.id,
+                tier = p.tier,
+                capabilities = p.capabilities,
+                healthy = true,
+                lastProbeAtMs = now,
+                consecutiveFailures = 0,
+            )
+            is LlmProbeResult.Err -> ProviderHealth(
+                providerId = p.id,
+                tier = p.tier,
+                capabilities = p.capabilities,
+                healthy = false,
+                lastProbeAtMs = now,
+                consecutiveFailures = (cached?.consecutiveFailures ?: 0) + 1,
+                errorCode = result.code,
+                errorMessage = result.message,
+            )
         }
         return healthy
     }
 
-    /** Highest-priority healthy provider, or `null` if none is healthy. */
-    suspend fun primaryHealthy(): LlmProvider? = healthyProviders().firstOrNull()
+    /**
+     * Last known health of every registered provider, without issuing new
+     * network probes. Providers that have never been probed report
+     * `healthy=false` with `lastProbeAtMs=null`. Used for diagnostics and
+     * UI surfacing (06 §17 V1).
+     */
+    fun healthSnapshot(): List<ProviderHealth> =
+        providers.values.map { p ->
+            healthCache[p.id] ?: ProviderHealth(
+                providerId = p.id,
+                tier = p.tier,
+                capabilities = p.capabilities,
+                healthy = false,
+                lastProbeAtMs = null,
+            )
+        }
+
+    /**
+     * Force a fresh probe of every provider (clearing the cache first) and
+     * return the resulting snapshot. Used by UI "re-check" actions.
+     */
+    suspend fun probeAll(policy: LlmProbePolicy = LlmProbePolicy()): List<ProviderHealth> {
+        healthCache.clear()
+        healthyProviders(policy)
+        return healthSnapshot()
+    }
 
     /** Number of registered providers. */
     val size: Int get() = providers.size
