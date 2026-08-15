@@ -98,7 +98,15 @@ sealed class RuntimeEvent {
     data class ConfirmationNeeded(
         val runId: String,
         val commandId: String,
-        val reason: String
+        val reason: String,
+        /**
+         * The side-effect class of the command awaiting confirmation, when the
+         * request originated from the permission kernel (e.g. "write"). The UI
+         * uses this to render an appropriate warning level.
+         */
+        val sideEffectClass: String? = null,
+        /** Permissions that are already granted but whose side-effect class required confirmation. */
+        val missingPermissions: List<String> = emptyList(),
     ) : RuntimeEvent()
 
     /** A step completed successfully. */
@@ -133,6 +141,28 @@ sealed class RuntimeEvent {
     data class RunCancelled(
         val runId: String
     ) : RuntimeEvent()
+}
+
+/**
+ * User decision in response to a [RuntimeEvent.ConfirmationNeeded].
+ *
+ * The host UI passes an instance to [McosRuntime.respondConfirmation]; the run
+ * stays suspended until it is answered or the confirmation timeout elapses.
+ * Matches the confirmation flow in [08-security.md 5].
+ */
+sealed interface ConfirmationDecision {
+    /** The user allowed the command to run. */
+    data class Approve(
+        /**
+         * When true, the runtime also grants the underlying permission for the
+         * remainder of this process session (08-security.md §5.2), so the same
+         * command does not ask again until the runtime restarts.
+         */
+        val rememberForSession: Boolean = false,
+    ) : ConfirmationDecision
+
+    /** The user blocked the command; the run fails with a rejection error. */
+    data object Reject : ConfirmationDecision
 }
 
 // ─── Preview ────────────────────────────────────────────────────────────

@@ -10,6 +10,11 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### Interactive confirmation flow closes the MVP gate (2026-08-15)
+- **Runtime (08-security.md §5)**: `CONFIRMATION_REQUIRED` no longer fails the run immediately. The run suspends and publishes `RuntimeEvent.ConfirmationNeeded` (now carrying `sideEffectClass`); the host answers via the new `McosRuntime.respondConfirmation(runId, commandId, ConfirmationDecision)`. `Approve` retries exactly that command with a signed, run-scoped `AuthStamp` (30 s TTL, grants mirrored from the descriptor — works for destructive/network/control too); `Reject` (or the 60 s default timeout, `Builder.withConfirmationTimeoutMs`) fails the run with an explicit rejection message.
+- **Android**: `MainActivity` renders a Material 3 `AlertDialog` on `ConfirmationNeeded` — command id, reason, and risk-level badge — with Allow/Deny wired to `respondConfirmation` (dismiss = deny).
+- **Tests**: +5 — `McosRuntimeConfirmationTest` (approve → succeed, reject → fail, timeout → fail, multi-command continuation, no-pending-response). Total 604.
+
 ### Implemented — P1 MVP + P2 core (2026-08)
 The repository has moved from design-only to a working implementation:
 
