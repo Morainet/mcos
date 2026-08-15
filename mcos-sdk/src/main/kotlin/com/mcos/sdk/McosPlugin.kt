@@ -100,6 +100,31 @@ interface MediaService {
 interface FileService {
     /** List files matching a content URI or directory. System-media queries only; no arbitrary filesystem access. */
     suspend fun list(uri: String, mimeType: String? = null): List<FileEntry>
+
+    /**
+     * Search photos in the system media store, optionally bounded by capture
+     * time. Hosts with a real media store (Android MediaStore) override this
+     * to push the filters into the native query; the default implementation
+     * lists the images collection and filters client-side (best effort).
+     *
+     * @param mimeType MIME filter, e.g. image/jpeg
+     * @param afterMs  only entries modified at/after this epoch millis
+     * @param beforeMs only entries modified at/before this epoch millis
+     * @param limit    maximum number of entries, newest first
+     */
+    suspend fun searchPhotos(
+        mimeType: String = "image/*",
+        afterMs: Long? = null,
+        beforeMs: Long? = null,
+        limit: Int = 200,
+    ): List<FileEntry> = list("media://images", mimeType)
+        .filter { entry ->
+            val modified = entry.dateModifiedMs
+            modified == null ||
+                (afterMs == null || modified >= afterMs) &&
+                (beforeMs == null || modified <= beforeMs)
+        }
+        .take(limit)
 }
 
 interface NetService {
@@ -200,7 +225,9 @@ data class FileEntry(
     val uri: String,
     val name: String,
     val mimeType: String? = null,
-    val size: Long? = null
+    val size: Long? = null,
+    /** Last-modified / capture time in epoch millis, when the host can determine it. */
+    val dateModifiedMs: Long? = null
 )
 
 @kotlinx.serialization.Serializable

@@ -54,10 +54,68 @@ class AndroidHostServices(
 class AndroidFileService(private val context: Context) : FileService {
     override suspend fun list(uri: String, mimeType: String?): List<FileEntry> {
         val contentUri = when {
-            uri.startsWith("media://images") -> MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-            uri.startsWith("media://video") -> MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-            uri.startsWith("media://audio") -> MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+            uri.startsWith("media://images") ||
+                uri.startsWith("content://media/external/images") ->
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+
+            uri.startsWith("media://video") ||
+                uri.startsWith("content://media/external/video") ->
+                MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+
+            uri.startsWith("media://audio") ||
+                uri.startsWith("content://media/external/audio") ->
+                MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+
             else -> return emptyList()
+        }
+        return queryMediaStore(contentUri, null, null, null, null, Int.MAX_VALUE)
+    }
+
+    override suspend fun searchPhotos(
+        mimeType: String,
+        afterMs: Long?,
+        beforeMs: Long?,
+        limit: Int,
+    ): List<FileEntry> {
+        // MediaStore DATE_ADDED is stored in whole seconds.
+        val selection = buildString {
+            if (afterMs != null) {
+                if (isNotEmpty()) append(" AND ")
+                append("${MediaStore.MediaColumns.DATE_ADDED} >= ?")
+            }
+            if (beforeMs != null) {
+                if (isNotEmpty()) append(" AND ")
+                append("${MediaStore.MediaColumns.DATE_ADDED} <= ?")
+            }
+        }
+        val selectionArgs = buildList {
+            if (afterMs != null) add((afterMs / 1000).toString())
+            if (beforeMs != null) add((beforeMs / 1000).toString())
+        }
+        // Newest first; API 31+ pushes LIMIT into the query, older devices
+        // are capped client-side inside queryMediaStore.
+        return queryMediaStore(
+            contentUri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+            mimeType = mimeType,
+            selection = selection.ifEmpty { null },
+            selectionArgs = selectionArgs.toTypedArray(),
+            sortOrder = "${MediaStore.MediaColumns.DATE_ADDED} DESC",
+            limit = limit,
+        )
+    }
+
+    private fun queryMediaStore(
+        contentUri: Uri,
+        mimeType: String?,
+        selection: String?,
+        selectionArgs: Array<String>?,
+        sortOrder: String?,
+        limit: Int,
+    ): List<FileEntry> {
+        val effectiveSort = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && sortOrder != null) {
+            "$sortOrder LIMIT $limit"
+        } else {
+            sortOrder
         }
         val projection = arrayOf(
             MediaStore.MediaColumns._ID,
@@ -67,22 +125,30 @@ class AndroidFileService(private val context: Context) : FileService {
             MediaStore.MediaColumns.DATE_MODIFIED,
         )
         val entries = mutableListOf<FileEntry>()
-        context.contentResolver.query(contentUri, projection, null, null, null)?.use { cursor ->
-            val idCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
-            val nameCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
-            val sizeCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE)
-            val mimeCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.MIME_TYPE)
-            val dateCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_MODIFIED)
-            while (cursor.moveToNext()) {
-                entries.add(
-                    FileEntry(
-                        uri = "content://media/external/${cursor.getString(idCol)}",
-                        name = cursor.getString(nameCol) ?: "",
-                        size = cursor.getLong(sizeCol),
-                        mimeType = cursor.getString(mimeCol) ?: "application/octet-stream",
+        try {
+            context.contentResolver.query(
+                contentUri, projection, selection, selectionArgs, effectiveSort,
+            )?.use { cursor ->
+                val idCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
+                val nameCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
+                val sizeCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE)
+                val mimeCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.MIME_TYPE)
+                val dateCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_MODIFIED)
+                while (cursor.moveToNext() && entries.size < limit) {
+                    val modifiedSec = cursor.getLong(dateCol)
+                    entries.add(
+                        FileEntry(
+                            uri = "content://media/external/${cursor.getString(idCol)}",
+                            name = cursor.getString(nameCol) ?: "",
+                            size = cursor.getLong(sizeCol),
+                            mimeType = cursor.getString(mimeCol) ?: "application/octet-stream",
+                            dateModifiedMs = if (modifiedSec > 0) modifiedSec * 1000 else null,
+                        )
                     )
-                )
+                }
             }
+        } catch (_: SecurityException) {
+            // Media permission not granted yet — return empty instead of crashing.
         }
         return entries
     }
