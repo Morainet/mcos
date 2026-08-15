@@ -16,6 +16,7 @@ import com.mcos.runtime.registry.CommandRegistry
 import com.mcos.runtime.registry.ResolveResult as RegistryResolveResult
 import com.mcos.runtime.security.AuthStampSigner
 import com.mcos.runtime.security.CrashQuarantine
+import com.mcos.runtime.security.EnterprisePolicySource
 import com.mcos.runtime.security.NetworkEgressPolicy
 import com.mcos.runtime.security.RateLimiter
 import com.mcos.runtime.workflow.WorkflowEngine
@@ -705,6 +706,10 @@ class McosRuntime internal constructor(
         // (08-security.md §6.3) before it is treated as rejected.
         private var confirmationTimeoutMs: Long = 60_000
 
+        // Enterprise policy source (08-security.md §13). Null → no enterprise
+        // policy enforcement.
+        private var enterprisePolicySource: EnterprisePolicySource? = null
+
         fun withParser(parser: DslParser) = apply { this.parser = parser }
         fun withRegistry(registry: CommandRegistry) = apply { this.registry = registry }
         fun withPermissionKernel(kernel: PermissionKernel) = apply { this.permissionKernel = kernel }
@@ -718,6 +723,13 @@ class McosRuntime internal constructor(
         fun withQuarantine(quarantine: CrashQuarantine?) = apply { this.quarantine = quarantine }
         fun withConfirmationTimeoutMs(ms: Long) = apply { this.confirmationTimeoutMs = ms }
 
+        /**
+         * Enable enterprise policy enforcement with a hot-reloadable source.
+         * Call [FileEnterprisePolicySource] or a custom implementation; for a
+         * static policy use `EnterprisePolicySource.fixed(...)`.
+         */
+        fun withEnterprisePolicySource(source: EnterprisePolicySource?) = apply { this.enterprisePolicySource = source }
+
         fun build(): McosRuntime {
             val reg = registry ?: CommandRegistry()
             val perm = permissionKernel ?: PermissionKernel()
@@ -728,6 +740,7 @@ class McosRuntime internal constructor(
                 egressPolicy = NetworkEgressPolicy(),
                 authStampSigner = authStampSigner,
                 quarantine = quarantine,
+                enterprisePolicySource = enterprisePolicySource,
             )
 
             // The workflow engine defaults to the same executor, so control

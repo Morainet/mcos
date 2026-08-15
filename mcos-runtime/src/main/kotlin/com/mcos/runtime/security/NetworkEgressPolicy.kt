@@ -13,7 +13,10 @@ import com.mcos.sdk.AuthStamp
  * 2. **HTTPS enforcement** — non-`https://` URLs are denied unless in debug mode.
  * 3. **Domain scope glob matching** — check [AuthStamp.grantsUsed] for
  *    `network.<domain>` scopes that match the target host via glob rules.
- * 4. **Enterprise policy** (P1 stub) — optional override; defaults to pass-through.
+ * 4. **Enterprise policy** — [EnterprisePolicy.networkDeny] /
+ *    [EnterprisePolicy.networkAllow] lists tighten the granted scopes
+ *    (spec §12.0 step 4). `disableAllPluginNetwork` participates in the
+ *    kill-switch check of step 1 (spec §13.2).
  *
  * ## P1 scope
  *
@@ -34,6 +37,9 @@ class NetworkEgressPolicy {
      * @param globalKillSwitch If true, all network egress is denied regardless of
      *        other checks.
      * @param debugMode If true, HTTP (non-HTTPS) URLs are allowed for development.
+     * @param enterprisePolicy Optional enterprise policy whose network lists
+     *        tighten the granted scopes (spec §12.0 step 4). `null` skips the
+     *        enterprise checks entirely (pass-through).
      * @return [EgressDecision.Allow] or [EgressDecision.Deny] with reason.
      */
     fun decideEgress(
@@ -41,10 +47,19 @@ class NetworkEgressPolicy {
         authStamp: AuthStamp? = null,
         globalKillSwitch: Boolean = false,
         debugMode: Boolean = false,
+        enterprisePolicy: EnterprisePolicy? = null,
     ): EgressDecision {
-        // Step 1: Global kill switch — absolute first check
-        if (globalKillSwitch) {
-            return EgressDecision.Deny(reason = "kill_switch_active")
+        // Step 1: Global kill switch — absolute first check.
+        // Enterprise `disableAllPluginNetwork` (spec §13.2) also raises the
+        // kill switch, so it is folded into the same gate.
+        if (globalKillSwitch || (enterprisePolicy?.disableAllPluginNetwork == true)) {
+            return EgressDecision.Deny(
+                reason = if (enterprisePolicy?.disableAllPluginNetwork == true && !globalKillSwitch) {
+                    "enterprise_kill_switch_active"
+                } else {
+                    "kill_switch_active"
+                }
+            )
         }
 
         // Extract host from URL
@@ -75,8 +90,26 @@ class NetworkEgressPolicy {
             )
         }
 
-        // Step 4: Enterprise policy (P1 stub — always pass-through)
-        // P3 will check EnterprisePolicy.egressAllowlist/egressBlocklist here.
+        // Step 4: Enterprise policy — network allow/deny lists tighten the
+        // granted scopes (spec §12.0 step 4 / §13.2). Deny-list wins, then a
+        // non-empty allow-list is an upper bound. `null` policy is pass-through.
+        val policy = enterprisePolicy
+        if (policy != null) {
+            if (policy.networkDeny.any { pattern -> globMatch(host, pattern) }) {
+                return EgressDecision.Deny(
+                    reason = "enterprise_network_deny",
+                    missingDomain = host
+                )
+            }
+            if (policy.networkAllow.isNotEmpty() &&
+                policy.networkAllow.none { pattern -> globMatch(host, pattern) }
+            ) {
+                return EgressDecision.Deny(
+                    reason = "enterprise_network_allowlist_miss",
+                    missingDomain = host
+                )
+            }
+        }
 
         return EgressDecision.Allow
     }
