@@ -10,6 +10,16 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### Plugin trust levels & signature verification (2026-08-15)
+- **`TrustLevel` (08 §7.0)**: `BUILTIN` / `MARKETPLACE_VERIFIED` / `SIDELOAD_DEBUG` / `UNTRUSTED` — derived by the runtime from the artifact signature status (never self-asserted by plugins).
+- **`ArtifactVerifier` (09 §6.2)**: fail-closed six-step pipeline — SHA-256 integrity check, key resolution, key status check (REVOKED → reject), cached fast path (offline load), cryptographic signature verification (**Ed25519** preferred / **RSA-PSS-4096** legacy, with JCA name mapping), blocklist check; success cached as `(signingKeyId, payloadSha256)`.
+- **`PublisherKey` (09 §6.0)**: keyId / publisherId / fingerprint / algorithm / X.509-DER-base64 encoded key / `rotatedFrom` / `status` (ACTIVE/REVOKED) + `InMemoryPublisherKeyStore`.
+- **`ArtifactSignature`**: `.mcos` signature envelope — `payloadSha256` / `signature` (base64) / `signingKeyId` / `algorithm` / `signedAt`.
+- **`VerificationCache` (03 §16.2)**: `(keyId, payloadSha256) → VerifyCacheEntry(verifiedAt, trusted)`, default 7-day TTL aligned with the marketplace revocation TTL, lazy expiry, thread-safe.
+- **`PluginTrustGate` (09 §6.5/§7.1)**: load-time decision matrix — builtin allowed; valid signature → `MARKETPLACE_VERIFIED`; invalid/revoked/blocklisted → denied; unsigned debug sideload → `SIDELOAD_DEBUG`; unsigned production sideload → denied; **`disableSideload` enterprise policy → denied** (§13.2) without affecting verified marketplace plugins.
+- **Wiring**: `CommandRegistry.register(plugin, trustLevel = BUILTIN)` records the trust level on `RegistryEntry.trustLevel`; `UNTRUSTED` registration → new `RegisterResult.Rejected` (plugin intercepted before registration).
+- **Tests**: +30 — `ArtifactVerifierTest` V1–V16 (real Ed25519 / RSA-PSS-4096 keypairs), `PluginTrustGateTest` T1–T12, `CommandRegistryTest` R22–R24. Total 704.
+
 ### Enterprise policy allowlist/denylist (2026-08-15)
 - **`EnterprisePolicy` (08 §13.1/§13.3)**: full policy type — `allowCommands`/`denyCommands` (command-ID globs: `*`, `prefix.*`, exact), `forceConfirm` (spec §4.3), `networkAllow`/`networkDeny` (domain globs mirroring §12.1), `disableSideload`, `disableCloudMemorySync`, `auditFailClosed`, `disableAllPluginNetwork`, `secretTtlDays`, `version`/`issuedAt`/`issuedBy`. Parsing is **fail-closed**: malformed JSON, missing fields or an unsupported schema version produce `FAIL_CLOSED` (hardcoded safe command set, all classes force-confirmed, sideload/cloud-sync/all plugin network off, audit fail-closed).
 - **`EnterprisePolicySource`**: static (`EnterprisePolicySource.fixed`) and `FileEnterprisePolicySource` — mtime-polled hot reload (spec §13.3): parse failure → `FAIL_CLOSED` + `PolicyParseFailed` (SHA-256 document fingerprint), read failure → serves the last good policy (or `FAIL_CLOSED`) + `PolicyFetchFailed`, success → `PolicyUpdated`; subscribable lifecycle events and refresh throttling.

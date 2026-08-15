@@ -1,5 +1,6 @@
 package com.mcos.runtime.registry
 
+import com.mcos.runtime.security.TrustLevel
 import com.mcos.sdk.CommandDescriptor
 import com.mcos.sdk.CommandHandler
 import com.mcos.sdk.CommandResult
@@ -12,12 +13,17 @@ import kotlinx.serialization.json.JsonObject
 /**
  * A single resolved entry in the command registry — pairs a [CommandDescriptor]
  * with its owning plugin's id, version, and handler.
+ *
+ * @param trustLevel the trust level at which this plugin was registered
+ *        ([08-security.md §7]); plugins registered as [TrustLevel.UNTRUSTED]
+ *        are rejected by [CommandRegistry.register].
  */
 data class RegistryEntry(
     val pluginId: String,
     val pluginVersion: String,
     val descriptor: CommandDescriptor,
-    val handler: CommandHandler
+    val handler: CommandHandler,
+    val trustLevel: TrustLevel = TrustLevel.BUILTIN,
 )
 
 /**
@@ -46,6 +52,12 @@ sealed class RegisterResult {
         val conflicts: List<ConflictDetail>,
         val commandsRegistered: Int,
         val aliasesRegistered: Int
+    ) : RegisterResult()
+
+    /** Plugin rejected before registration (e.g. untrusted — [08-security.md §7]). */
+    data class Rejected(
+        val pluginId: String,
+        val reason: String
     ) : RegisterResult()
 }
 
@@ -165,10 +177,19 @@ class CommandRegistry {
      * 2. Creates a [CommandDescriptor] from it (or a minimal one)
      * 3. Registers the descriptor + handler + aliases
      *
+     * @param trustLevel the trust level at which the plugin is registered
+     *        ([08-security.md §7]). [TrustLevel.UNTRUSTED] registrations are
+     *        rejected with [RegisterResult.Rejected] — untrusted plugins must
+     *        never reach the registry. Defaults to [TrustLevel.BUILTIN].
+     *
      * @return [RegisterResult.Ok] if all commands registered cleanly,
-     *         [RegisterResult.Conflict] if some commands conflicted.
+     *         [RegisterResult.Conflict] if some commands conflicted,
+     *         [RegisterResult.Rejected] if the plugin is untrusted.
      */
-    fun register(plugin: McosPlugin): RegisterResult = synchronized(this) {
+    fun register(plugin: McosPlugin, trustLevel: TrustLevel = TrustLevel.BUILTIN): RegisterResult = synchronized(this) {
+        if (trustLevel == TrustLevel.UNTRUSTED) {
+            return RegisterResult.Rejected(plugin.manifest.id, "untrusted plugin rejected")
+        }
         val manifest = plugin.manifest
         val pluginId = manifest.id
         val pluginVersion = manifest.version
@@ -237,7 +258,8 @@ class CommandRegistry {
                 pluginId = pluginId,
                 pluginVersion = pluginVersion,
                 descriptor = descriptor,
-                handler = handler ?: NotImplementedHandler
+                handler = handler ?: NotImplementedHandler,
+                trustLevel = trustLevel
             )
 
             // Check for conflicts (different plugin has same command ID)
