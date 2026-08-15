@@ -52,7 +52,8 @@ plugins/
   mcos-plugin-iot       home.* / iot.*              (planned)
   mcos-plugin-mcp       mcp.* adapter               (planned)
 mcos-android      Compose CLI / Chat shell           ✅
-mcos-server       Sync · marketplace                (planned)
+mcos-server       同步端点（REST + Bearer 认证）       ✅
+mcos-server       市场索引                     (planned, P3)
 ```
 
 完整的依赖图与各模块目标，见 [`docs/zh/REPOSITORIES.md`](./docs/zh/REPOSITORIES.md)。
@@ -70,6 +71,7 @@ mcos-server       Sync · marketplace                (planned)
 | `mcos-sdk` | 插件契约（`McosPlugin`、`CommandHandler`、`HostServices`、`ExecutionContext`、`AuthStamp`） | ✅ |
 | `mcos-runtime` | DSL 解析器、命令注册中心、7 阶段执行器、权限内核、限流器、出站策略、审计日志、LLM 规划/对话、工作流引擎、事件总线、记忆 | ✅ |
 | `mcos-android` | Compose CLI / Chat 外壳 | ✅ |
+| `mcos-server` | 自托管同步端点：`SyncBlobTransport` REST 契约 + 强制 Bearer token 认证，不透明 blob 存储 | ✅ |
 
 插件在 `plugins/` 下独立构建：`mcos-plugin-hello`、`mcos-plugin-system`、`mcos-plugin-camera`、`mcos-plugin-files`（均带测试）。
 
