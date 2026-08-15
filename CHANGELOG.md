@@ -10,6 +10,12 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### Episodic §8.3 named-entity merge / fuzzy reference (2026-08-15)
+- **`EntityMatcher` (07 §8.3)**: bridges natural-language entity references to memory paths — "Tom" / "跟上次一样发照片给Tom" now recall the episode whose entity is `people.tom`. Three recall signals, maxed: full-path fuzzy score (fallback), **leaf-node match** (`people.tom` → `tom`, case-insensitive), and **registered alias merge** (display label / nickname → canonical path, e.g. `register("people.tom", "thomas", "Tom")`).
+- **Mixed-language query tokenization**: queries split into Han runs + ASCII alphanumeric runs (`\p{IsHan}+|[a-zA-Z0-9]+`), so an embedded entity name inside a Chinese utterance resolves independently of the surrounding text.
+- **Recall threshold**: signals below the §6.0 Step 3 bar (0.75) are dropped, so unrelated entity paths do not produce spurious hits; `EpisodicMemory.search` now scores `max(textScore, entityScore)`.
+- **Tests**: +5 — E15–E19 (natural-language entity recall, case-insensitive leaf match, full-path outranks prefix leaf, alias merge, weak-overlap filter). Total 625.
+
 ### Planner probing policy + UI surfacing (2026-08-15)
 - **Probing policy (06 §17 V1)**: `LlmProbePolicy` — healthy results are cached for `cacheTtlMs` (routing no longer triggers a network round-trip per decision), failed providers are not re-probed within `failureCooldownMs`, a single probe is bounded by `probeTimeoutMs` (timeout → `LLM_PROBE_TIMEOUT`, treated as unhealthy), and providers are probed **in parallel** by default (`concurrent`).
 - **Health snapshots**: `ProviderHealth` (id/tier/capabilities/healthy/lastProbeAtMs/consecutiveFailures/errorCode/errorMessage) + `LlmProviderRegistry.healthSnapshot()` (zero network — for diagnostics and UI) + `probeAll()` (clears the cache and force-refreshes every provider). `healthyProviders()` / `primaryHealthy()` stay backward compatible under the default policy.
