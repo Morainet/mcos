@@ -1,5 +1,6 @@
 package com.mcos.runtime.permission
 
+import com.mcos.runtime.security.EnterprisePolicy
 import com.mcos.sdk.*
 import kotlinx.serialization.json.JsonObject
 import kotlin.test.*
@@ -339,6 +340,120 @@ class PermissionKernelTest {
         assertIs<AuthorizationResult.Authorized>(result)
         val ttl = result.stamp.expiresAt - result.stamp.issuedAt
         assertEquals(10_000, ttl)
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // P21-P26: Enterprise policy integration (§13.2, §4.3)
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `P21-enterprise deny list rejects command even with grant`() {
+        kernel.grant("example.sys", "android.permission.CAMERA")
+        val descriptor = createDescriptor(
+            id = "camera.scan",
+            pluginId = "example.sys",
+            sideEffectClass = SideEffectClass.read,
+            permissions = listOf(PermissionEntry("android", "android.permission.CAMERA")),
+        )
+        val policy = EnterprisePolicy(denyCommands = listOf("camera.*"))
+
+        val result = kernel.authorize(descriptor, policy)
+        assertIs<AuthorizationResult.Denied>(result)
+        assertContains(result.reason, "Enterprise policy")
+    }
+
+    @Test
+    fun `P22-enterprise allow list rejects unlisted command`() {
+        val descriptor = createDescriptor(
+            id = "mail.send",
+            pluginId = "example.mail",
+            sideEffectClass = SideEffectClass.network,
+        )
+        val policy = EnterprisePolicy(allowCommands = listOf("sys.notify", "camera.*"))
+
+        val result = kernel.authorize(descriptor, policy)
+        assertIs<AuthorizationResult.Denied>(result)
+    }
+
+    @Test
+    fun `P22b-enterprise allow list passes listed command`() {
+        kernel.grant("example.cam", "android.permission.CAMERA")
+        val descriptor = createDescriptor(
+            id = "camera.scan",
+            pluginId = "example.cam",
+            sideEffectClass = SideEffectClass.read,
+            permissions = listOf(PermissionEntry("android", "android.permission.CAMERA")),
+        )
+        val policy = EnterprisePolicy(allowCommands = listOf("camera.*"))
+
+        val result = kernel.authorize(descriptor, policy)
+        assertIs<AuthorizationResult.Authorized>(result)
+    }
+
+    @Test
+    fun `P23-enterprise deny wins over user grant and allow list`() {
+        kernel.grant("example.mcp", "android.permission.INTERNET")
+        val descriptor = createDescriptor(
+            id = "mcp.exfil",
+            pluginId = "example.mcp",
+            sideEffectClass = SideEffectClass.network,
+            permissions = listOf(PermissionEntry("android", "android.permission.INTERNET")),
+        )
+        val policy = EnterprisePolicy(
+            allowCommands = listOf("mcp.*"),
+            denyCommands = listOf("mcp.exfil"),
+        )
+
+        val result = kernel.authorize(descriptor, policy)
+        assertIs<AuthorizationResult.Denied>(result)
+    }
+
+    @Test
+    fun `P24-force confirm upgrades auto-approved write command`() {
+        kernel.grant("example.fs", "android.permission.WRITE_EXTERNAL_STORAGE")
+        kernel.setAutoApprove("file.create", true)
+        val descriptor = createDescriptor(
+            id = "file.create",
+            pluginId = "example.fs",
+            sideEffectClass = SideEffectClass.write,
+            permissions = listOf(PermissionEntry("android", "android.permission.WRITE_EXTERNAL_STORAGE")),
+        )
+        // Without enterprise policy → auto-approved write command
+        val before = kernel.authorize(descriptor)
+        assertIs<AuthorizationResult.Authorized>(before)
+
+        // With force-confirm on write → upgraded to ConfirmationNeeded
+        val policy = EnterprisePolicy(forceConfirm = listOf(SideEffectClass.write))
+        val after = kernel.authorize(descriptor, policy)
+        assertIs<AuthorizationResult.ConfirmationNeeded>(after)
+        assertContains(after.reason, "Enterprise policy")
+    }
+
+    @Test
+    fun `P25-force confirm does not downgrade already-authorizing commands`() {
+        kernel.grant("example.sys", "android.permission.SET_ALARM")
+        kernel.setAutoApprove("sys.notify", true)
+        val descriptor = createDescriptor(
+            id = "sys.notify",
+            pluginId = "example.sys",
+            sideEffectClass = SideEffectClass.write,
+            permissions = listOf(PermissionEntry("android", "android.permission.SET_ALARM")),
+        )
+        val policy = EnterprisePolicy(forceConfirm = listOf(SideEffectClass.control)) // unrelated class
+
+        val result = kernel.authorize(descriptor, policy)
+        assertIs<AuthorizationResult.Authorized>(result)
+    }
+
+    @Test
+    fun `P26-null enterprise policy is pass-through`() {
+        val descriptor = createDescriptor(
+            id = "sys.clock",
+            pluginId = "example.sys",
+            sideEffectClass = SideEffectClass.read,
+        )
+        val result = kernel.authorize(descriptor, null)
+        assertIs<AuthorizationResult.Authorized>(result)
     }
 
     // ═══════════════════════════════════════════════════════════════

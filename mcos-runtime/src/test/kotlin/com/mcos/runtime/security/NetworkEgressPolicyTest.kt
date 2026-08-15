@@ -201,6 +201,102 @@ class NetworkEgressPolicyTest {
     }
 
     // ═══════════════════════════════════════════════════════════════
+    // N14-N18: Enterprise policy integration (§12.0 step 4, §13.2)
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `N14-enterprise network deny list blocks matching host`() {
+        val ep = EnterprisePolicy(networkDeny = listOf("blocked.example.com"))
+        val result = policy.decideEgress(
+            url = "https://blocked.example.com/api",
+            authStamp = stampWithScopes("network.*"),
+            enterprisePolicy = ep,
+        )
+        assertIs<EgressDecision.Deny>(result)
+        assertEquals("enterprise_network_deny", result.reason)
+        assertEquals("blocked.example.com", result.missingDomain)
+    }
+
+    @Test
+    fun `N14b-enterprise network deny list passes other hosts`() {
+        val ep = EnterprisePolicy(networkDeny = listOf("blocked.example.com"))
+        val result = policy.decideEgress(
+            url = "https://allowed.example.com/api",
+            authStamp = stampWithScopes("network.*"),
+            enterprisePolicy = ep,
+        )
+        assertIs<EgressDecision.Allow>(result)
+    }
+
+    @Test
+    fun `N15-enterprise network allow list is an upper bound`() {
+        val ep = EnterprisePolicy(networkAllow = listOf("*.corp.example.com"))
+        val result = policy.decideEgress(
+            url = "https://api.corp.example.com/data",
+            authStamp = stampWithScopes("network.*"),
+            enterprisePolicy = ep,
+        )
+        assertIs<EgressDecision.Allow>(result)
+
+        val denied = policy.decideEgress(
+            url = "https://public.example.org/data",
+            authStamp = stampWithScopes("network.*"),
+            enterprisePolicy = ep,
+        )
+        assertIs<EgressDecision.Deny>(denied)
+        assertEquals("enterprise_network_allowlist_miss", denied.reason)
+        assertEquals("public.example.org", denied.missingDomain)
+    }
+
+    @Test
+    fun `N16-enterprise deny wins over enterprise allow`() {
+        val ep = EnterprisePolicy(
+            networkAllow = listOf("*.example.com"),
+            networkDeny = listOf("exfil.example.com"),
+        )
+        val result = policy.decideEgress(
+            url = "https://exfil.example.com/upload",
+            authStamp = stampWithScopes("network.*"),
+            enterprisePolicy = ep,
+        )
+        assertIs<EgressDecision.Deny>(result)
+        assertEquals("enterprise_network_deny", result.reason)
+    }
+
+    @Test
+    fun `N17-disableAllPluginNetwork is an egress kill switch`() {
+        val ep = EnterprisePolicy(disableAllPluginNetwork = true)
+        val result = policy.decideEgress(
+            url = "https://anything.example.com",
+            authStamp = stampWithScopes("network.*"),
+            enterprisePolicy = ep,
+        )
+        assertIs<EgressDecision.Deny>(result)
+        assertEquals("enterprise_kill_switch_active", result.reason)
+    }
+
+    @Test
+    fun `N18-null enterprise policy is pass-through`() {
+        val result = policy.decideEgress(
+            url = "https://anything.example.com",
+            authStamp = stampWithScopes("network.*"),
+            enterprisePolicy = null,
+        )
+        assertIs<EgressDecision.Allow>(result)
+    }
+
+    @Test
+    fun `N18b-enterprise deny does not bypass domain scope`() {
+        // Even with an empty enterprise policy, the domain scope check still runs.
+        val result = policy.decideEgress(
+            url = "https://not-granted.example.org",
+            authStamp = stampWithScopes("network.other.com"),
+        )
+        assertIs<EgressDecision.Deny>(result)
+        assertEquals("domain_not_in_scope", result.reason)
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     // Helpers
     // ═══════════════════════════════════════════════════════════════
 

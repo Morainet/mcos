@@ -1,5 +1,6 @@
 package com.mcos.runtime.permission
 
+import com.mcos.runtime.security.EnterprisePolicy
 import com.mcos.sdk.*
 import java.util.concurrent.ConcurrentHashMap
 
@@ -86,19 +87,38 @@ class PermissionKernel {
      * Check whether a command can be executed.
      *
      * Flow:
-     * 1. Collect all required permissions (descriptor + plugin-level)
-     * 2. Check which are missing from grants
-     * 3. If sideEffectClass ≥ write → confirmation required
-     * 4. If auto-approve → skip confirmation (unless destructive)
+     * 1. Enterprise policy command lists (deny-list wins, then non-empty
+     *    allow-list is an upper bound) — spec [08-security.md 13.2]
+     * 2. Collect all required permissions (descriptor + plugin-level)
+     * 3. Check which are missing from grants
+     * 4. If sideEffectClass ≥ write → confirmation required
+     * 5. If auto-approve → skip confirmation (unless destructive, or the
+     *    enterprise force-confirm list upgrades it — spec [08-security.md 4.3])
      *
      * @param descriptor The resolved command descriptor.
+     * @param enterprisePolicy Optional enterprise policy; `null` skips the
+     *        enterprise command-list and force-confirm checks.
      * @return [AuthorizationResult.Authorized] if all checks pass,
      *         [AuthorizationResult.ConfirmationNeeded] if user confirmation is needed,
      *         [AuthorizationResult.Denied] if permissions are permanently missing.
      */
-    fun authorize(descriptor: CommandDescriptor): AuthorizationResult {
+    fun authorize(
+        descriptor: CommandDescriptor,
+        enterprisePolicy: EnterprisePolicy? = null,
+    ): AuthorizationResult {
         val commandId = descriptor.id
         val pluginId = descriptor.pluginId
+
+        // Step 1: Enterprise command lists (spec §13.2). Deny-list wins
+        // unconditionally; a non-empty allow-list is an upper bound.
+        val policy = enterprisePolicy
+        if (policy != null && !policy.commandAllowed(commandId)) {
+            return AuthorizationResult.Denied(
+                commandId = commandId,
+                missingPermissions = emptyList(),
+                reason = "Enterprise policy denies command '$commandId'"
+            )
+        }
 
         // Collect required permissions (snapshot under lock)
         val required = collectRequiredPermissions(descriptor)
@@ -120,10 +140,10 @@ class PermissionKernel {
         }
 
         // Check if confirmation is needed based on sideEffectClass
-        if (needsConfirmation(descriptor, commandId)) {
+        if (needsConfirmation(descriptor, commandId, policy)) {
             return AuthorizationResult.ConfirmationNeeded(
                 commandId = commandId,
-                reason = confirmationReason(descriptor.sideEffectClass),
+                reason = confirmationReason(descriptor.sideEffectClass, policy),
                 missingPermissions = emptyList(),
                 sideEffectClass = descriptor.sideEffectClass
             )
@@ -306,8 +326,17 @@ class PermissionKernel {
         }
     }
 
-    private fun needsConfirmation(descriptor: CommandDescriptor, commandId: String): Boolean {
+    private fun needsConfirmation(
+        descriptor: CommandDescriptor,
+        commandId: String,
+        enterprisePolicy: EnterprisePolicy? = null,
+    ): Boolean {
         if (alwaysConfirm) return true
+
+        // Enterprise force-confirm (spec 08 §4.3): classes listed in
+        // `forceConfirm` always require CONFIRM_ONCE — this upgrades an
+        // otherwise auto-approved command, it never downgrades.
+        if (enterprisePolicy?.requiresForceConfirm(descriptor.sideEffectClass) == true) return true
 
         // Destructive commands ALWAYS require confirmation (spec 08 §4.0):
         // "no allow-persistent path". Auto-approve is ignored for them.
@@ -319,11 +348,19 @@ class PermissionKernel {
         return descriptor.sideEffectClass >= SideEffectClass.write
     }
 
-    private fun confirmationReason(sideEffectClass: SideEffectClass): String = when (sideEffectClass) {
-        SideEffectClass.write -> "This command may modify data"
-        SideEffectClass.destructive -> "This command may delete or permanently alter data"
-        SideEffectClass.network -> "This command requires network access"
-        SideEffectClass.control -> "This command may control external devices"
-        SideEffectClass.read -> "User policy requires confirmation"
+    private fun confirmationReason(
+        sideEffectClass: SideEffectClass,
+        enterprisePolicy: EnterprisePolicy? = null,
+    ): String {
+        if (enterprisePolicy?.requiresForceConfirm(sideEffectClass) == true) {
+            return "Enterprise policy requires confirmation for ${sideEffectClass.name}"
+        }
+        return when (sideEffectClass) {
+            SideEffectClass.write -> "This command may modify data"
+            SideEffectClass.destructive -> "This command may delete or permanently alter data"
+            SideEffectClass.network -> "This command requires network access"
+            SideEffectClass.control -> "This command may control external devices"
+            SideEffectClass.read -> "User policy requires confirmation"
+        }
     }
 }

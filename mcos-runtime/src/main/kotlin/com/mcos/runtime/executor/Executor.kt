@@ -13,6 +13,7 @@ import com.mcos.runtime.registry.ResolveResult
 import com.mcos.runtime.security.AuthStampSigner
 import com.mcos.runtime.security.CrashQuarantine
 import com.mcos.runtime.security.EgressDecision
+import com.mcos.runtime.security.EnterprisePolicySource
 import com.mcos.runtime.security.NetworkEgressPolicy
 import com.mcos.runtime.security.RateLimitResult
 import com.mcos.runtime.security.RateLimiter
@@ -67,6 +68,10 @@ import kotlin.coroutines.cancellation.CancellationException
  *        any domain-scope matching. Defaults to never-active.
  * @param debugMode When true, the egress policy allows non-HTTPS URLs
  *        (development only). Defaults to false.
+ * @param enterprisePolicySource Optional source of the active enterprise
+ *        policy. Consulted at Stage 6 (authorization) and Stage 6.5 (egress)
+ *        so a hot-reloaded policy takes effect on the next command. `null`
+ *        disables enterprise policy enforcement.
  */
 class Executor(
     private val registry: CommandRegistry,
@@ -79,6 +84,7 @@ class Executor(
     private val quarantine: CrashQuarantine? = null,
     private val globalKillSwitch: () -> Boolean = { false },
     private val debugMode: Boolean = false,
+    private val enterprisePolicySource: EnterprisePolicySource? = null,
 ) {
 
     private val schemaValidator = SchemaValidator()
@@ -228,7 +234,8 @@ class Executor(
                 }
                 auth
             } else {
-                when (val authz = permissionKernel.authorize(entry.descriptor)) {
+                val enterprise = enterprisePolicySource?.current()
+                when (val authz = permissionKernel.authorize(entry.descriptor, enterprise)) {
                     is AuthorizationResult.Authorized -> authz.stamp
                     is AuthorizationResult.Denied -> {
                         return CommandResult.Err(
@@ -267,7 +274,7 @@ class Executor(
             // objects/arrays are covered, not just the top-level "url" field.
             val urls = collectUrls(args)
             for (url in urls) {
-                when (val egress = policy.decideEgress(url, effectiveAuth, kill, debugMode)) {
+                when (val egress = policy.decideEgress(url, effectiveAuth, kill, debugMode, enterprisePolicySource?.current())) {
                     is EgressDecision.Deny -> {
                         return CommandResult.Err(
                             code = McosErrorCode.PERMISSION_DENIED.name,
