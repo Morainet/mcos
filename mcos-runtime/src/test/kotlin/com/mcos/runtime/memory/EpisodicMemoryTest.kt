@@ -23,7 +23,8 @@ class EpisodicMemoryTest {
         maxAgeMs: Long = EpisodicMemory.DEFAULT_MAX_AGE_MS,
         summarizeBatch: Int = EpisodicMemory.DEFAULT_SUMMARIZE_BATCH,
         summarizeKeep: Int = EpisodicMemory.DEFAULT_SUMMARIZE_KEEP,
-    ) = EpisodicMemory(maxRecords, maxAgeMs, summarizeBatch, summarizeKeep) { now }
+        entityMatcher: EntityMatcher = EntityMatcher(),
+    ) = EpisodicMemory(maxRecords, maxAgeMs, summarizeBatch, summarizeKeep, entityMatcher) { now }
 
     private val DAY = 24L * 60 * 60 * 1000
 
@@ -223,5 +224,74 @@ class EpisodicMemoryTest {
         }
         val hits = mem.search("compress photos", topK = 3)
         assertEquals(3, hits.size)
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // E15-E19: §8.3 fuzzy entity reference / named-entity merge
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `E15-natural-language entity name resolves to its memory path`() {
+        val mem = newMemory()
+        mem.record(
+            "run_abc", "Compressed 12 photos and emailed Tom",
+            commandIds = listOf("photo.search", "mail.send"),
+            entities = listOf("people.tom"),
+            timestamp = now,
+        )
+        // §8.3 example: "跟上次一样发照片给Tom" — the embedded entity name
+        // must recall the episode whose entity path is "people.tom".
+        val hits = mem.search("跟上次一样发照片给Tom")
+        assertTrue("entity reference must recall the episode", hits.isNotEmpty())
+        assertEquals("run_abc", hits[0].record.runId)
+    }
+
+    @Test
+    fun `E16-leaf-node match is case-insensitive`() {
+        val mem = newMemory()
+        mem.record(
+            "r_ent", "office task",
+            entities = listOf("places.office"),
+            timestamp = now,
+        )
+        val hits = mem.search("OFFICE")
+        assertTrue(hits.isNotEmpty())
+        assertEquals("r_ent", hits[0].record.runId)
+    }
+
+    @Test
+    fun `E17-full-path query still wins over leaf node`() {
+        val mem = newMemory()
+        mem.record("r_a", "task a", entities = listOf("people.tom"), timestamp = now)
+        mem.record("r_b", "task b", entities = listOf("people.tommy"), timestamp = now)
+        // "tom" is a leaf-node prefix of "tommy", but the full path
+        // "people.tom" must outrank the longer "people.tommy".
+        val hits = mem.search("people.tom")
+        assertEquals("r_a", hits[0].record.runId)
+    }
+
+    @Test
+    fun `E18-registered alias merges into the canonical entity`() {
+        val matcher = EntityMatcher()
+            .register("people.tom", "thomas", "Tom")
+        val mem = newMemory(entityMatcher = matcher)
+        mem.record(
+            "r_ent", "mailed the contract",
+            entities = listOf("people.tom"),
+            timestamp = now,
+        )
+        val hits = mem.search("发给 thomas")
+        assertTrue("alias must merge to canonical entity", hits.isNotEmpty())
+        assertEquals("r_ent", hits[0].record.runId)
+    }
+
+    @Test
+    fun `E19-weak bigram overlap is filtered by the recall threshold`() {
+        val matcher = EntityMatcher()
+        // "people.tom" vs "places.office" share only incidental bigrams
+        // (~0.19) — below the 0.75 §6.0 bar, so it must NOT recall.
+        assertEquals(0f, matcher.score("people.tom", "places.office"))
+        // an exact leaf match always clears the bar.
+        assertTrue(matcher.score("tom", "people.tom") > EntityMatcher.RECALL_THRESHOLD)
     }
 }

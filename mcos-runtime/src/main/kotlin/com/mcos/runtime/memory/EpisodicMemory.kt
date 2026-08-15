@@ -42,9 +42,11 @@ data class EpisodicHit(
  * ([summarizeBatch]) is compressed into [summarizeKeep] summary records.
  *
  * Retrieval uses [fuzzyScore] as the on-device stand-in for dense embeddings
- * (§6.0 Step 3) until an embedding provider lands. [EpisodicMemory] is a
- * runtime-internal component: episode creation happens on workflow completion
- * (Summarizer, §13) and recall is driven by the Planner (§8.3).
+ * (§6.0 Step 3) until an embedding provider lands, and [EntityMatcher] for
+ * §8.3 fuzzy entity references ("Tom" resolves to the "people.tom" path).
+ * [EpisodicMemory] is a runtime-internal component: episode creation happens
+ * on workflow completion (Summarizer, §13) and recall is driven by the
+ * Planner (§8.3).
  *
  * Not thread-confined: all mutations and reads are guarded by an internal
  * lock.
@@ -54,6 +56,7 @@ class EpisodicMemory(
     private val maxAgeMs: Long = DEFAULT_MAX_AGE_MS,
     private val summarizeBatch: Int = DEFAULT_SUMMARIZE_BATCH,
     private val summarizeKeep: Int = DEFAULT_SUMMARIZE_KEEP,
+    private val entityMatcher: EntityMatcher = EntityMatcher(),
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
 
@@ -84,9 +87,11 @@ class EpisodicMemory(
 
     /**
      * Retrieve episodes ranked by `similarity × decay_weight` (§8.1).
-     * Similarity is the best [fuzzyScore] across summary, command ids and
-     * entity paths; episodes with zero similarity are excluded. Results are
-     * capped at [topK].
+     * Similarity is the best of: [fuzzyScore] across summary and command ids,
+     * and [EntityMatcher.score] across entity paths — so a natural-language
+     * entity reference ("Tom") resolves to its memory path ("people.tom")
+     * (§8.3 fuzzy reference). Episodes with zero similarity are excluded.
+     * Results are capped at [topK].
      */
     fun search(query: String, topK: Int = 5): List<EpisodicHit> {
         if (query.isBlank()) return emptyList()
@@ -94,8 +99,10 @@ class EpisodicMemory(
         return synchronized(lock) {
             records
                 .map { rec ->
-                    val fields = listOf(rec.summary) + rec.commandIds + rec.entities
-                    val similarity = fields.maxOf { fuzzyScore(query, it) }
+                    val textFields = listOf(rec.summary) + rec.commandIds
+                    val textScore = textFields.maxOfOrNull { fuzzyScore(query, it) } ?: 0f
+                    val entityScore = rec.entities.maxOfOrNull { entityMatcher.score(query, it) } ?: 0f
+                    val similarity = maxOf(textScore, entityScore)
                     EpisodicHit(rec, similarity * decayWeight(now - rec.timestamp))
                 }
                 .filter { it.score > 0f }
