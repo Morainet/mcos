@@ -55,6 +55,7 @@ interface SyncBlobTransport {
  */
 class JdkSyncBlobTransport(
     private val baseUrl: String,
+    private val token: String? = null,
     private val connectTimeoutMs: Long = 5_000,
     private val requestTimeoutMs: Long = 15_000,
 ) : SyncBlobTransport {
@@ -101,6 +102,7 @@ class JdkSyncBlobTransport(
             .uri(URI.create("$baseUrl/blobs/$blobId"))
             .timeout(Duration.ofMillis(requestTimeoutMs))
             .header("X-Mcos-Blob-Method", method)
+            .apply { token?.let { header("Authorization", "Bearer $it") } }
 }
 
 /**

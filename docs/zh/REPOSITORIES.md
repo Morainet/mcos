@@ -118,6 +118,17 @@ flowchart BT
 | 技术栈 | Kotlin/JVM · JDK 17 |
 | 规范 | [04-plugin-sdk.md](./04-plugin-sdk.md) §17 |
 
+### `mcos-server` — 自托管同步端点
+
+| | |
+|---|---|
+| 路径 | `mcos-server/` |
+| 包名 | `com.mcos.server` |
+| 职责 | 独立自托管同步端点：`SyncBlobTransport` REST 契约（`PUT|GET|DELETE /blobs/{id}`）+ 强制 Bearer token 认证；磁盘持久化存储不透明（已加密）blob，绝不解析内容。 |
+| 依赖 | 无（JDK `com.sun.net.httpserver`）；测试复用 `:mcos-runtime` 做真实 transport 互操作验证 |
+| 技术栈 | Kotlin/JVM · JDK 17 · 零第三方运行时依赖 |
+| 规范 | [07-memory.md](./07-memory.md) §11.0 |
+
 ---
 
 ## 3. 计划模块（后续阶段）
@@ -126,7 +137,8 @@ flowchart BT
 |--------|------|--------------|
 | `mcos-plugin-iot` | `home.*`、`iot.*`（Home Assistant / Tuya / Matter） | P2 |
 | `mcos-plugin-mcp` | MCP 客户端适配器 → `mcp.*` 命令 | P2 spike / P3 production |
-| `mcos-server` | 同步、市场索引、远程策略 | P3 |
+
+`mcos-server` 已作为 `mcos-server/` 落地（见 §2），覆盖「同步」职责；市场索引与远程策略仍为 P3。
 
 ---
 

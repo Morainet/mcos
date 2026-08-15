@@ -118,6 +118,17 @@ Read bottom-up: `mcos-sdk` is the leaf contract layer; everything depends on it.
 | Stack | Kotlin/JVM · JDK 17 |
 | Spec | [04-plugin-sdk.md](./04-plugin-sdk.md) §17 |
 
+### `mcos-server` — Self-hosted sync endpoint
+
+| | |
+|---|---|
+| Path | `mcos-server/` |
+| Package | `com.mcos.server` |
+| Role | Standalone self-hosted sync endpoint: `SyncBlobTransport` REST contract (`PUT|GET|DELETE /blobs/{id}`) + mandatory Bearer-token auth; stores opaque (already-encrypted) blobs on disk and never parses them. |
+| Depends on | none (JDK `com.sun.net.httpserver`); tests use `:mcos-runtime` for real-transport interop |
+| Stack | Kotlin/JVM · JDK 17 · zero third-party runtime deps |
+| Spec | [07-memory.md](./07-memory.md) §11.0 |
+
 ---
 
 ## 3. Planned Modules (later phases)
@@ -126,7 +137,8 @@ Read bottom-up: `mcos-sdk` is the leaf contract layer; everything depends on it.
 |--------|------|--------------|
 | `mcos-plugin-iot` | `home.*`, `iot.*` (Home Assistant / Tuya / Matter) | P2 |
 | `mcos-plugin-mcp` | MCP client adapter → `mcp.*` commands | P2 spike / P3 production |
-| `mcos-server` | Sync, marketplace index, remote policy | P3 |
+
+`mcos-server` shipped as `mcos-server/` (see §2) covering the **sync** role; marketplace index and remote policy remain P3.
 
 ---
 

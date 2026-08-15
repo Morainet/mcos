@@ -10,6 +10,13 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### Standalone mcos-server deployment — REST contract + Bearer auth (2026-08-15)
+- **`mcos-server/` (07 §11.0)**: zero-dependency JVM service (JDK `com.sun.net.httpserver`) implementing the `SyncBlobTransport` REST contract — `PUT|GET|DELETE /blobs/{id}` (204/200/404/405/400/413) + unauthenticated `/healthz`. Blobs are **opaque**: stored as already-encrypted bytes and never parsed server-side (07 §11.0).
+- **Mandatory Bearer auth**: `Authorization: Bearer <token>`, constant-time comparison, 401 + `WWW-Authenticate: Bearer` challenge; token from `--token` or `MCOS_SERVER_TOKEN` env — the server refuses to start without one.
+- **Hardening**: blobId allowlist `[A-Za-z0-9_-]{1,128}` (encoded dot segments → 400), 16 MiB cap → 413, disk persistence with tmp/rename atomic writes (blobs survive restarts).
+- **Client**: `JdkSyncBlobTransport(baseUrl, token = ...)` injects the Bearer header; the `SyncBlobTransport` interface is unchanged (Android injected transports unaffected).
+- **Tests**: +13 — `BlobServerTest` S1–S13 drive a live server with the **real** device-side transport (authenticated round-trip, opaque bytes unchanged, idempotent delete, wrong/missing token 401, 404 non-retryable, 405/404, healthz, restart persistence, path-traversal hardening). Total 638.
+
 ### Episodic §8.3 named-entity merge / fuzzy reference (2026-08-15)
 - **`EntityMatcher` (07 §8.3)**: bridges natural-language entity references to memory paths — "Tom" / "跟上次一样发照片给Tom" now recall the episode whose entity is `people.tom`. Three recall signals, maxed: full-path fuzzy score (fallback), **leaf-node match** (`people.tom` → `tom`, case-insensitive), and **registered alias merge** (display label / nickname → canonical path, e.g. `register("people.tom", "thomas", "Tom")`).
 - **Mixed-language query tokenization**: queries split into Han runs + ASCII alphanumeric runs (`\p{IsHan}+|[a-zA-Z0-9]+`), so an embedded entity name inside a Chinese utterance resolves independently of the surrounding text.

@@ -15,6 +15,7 @@ The repository now contains a working multi-module Gradle project:
 | `mcos-sdk` | Plugin contracts (`McosPlugin`, `CommandHandler`, `HostServices`, `ExecutionContext`, `AuthStamp`) | ✅ |
 | `mcos-runtime` | DSL parser, command registry, 7-stage executor, permission kernel, rate limiter, egress policy, audit log, LLM planner/chat, workflow engine, event bus, memory | ✅ |
 | `mcos-android` | Compose CLI / Chat shell | ✅ |
+| `mcos-server` | Self-hosted sync endpoint: `SyncBlobTransport` REST contract + mandatory Bearer-token auth, opaque blob store | ✅ |
 
 Plugins are independently buildable in `plugins/`: `mcos-plugin-hello`, `mcos-plugin-system`, `mcos-plugin-camera`, `mcos-plugin-files` (each with tests).
 
@@ -61,7 +62,8 @@ plugins/
   mcos-plugin-iot       home.* / iot.*              (planned)
   mcos-plugin-mcp       mcp.* adapter               (planned)
 mcos-android      Compose CLI / Chat shell           ✅
-mcos-server       Sync · marketplace                (planned)
+mcos-server       Sync endpoint (REST + Bearer auth) ✅
+mcos-server       marketplace index         (planned, P3)
 ```
 
 For the full dependency graph and per-module target, see [`docs/en/REPOSITORIES.md`](./docs/en/REPOSITORIES.md).

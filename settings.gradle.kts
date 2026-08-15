@@ -19,6 +19,7 @@ rootProject.name = "mcos"
 include(":mcos-sdk")
 include(":mcos-runtime")
 include(":mcos-android")
+include(":mcos-server")
 include(":plugins:mcos-plugin-hello")
 include(":plugins:mcos-plugin-system")
 include(":plugins:mcos-plugin-camera")
