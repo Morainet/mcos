@@ -1,0 +1,11 @@
+{
+  "id": "golden-003-clarify-camera",
+  "utterance": "给我拍张照",
+  "expectedType": "clarify",
+  "mode": "constrained",
+  "llmReply": "{\"type\":\"clarify\",\"question\":\"用前置还是后置摄像头？\"}",
+  "expectedIr": { "commands": [] },
+  "registryFixture": ["camera.capture"],
+  "memoryFixture": {},
+  "notes": "Ambiguous camera selection (front vs rear) forces the planner to emit a Clarify: empty command list, no error, and an 'IR clarify:' thoughts marker."
+}

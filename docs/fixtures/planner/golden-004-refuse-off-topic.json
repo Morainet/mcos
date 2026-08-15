@@ -1,0 +1,11 @@
+{
+  "id": "golden-004-refuse-off-topic",
+  "utterance": "给我讲讲宇宙大爆炸",
+  "expectedType": "refuse",
+  "mode": "constrained",
+  "llmReply": "{\"type\":\"refuse\",\"reason\":\"该请求超出可用命令范围\"}",
+  "expectedIr": { "commands": [] },
+  "registryFixture": [],
+  "memoryFixture": {},
+  "notes": "Off-topic request with no matching commands compiles to a Refuse: empty command list, no error, and an 'IR refuse:' thoughts marker. The empty registry also exercises the no-tools system prompt."
+}

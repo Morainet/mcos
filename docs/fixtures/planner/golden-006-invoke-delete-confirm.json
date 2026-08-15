@@ -1,0 +1,11 @@
+{
+  "id": "golden-006-invoke-delete-confirm",
+  "utterance": "删除所有照片",
+  "expectedType": "invoke",
+  "mode": "constrained",
+  "llmReply": "{\"type\":\"invoke\",\"command\":\"photos.delete_all\",\"args\":{}}",
+  "expectedIr": { "commands": [ { "id": "photos.delete_all", "args": {} } ] },
+  "registryFixture": ["photos.delete_all"],
+  "memoryFixture": {},
+  "notes": "A destructive command still compiles to a plain invoke at the planner layer; the interactive confirmation is injected by the executor's permission kernel before execution (06-agent §14.1), not by the planner. The evaluation asserts the command id and that no args are required."
+}

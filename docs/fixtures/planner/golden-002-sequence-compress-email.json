@@ -1,0 +1,17 @@
+{
+  "id": "golden-002-sequence-compress-email",
+  "utterance": "把最近的照片压缩后发给小明",
+  "expectedType": "sequence",
+  "mode": "freeform",
+  "llmReply": "photos.search(album=\"recent\")\ncompress.images(quality=\"medium\")\nmail.send(to=\"xiaoming@example.com\", subject=\"照片\")",
+  "expectedIr": {
+    "commands": [
+      { "id": "photos.search", "args": { "album": "$ref:user-statement" } },
+      { "id": "compress.images", "args": { "quality": "medium" } },
+      { "id": "mail.send", "args": { "to": "$ref:memory:contacts.xiaoming", "subject": "照片" } }
+    ]
+  },
+  "registryFixture": ["photos.search", "compress.images", "mail.send"],
+  "memoryFixture": { "contacts.xiaoming": "xiaoming@example.com" },
+  "notes": "Multi-step plan via freeform DSL. mail.send.to is resolved from memory (contacts.xiaoming), which is injected into the system prompt; the evaluation asserts the arg key and non-empty value, not the exact recipient string."
+}
