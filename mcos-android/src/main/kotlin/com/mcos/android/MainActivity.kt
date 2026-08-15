@@ -127,6 +127,8 @@ fun MCOSApp(
     var showCommands by remember { mutableStateOf(false) }
     var previewText by remember { mutableStateOf<String?>(null) }
     var lastArtifacts by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
+    // Pending runtime confirmation (08-security.md §5) — drives the dialog below.
+    var pendingConfirmation by remember { mutableStateOf<RuntimeEvent.ConfirmationNeeded?>(null) }
 
     // ── LLM chat state ─────────────────────────────────────────────────
     var nlText by remember { mutableStateOf("") }
@@ -191,8 +193,12 @@ fun MCOSApp(
                 // 4. Collect events
                 runtime.observe(handle.runId).collect { event ->
                     events.add(event.toLogLine(now()))
-                    if (event is RuntimeEvent.ArtifactEmitted) {
-                        lastArtifacts = lastArtifacts + (event.type to event.uri)
+                    when (event) {
+                        is RuntimeEvent.ArtifactEmitted ->
+                            lastArtifacts = lastArtifacts + (event.type to event.uri)
+                        is RuntimeEvent.ConfirmationNeeded ->
+                            pendingConfirmation = event
+                        else -> { /* ignore */ }
                     }
                 }
 
@@ -635,6 +641,69 @@ fun MCOSApp(
                     }
                 }
             }
+        }
+
+        // ── Pending confirmation dialog (08-security.md §5) ─────────────
+        // The run is suspended on a ConfirmationNeeded event until the user
+        // approves or denies the command.
+        pendingConfirmation?.let { confirmation ->
+            AlertDialog(
+                onDismissRequest = {
+                    // Dismissing is treated as denying the action.
+                    scope.launch {
+                        runtime.respondConfirmation(
+                            confirmation.runId,
+                            confirmation.commandId,
+                            ConfirmationDecision.Reject,
+                        )
+                    }
+                    pendingConfirmation = null
+                },
+                title = { Text("Approve action?") },
+                text = {
+                    Column {
+                        Text(
+                            confirmation.commandId,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text(confirmation.reason, style = MaterialTheme.typography.bodyMedium)
+                        confirmation.sideEffectClass?.let { risk ->
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                "Risk level: $risk",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (risk == "destructive") Color(0xFFEF5350) else Color(0xFFFFCC80),
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        scope.launch {
+                            runtime.respondConfirmation(
+                                confirmation.runId,
+                                confirmation.commandId,
+                                ConfirmationDecision.Approve(),
+                            )
+                        }
+                        pendingConfirmation = null
+                    }) { Text("Allow") }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        scope.launch {
+                            runtime.respondConfirmation(
+                                confirmation.runId,
+                                confirmation.commandId,
+                                ConfirmationDecision.Reject,
+                            )
+                        }
+                        pendingConfirmation = null
+                    }) { Text("Deny") }
+                },
+            )
         }
     }
 }

@@ -24,8 +24,10 @@ import com.mcos.runtime.workflow.WorkflowOutcome
 import com.mcos.runtime.workflow.WorkflowResult
 import com.mcos.runtime.workflow.WorkflowStep
 import com.mcos.runtime.workflow.WorkflowStore
+import com.mcos.sdk.AuthStamp
 import com.mcos.sdk.CommandResult
 import com.mcos.sdk.MemoryFacade
+import com.mcos.sdk.SideEffectClass
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.json.JsonNull
@@ -84,8 +86,21 @@ class McosRuntime internal constructor(
     private val workflowStore: WorkflowStore,
     private val workflowEngine: WorkflowEngine,
     private val episodicMemory: EpisodicMemory,
+    private val authStampSigner: AuthStampSigner?,
+    private val confirmationTimeoutMs: Long,
 ) {
     private val summarizer = RunSummarizer(episodicMemory)
+    // ─── Confirmation flow (08-security.md §5) ──────────────────────────
+    //
+    // Commands whose side-effect class requires confirmation return
+    // CONFIRMATION_REQUIRED. The run suspends on a deferred until the host
+    // answers via respondConfirmation(); an approved command is retried with a
+    // signed AuthStamp so the permission kernel is bypassed for exactly that
+    // command/run.
+
+    private val pendingConfirmations = ConcurrentHashMap<String, CompletableDeferred<ConfirmationDecision>>()
+
+    private fun confirmationKey(runId: String, commandId: String) = "$runId\u0000$commandId"
     // ─── Active run tracking ─────────────────────────────────────────────
 
     private val activeRuns = ConcurrentHashMap<String, Job>()
@@ -279,6 +294,24 @@ class McosRuntime internal constructor(
     fun observe(runId: String): Flow<RuntimeEvent> = eventBus.observe(runId)
 
     /**
+     * Answer a pending confirmation request (08-security.md §5). The run that
+     * emitted [RuntimeEvent.ConfirmationNeeded] stays suspended until this is
+     * called or the confirmation timeout elapses.
+     *
+     * @return `true` if a pending request for the given run/command existed and
+     *         was answered; `false` if it was already answered or timed out.
+     */
+    suspend fun respondConfirmation(
+        runId: String,
+        commandId: String,
+        decision: ConfirmationDecision,
+    ): Boolean {
+        val deferred = pendingConfirmations[confirmationKey(runId, commandId)] ?: return false
+        deferred.complete(decision)
+        return true
+    }
+
+    /**
      * Access the command registry.
      */
     fun registry(): CommandRegistry = registry
@@ -386,16 +419,53 @@ class McosRuntime internal constructor(
                     }
                 }
                 is CommandResult.Err -> {
+                    if (result.code == "CONFIRMATION_REQUIRED") {
+                        val decision = requestConfirmation(runId, index, cmd, result)
+                        when (decision) {
+                            is ConfirmationDecision.Approve -> {
+                                // Retry exactly this command with a signed, run-scoped
+                                // AuthStamp so the permission kernel is bypassed for
+                                // the confirmed command only (08-security.md §5.2).
+                                when (val retry = executor.execute(cmd.id, cmd.args, auth = mintAuthStamp(runId, cmd))) {
+                                    is CommandResult.Ok -> {
+                                        val retryDuration = System.currentTimeMillis() - stepStart
+                                        eventBus.publish(
+                                            runId,
+                                            RuntimeEvent.StepSucceeded(runId, index, cmd.id, retryDuration)
+                                        )
+                                        retry.artifacts.forEach { artifact ->
+                                            eventBus.publish(
+                                                runId,
+                                                RuntimeEvent.ArtifactEmitted(
+                                                    runId, artifact.type, artifact.uri, artifact.mimeType
+                                                )
+                                            )
+                                        }
+                                        continue
+                                    }
+
+                                    is CommandResult.Err -> {
+                                        eventBus.publish(runId, RuntimeEvent.StepFailed(runId, index, cmd.id, retry.message))
+                                        summarize(runId, commands, payload, EpisodicOutcome.FAILED)
+                                        eventBus.publish(runId, RuntimeEvent.RunFailed(runId, retry.message))
+                                        return
+                                    }
+                                }
+                            }
+
+                            is ConfirmationDecision.Reject -> {
+                                val rejection = "Confirmation rejected for '${cmd.id}'"
+                                eventBus.publish(runId, RuntimeEvent.StepFailed(runId, index, cmd.id, rejection))
+                                summarize(runId, commands, payload, EpisodicOutcome.FAILED)
+                                eventBus.publish(runId, RuntimeEvent.RunFailed(runId, rejection))
+                                return
+                            }
+                        }
+                    }
                     eventBus.publish(
                         runId,
                         RuntimeEvent.StepFailed(runId, index, cmd.id, result.message)
                     )
-                    if (result.code == "CONFIRMATION_REQUIRED") {
-                        eventBus.publish(
-                            runId,
-                            RuntimeEvent.ConfirmationNeeded(runId, cmd.id, result.message)
-                        )
-                    }
                     summarize(runId, commands, payload, EpisodicOutcome.FAILED)
                     val totalDuration = System.currentTimeMillis() - startTime
                     eventBus.publish(runId, RuntimeEvent.RunFailed(runId, result.message))
@@ -407,6 +477,79 @@ class McosRuntime internal constructor(
         summarize(runId, commands, payload, EpisodicOutcome.SUCCESS)
         val totalDuration = System.currentTimeMillis() - startTime
         eventBus.publish(runId, RuntimeEvent.RunSucceeded(runId, totalDuration))
+    }
+
+    // ─── Confirmation helpers (08-security.md §5) ─────────────────────────
+
+    /**
+     * Publish the [RuntimeEvent.ConfirmationNeeded] notification and suspend
+     * the run until the host answers via [respondConfirmation] or the
+     * confirmation timeout elapses (timeout ⇒ reject).
+     */
+    private suspend fun requestConfirmation(
+        runId: String,
+        index: Int,
+        cmd: Command,
+        result: CommandResult.Err,
+    ): ConfirmationDecision {
+        val sideEffectClass = (result.details?.get("sideEffectClass") as? kotlinx.serialization.json.JsonPrimitive)?.content
+        eventBus.publish(
+            runId,
+            RuntimeEvent.ConfirmationNeeded(
+                runId = runId,
+                commandId = cmd.id,
+                reason = result.message,
+                sideEffectClass = sideEffectClass,
+            )
+        )
+        return awaitConfirmation(runId, cmd.id)
+    }
+
+    private suspend fun awaitConfirmation(runId: String, commandId: String): ConfirmationDecision {
+        val key = confirmationKey(runId, commandId)
+        val deferred = CompletableDeferred<ConfirmationDecision>()
+        pendingConfirmations[key] = deferred
+        try {
+            return withTimeoutOrNull(confirmationTimeoutMs) { deferred.await() }
+                ?: ConfirmationDecision.Reject
+        } finally {
+            pendingConfirmations.remove(key)
+        }
+    }
+
+    /**
+     * Mint a signed, run-scoped [AuthStamp] covering exactly the permissions
+     * required by `cmd`, so a confirmed command can be retried without going
+     * through the permission kernel again. Grants mirror what the kernel would
+     * have included on an ordinary Authorized path.
+     */
+    private fun mintAuthStamp(runId: String, cmd: Command): AuthStamp {
+        val descriptor = (registry.resolve(cmd.id) as? RegistryResolveResult.Found)?.entry?.descriptor
+        val now = System.currentTimeMillis()
+        val grants = buildSet {
+            descriptor?.permissions?.forEach { add(it.name) }
+            descriptor?.let { addAll(implicitScopes(it.sideEffectClass)) }
+        }
+        val stamp = AuthStamp(
+            runId = runId,
+            commandId = cmd.id,
+            pluginId = descriptor?.pluginId.orEmpty(),
+            grantsUsed = grants,
+            issuedAt = now,
+            expiresAt = now + AUTH_STAMP_TTL_MS,
+        )
+        return authStampSigner?.sign(stamp) ?: stamp
+    }
+
+    private fun implicitScopes(sideEffectClass: SideEffectClass): Set<String> = when (sideEffectClass) {
+        SideEffectClass.network -> setOf("network.*")
+        SideEffectClass.destructive -> setOf("mcos:destructive")
+        SideEffectClass.control -> setOf("mcos:control")
+        else -> emptySet()
+    }
+
+    private companion object {
+        const val AUTH_STAMP_TTL_MS = 30_000L
     }
 
     /**
@@ -558,6 +701,10 @@ class McosRuntime internal constructor(
         // Crash-loop quarantine (08-security.md §15.3) is on by default.
         private var quarantine: CrashQuarantine? = CrashQuarantine()
 
+        // How long a run stays suspended awaiting a confirmation response
+        // (08-security.md §6.3) before it is treated as rejected.
+        private var confirmationTimeoutMs: Long = 60_000
+
         fun withParser(parser: DslParser) = apply { this.parser = parser }
         fun withRegistry(registry: CommandRegistry) = apply { this.registry = registry }
         fun withPermissionKernel(kernel: PermissionKernel) = apply { this.permissionKernel = kernel }
@@ -569,6 +716,7 @@ class McosRuntime internal constructor(
         fun withWorkflowEngine(engine: WorkflowEngine) = apply { this.workflowEngine = engine }
         fun withAuthStampSigner(signer: AuthStampSigner?) = apply { this.authStampSigner = signer }
         fun withQuarantine(quarantine: CrashQuarantine?) = apply { this.quarantine = quarantine }
+        fun withConfirmationTimeoutMs(ms: Long) = apply { this.confirmationTimeoutMs = ms }
 
         fun build(): McosRuntime {
             val reg = registry ?: CommandRegistry()
@@ -596,6 +744,8 @@ class McosRuntime internal constructor(
                 workflowStore = workflowStore,
                 workflowEngine = wfEngine,
                 episodicMemory = episodicMemory,
+                authStampSigner = authStampSigner,
+                confirmationTimeoutMs = confirmationTimeoutMs,
             )
         }
     }
