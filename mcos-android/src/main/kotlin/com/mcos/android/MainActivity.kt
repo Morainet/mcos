@@ -41,8 +41,10 @@ import com.mcos.runtime.executor.Executor
 import com.mcos.runtime.llm.ChatOrchestrator
 import com.mcos.runtime.llm.LlmConfig
 import com.mcos.runtime.llm.LlmPlanner
+import com.mcos.runtime.llm.LlmProviderRegistry
 import com.mcos.runtime.llm.OpenAiLlmProvider
 import com.mcos.runtime.llm.PromptInjectionDetector
+import com.mcos.runtime.llm.ProviderHealth
 import com.mcos.runtime.permission.PermissionKernel
 import com.mcos.runtime.registry.CommandRegistry
 import com.mcos.runtime.security.AuthStampSigner
@@ -50,6 +52,7 @@ import com.mcos.runtime.security.NetworkEgressPolicy
 import com.mcos.runtime.security.RateLimiter
 import com.mcos.sdk.HostServices
 import com.mcos.sdk.McosPlugin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
@@ -141,6 +144,42 @@ fun MCOSApp(
     // ── LLM chat state ─────────────────────────────────────────────────
     var nlText by remember { mutableStateOf("") }
     var apiKey by remember { mutableStateOf("") }
+
+    // ── LLM provider health (06 §17 V1 probing) ────────────────────────
+    val llmRegistry = remember { LlmProviderRegistry() }
+    var providerHealth by remember { mutableStateOf<List<ProviderHealth>>(emptyList()) }
+    var probing by remember { mutableStateOf(false) }
+
+    /** (Re)register a provider for the current key and run a fresh probe. */
+    suspend fun refreshProbe() {
+        if (apiKey.isBlank()) {
+            providerHealth = emptyList()
+            return
+        }
+        probing = true
+        try {
+            llmRegistry.unregister("openai")
+            llmRegistry.register(
+                OpenAiLlmProvider(
+                    config = LlmConfig(apiKey = apiKey.trim()),
+                    transport = AndroidLlmHttpTransport(),
+                )
+            )
+            providerHealth = llmRegistry.probeAll()
+        } finally {
+            probing = false
+        }
+    }
+
+    // Debounce: probe once the user stops typing for 500ms.
+    LaunchedEffect(apiKey) {
+        if (apiKey.isBlank()) {
+            providerHealth = emptyList()
+            return@LaunchedEffect
+        }
+        delay(500)
+        refreshProbe()
+    }
 
     // Load the persisted API key once on startup.
     LaunchedEffect(Unit) {
@@ -420,6 +459,47 @@ fun MCOSApp(
                                 style = MaterialTheme.typography.labelSmall,
                                 color = if (apiKey.isBlank()) Color(0xFFEF5350) else MaterialTheme.colorScheme.secondary,
                             )
+                        }
+                        // Provider health row (06 §17 V1 probing)
+                        Row(
+                            Modifier.fillMaxWidth().padding(top = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            if (providerHealth.isEmpty()) {
+                                Text(
+                                    if (apiKey.isBlank()) "provider: idle \u2014 set an API key" else if (probing) "probing\u2026" else "provider: idle",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                                )
+                            } else {
+                                providerHealth.forEach { h ->
+                                    val color = if (h.healthy) MaterialTheme.colorScheme.secondary else Color(0xFFEF5350)
+                                    Text(
+                                        if (h.healthy) "\u25CF" else "\u25CB",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = color,
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(
+                                        "${h.providerId} (${h.tier}) " +
+                                            if (h.healthy) "ready" else (h.errorCode ?: "down"),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = color,
+                                    )
+                                    Spacer(Modifier.width(10.dp))
+                                }
+                            }
+                            Spacer(Modifier.weight(1f))
+                            TextButton(
+                                onClick = { scope.launch { refreshProbe() } },
+                                enabled = !probing && apiKey.isNotBlank(),
+                                contentPadding = PaddingValues(horizontal = 8.dp),
+                            ) {
+                                Text(
+                                    if (probing) "PROBING\u2026" else "PROBE",
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                            }
                         }
                         Spacer(Modifier.height(6.dp))
                         OutlinedTextField(
