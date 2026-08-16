@@ -3,6 +3,8 @@ package com.mcos.runtime.marketplace
 import com.mcos.runtime.registry.CommandRegistry
 import com.mcos.runtime.security.ArtifactSignature
 import com.mcos.runtime.security.ArtifactVerifier
+import com.mcos.runtime.security.Blocklist as SecurityBlocklist
+import com.mcos.runtime.security.EmptyBlocklist
 import com.mcos.runtime.security.PublisherKeyStore
 import com.mcos.runtime.security.VerifyResult
 import com.mcos.runtime.plugin.LoadResult
@@ -70,6 +72,19 @@ sealed class UninstallResult {
 }
 
 /**
+ * One package force-disabled by [PluginInstaller.applyBlocklist]
+ * ([09-marketplace.md §14.4]).
+ *
+ * The host uses this to notify the user and write the
+ * `plugin.force_disabled { packageId, version, reason }` audit record.
+ */
+data class ForceDisabled(
+    val packageId: String,
+    val version: String,
+    val reason: BlocklistReason,
+)
+
+/**
  * End-to-end plugin install / update / uninstall flow
  * ([09-marketplace.md §7]).
  *
@@ -100,8 +115,16 @@ class PluginInstaller(
     private val registry: CommandRegistry,
     private val downloadDir: String,
     private val onProgress: (InstallProgress) -> Unit = {},
+    initialBlocklist: SecurityBlocklist = EmptyBlocklist,
 ) {
     private val states = ConcurrentHashMap<String, InstallState>()
+
+    /** Version of the artifact currently installed (or force-disabled) per package. */
+    private val installedVersions = ConcurrentHashMap<String, String>()
+
+    /** Active blocklist used for the pre-download check (§14.0). */
+    @Volatile
+    private var blocklist: SecurityBlocklist = initialBlocklist
 
     /** Current state of a package; defaults to [InstallState.NOT_INSTALLED]. */
     fun stateOf(packageId: String): InstallState = states[packageId] ?: InstallState.NOT_INSTALLED
@@ -126,6 +149,12 @@ class PluginInstaller(
     ): InstallResult {
         val packageId = metadata.packageId
         val version = metadata.version
+
+        // Blocklist gate (§14.0): never fetch or stage a known-bad artifact.
+        if (blocklist.isBlocklisted(packageId, version)) {
+            setState(packageId, version, InstallState.FAILED, "package is blocklisted")
+            return InstallResult.Failed(packageId, "package is blocklisted", "blocklisted")
+        }
 
         // ── DOWNLOADING ────────────────────────────────────────────────────
         setState(packageId, version, InstallState.DOWNLOADING)
@@ -174,6 +203,7 @@ class PluginInstaller(
         }
         return when (val result = loader.load(packageId, version, bytes, signature, builtin = false, plugin = plugin)) {
             is LoadResult.Installed -> {
+                installedVersions[packageId] = version
                 setState(packageId, version, InstallState.INSTALLED)
                 InstallResult.Installed(
                     packageId = packageId,
@@ -258,8 +288,49 @@ class PluginInstaller(
             setState(packageId, null, InstallState.FAILED, e.message)
             return UninstallResult.Failed(packageId, e.message ?: "uninstall failed", "uninstall_failed")
         }
+        installedVersions.remove(packageId)
         setState(packageId, null, InstallState.NOT_INSTALLED)
         return UninstallResult.Done
+    }
+
+    /**
+     * Apply the marketplace blocklist ([09-marketplace.md §14.4]).
+     *
+     * Every installed plugin whose `(packageId, version)` matches an entry is
+     * force-disabled: its descriptors are drained from the registry and its
+     * [InstallState] transitions to [InstallState.DISABLED] (the artifact
+     * stays on disk — the user can uninstall or wait for a patched version).
+     *
+     * The returned [ForceDisabled] list is the host's cue to notify the user
+     * and write the `plugin.force_disabled { packageId, version, reason }`
+     * audit record. The active blocklist is also replaced, so subsequent
+     * installs of affected versions are rejected by [installPackage].
+     *
+     * A [BlocklistReason.SECURITY_VULNERABILITY] disable is auto-lifted by
+     * installing a version outside the entry's range (normal re-install).
+     */
+    suspend fun applyBlocklist(blocklistDoc: Blocklist): List<ForceDisabled> {
+        this.blocklist = blocklistDoc.asSecurityBlocklist()
+        val disabled = mutableListOf<ForceDisabled>()
+        for (entry in blocklistDoc.entries) {
+            val version = installedVersions[entry.packageId] ?: continue
+            when (stateOf(entry.packageId)) {
+                InstallState.INSTALLED, InstallState.UPDATE_AVAILABLE -> {
+                    if (!VersionRange(entry.versionRange).matches(version)) continue
+                    registry.unregister(entry.packageId)
+                    setState(entry.packageId, version, InstallState.DISABLED, "blocked: ${entry.reason}")
+                    disabled += ForceDisabled(entry.packageId, version, entry.reason)
+                }
+                // Already disabled / not installed / in-flight: leave alone.
+                else -> Unit
+            }
+        }
+        return disabled
+    }
+
+    /** Replace the active blocklist used by [installPackage]'s pre-download gate. */
+    fun updateBlocklist(blocklist: SecurityBlocklist) {
+        this.blocklist = blocklist
     }
 
     // ─── External transitions (§7.0) ─────────────────────────────────────
@@ -276,11 +347,12 @@ class PluginInstaller(
 
     /** User re-enables a disabled plugin (with warning). */
     fun markEnabled(packageId: String) {
-        setState(packageId, null, InstallState.INSTALLED)
+        setState(packageId, installedVersions[packageId], InstallState.INSTALLED)
     }
 
     /** Cleanup after a failure: back to NOT_INSTALLED. */
     fun resetFailed(packageId: String) {
+        installedVersions.remove(packageId)
         setState(packageId, null, InstallState.NOT_INSTALLED)
     }
 

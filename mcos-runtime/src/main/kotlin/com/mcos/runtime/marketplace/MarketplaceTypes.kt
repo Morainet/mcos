@@ -1,5 +1,6 @@
 package com.mcos.runtime.marketplace
 
+import com.mcos.runtime.security.Blocklist as SecurityBlocklist
 import kotlinx.serialization.Serializable
 
 /**
@@ -134,4 +135,19 @@ data class Blocklist(
     val version: String,
     val issuedAt: String,
     val signature: String? = null,
-)
+) {
+    /** Does any entry cover the given (packageId, version)? */
+    fun isBlocklisted(packageId: String, version: String): Boolean =
+        entries.any { entry ->
+            entry.packageId == packageId && VersionRange(entry.versionRange).matches(version)
+        }
+}
+
+/**
+ * Bridge to the security-layer predicate used by
+ * [com.mcos.runtime.security.ArtifactVerifier] / [com.mcos.runtime.security.PluginTrustGate].
+ */
+fun Blocklist.asSecurityBlocklist(): SecurityBlocklist =
+    SecurityBlocklist { packageId, version ->
+        packageId != null && version != null && isBlocklisted(packageId, version)
+    }
