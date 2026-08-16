@@ -16,11 +16,11 @@ permissions:
   contents: read
 
 jobs:
-  # ── Fast safety net: the 598 JVM tests + golden fixture gate ─────────────
-  # Pure Kotlin/JVM modules (sdk, runtime, 4 plugins). No Android SDK needed,
-  # so this is the quick-feedback gate that blocks regressions on every push.
-  jvm-tests:
-    name: JVM tests + fixture gate
+  # ── Fast safety net: golden fixture gate ────────────────────────────────
+  # Runs the DSL ↔ IR golden round-trip tests on their own so a regression
+  # fails fast (~2 min) without waiting for the full JVM test suite.
+  golden-gate:
+    name: Golden fixture gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,7 +29,7 @@ jobs:
         run: chmod +x gradlew
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
@@ -43,22 +43,82 @@ jobs:
           "com.mcos.runtime.parse.DslParserTest"
           --console=plain --no-daemon
 
-      - name: Run all JVM module tests
-        run: >-
-          ./gradlew
-          :mcos-sdk:test
-          :mcos-runtime:test
-          :plugins:mcos-plugin-hello:test
-          :plugins:mcos-plugin-system:test
-          :plugins:mcos-plugin-camera:test
-          :plugins:mcos-plugin-files:test
-          --console=plain --no-daemon
+  # ── JVM tests, sharded to run in parallel ───────────────────────────────
+  # Pure Kotlin/JVM modules (sdk, runtime, 4 plugins). Each shard is an
+  # independent job so the wall-clock time drops from ~40 min (serial) to the
+  # slowest shard (~8-12 min). fail-fast=false keeps every shard's report.
+  jvm-tests:
+    name: JVM tests (${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: sdk
+            tasks: ":mcos-sdk:test"
+
+          - shard: runtime-parse-marketplace-plugin
+            tasks: >-
+              :mcos-runtime:test
+              --tests "com.mcos.runtime.parse.*"
+              --tests "com.mcos.runtime.marketplace.*"
+              --tests "com.mcos.runtime.plugin.*"
+
+          - shard: runtime-security
+            tasks: >-
+              :mcos-runtime:test
+              --tests "com.mcos.runtime.security.*"
+              --tests "com.mcos.runtime.audit.*"
+              --tests "com.mcos.runtime.validate.*"
+
+          - shard: runtime-core
+            tasks: >-
+              :mcos-runtime:test
+              --tests "com.mcos.runtime.executor.*"
+              --tests "com.mcos.runtime.registry.*"
+
+          - shard: runtime-platform
+            tasks: >-
+              :mcos-runtime:test
+              --tests "com.mcos.runtime.llm.*"
+              --tests "com.mcos.runtime.memory.*"
+              --tests "com.mcos.runtime.permission.*"
+              --tests "com.mcos.runtime.events.*"
+              --tests "com.mcos.runtime.api.*"
+
+          - shard: runtime-workflow
+            tasks: ":mcos-runtime:test --tests \"com.mcos.runtime.workflow.*\""
+
+          - shard: plugins
+            tasks: >-
+              :plugins:mcos-plugin-hello:test
+              :plugins:mcos-plugin-system:test
+              :plugins:mcos-plugin-camera:test
+              :plugins:mcos-plugin-files:test
+              --parallel
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Run tests (${{ matrix.shard }})
+        run: ./gradlew ${{ matrix.tasks }} --console=plain --no-daemon
 
       - name: Upload test reports
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
-          name: jvm-test-reports
+          name: jvm-test-reports-${{ matrix.shard }}
           path: "**/build/reports/tests/test/**"
           if-no-files-found: ignore
           retention-days: 7
@@ -76,7 +136,7 @@ jobs:
         run: chmod +x gradlew
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
