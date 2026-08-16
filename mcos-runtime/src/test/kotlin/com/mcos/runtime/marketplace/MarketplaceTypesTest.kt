@@ -97,7 +97,7 @@ class MarketplaceTypesTest {
               "summary": "Small",
               "artifact": {
                 "url": "https://cdn.example.com/mini-0.1.0.mcos",
-                "sha256": "cd".repeat(32),
+                "sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
                 "signature": "sig",
                 "signingKeyId": "key_2026_01"
               },
@@ -191,7 +191,8 @@ class MarketplaceTypesTest {
 
     @Test
     fun `V10-blocklist reason deserializes from wire names`() {
-        val raw = """{"reason":"LEGAL_TAKEDOWN"}"""
+        // Enums serialize as their wire name (a plain JSON string).
+        val raw = "\"LEGAL_TAKEDOWN\""
 
         val decoded = json.decodeFromString<BlocklistReason>(raw)
 

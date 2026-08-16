@@ -123,7 +123,7 @@ class PluginLoaderTest {
         val result = loader.load("com.example.plugin", "1.0.0", fakePayload, null, builtin = false, createPlugin("com.example.plugin", "1.0.0"))
 
         assertIs<LoadResult.Denied>(result)
-        assertEquals("sideload_disabled_by_policy", result.code)
+        assertEquals("sideload_production_denied", result.code)
     }
 
     // ═══════════════════════════════════════════════════════════════

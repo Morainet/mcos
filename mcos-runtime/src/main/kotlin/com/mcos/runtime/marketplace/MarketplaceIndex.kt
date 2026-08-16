@@ -43,7 +43,7 @@ class MarketplaceIndex(
     private data class CacheEntry<T>(val value: T, val fetchedAtMs: Long)
 
     private val searchCache = ConcurrentHashMap<String, CacheEntry<SearchResponse>>()
-    private val packageCache = ConcurrentHashMap<String, CacheEntry<PackageMetadata>>()
+    private val packageCache = ConcurrentHashMap<String, CacheEntry<PackageMetadata?>>()
     private val blocklistCache = ConcurrentHashMap<String, CacheEntry<Blocklist>>()
     private val revokedKeysCache = ConcurrentHashMap<String, CacheEntry<List<PublisherKey>>>()
 
@@ -82,7 +82,7 @@ class MarketplaceIndex(
         }
     }
 
-    private fun <T> cached(
+    private suspend fun <T> cached(
         cache: ConcurrentHashMap<String, CacheEntry<T>>,
         key: String,
         ttlMs: Long,
@@ -132,7 +132,7 @@ class MarketplaceIndex(
      */
     suspend fun getPackage(packageId: String): PackageMetadata? {
         val key = packageId
-        return cached(packageCache, key, searchCacheTtlMs, staleOk = false) {
+        return cached<PackageMetadata?>(packageCache, key, searchCacheTtlMs, staleOk = false) {
             try {
                 getTyped("/v1/plugins/${encode(packageId)}") { body ->
                     json.decodeFromString<PackageMetadata>(body)
