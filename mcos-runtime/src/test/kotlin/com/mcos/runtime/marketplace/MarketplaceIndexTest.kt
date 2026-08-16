@@ -4,6 +4,9 @@ import com.mcos.runtime.security.PublisherKey
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.security.KeyPair
 import java.security.KeyPairGenerator
 import java.security.PrivateKey
@@ -68,6 +71,17 @@ class MarketplaceIndexTest {
         updatedAt = "2026-01-01T00:00:00Z",
     )
 
+    private fun sampleRecipe(recipeId: String) = RecipeEnvelope(
+        recipeId = recipeId,
+        name = recipeId,
+        summary = "Example recipe",
+        version = "1.0.0",
+        workflow = Json.parseToJsonElement("""{"nodes":[{"id":"n1","type":"command_call"}]}""").jsonObject,
+        placeholders = listOf(RecipePlaceholder(key = "target", label = "Target", required = true)),
+        requiredPlugins = listOf("com.example.photo@^1.0.0"),
+        triggerPreview = RecipeTriggerPreview(type = "voice_command", inputs = listOf("compress my photos")),
+    )
+
     private open inner class FakeTransport : MarketplaceHttpTransport {
         val requestLog = mutableListOf<String>()
         var searchBody: String = """{"results":[],"total":0,"page":1,"pageSize":20,"cacheTtlSeconds":86400}"""
@@ -75,6 +89,9 @@ class MarketplaceIndexTest {
         var packageStatusCode: Int = 200
         var byCommandBody: String = "[]"
         var byCommandStatusCode: Int = 200
+        var recipesBody: String = """{"results":[],"total":0,"page":1,"pageSize":20,"cacheTtlSeconds":86400}"""
+        var recipeBody: String = ""
+        var recipeStatusCode: Int = 200
         var blocklistBody: String = signedBlocklistBody(
             Blocklist(emptyList(), "v1", "2026-01-01T00:00:00Z", null),
         )
@@ -94,6 +111,8 @@ class MarketplaceIndexTest {
                 url.contains("/v1/plugins?") -> MarketplaceHttpResponse(200, searchBody)
                 url.contains("/v1/plugins/by-command/") -> MarketplaceHttpResponse(byCommandStatusCode, byCommandBody)
                 url.contains("/v1/plugins/") -> MarketplaceHttpResponse(packageStatusCode, packageBody)
+                url.contains("/v1/recipes?") -> MarketplaceHttpResponse(200, recipesBody)
+                url.contains("/v1/recipes/") -> MarketplaceHttpResponse(recipeStatusCode, recipeBody)
                 url.contains("/v1/blocklist") -> {
                     blocklistRequestCount++
                     if (blocklistRequestCount > failAfterRequests) {
@@ -475,6 +494,92 @@ class MarketplaceIndexTest {
             val result = index.byCommand("no.such.command")
 
             assertEquals(emptyList(), result)
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // T19-T22: Recipe store endpoints (§8.2, §11.1)
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `T19-searchRecipes forwards params and caches within TTL`() {
+        var now = 1_000_000L
+        val recipe = sampleRecipe("com.example.photo.compress")
+        val transport = FakeTransport().apply {
+            recipesBody = json.encodeToString(
+                RecipeSearchResponse.serializer(),
+                RecipeSearchResponse(listOf(recipe), 1, 1, 20),
+            )
+        }
+        val index = MarketplaceIndex("https://market.example", transport, json, blocklistVerifier = blocklistVerifier, clock = { now }, searchCacheTtlMs = 86_400_000)
+
+        runBlocking {
+            val first = index.searchRecipes(query = "compress", category = "photo", page = 2, pageSize = 10)
+            val second = index.searchRecipes(query = "compress", category = "photo", page = 2, pageSize = 10)
+
+            assertEquals(1, first.total)
+            assertEquals(listOf("com.example.photo.compress"), first.results.map { it.recipeId })
+            assertEquals(first, second)
+            assertEquals(1, transport.requestLog.count { it.contains("/v1/recipes?") })
+            val url = transport.requestLog.single()
+            assertTrue(url.contains("query=compress"))
+            assertTrue(url.contains("category=photo"))
+            assertTrue(url.contains("page=2"))
+            assertTrue(url.contains("pageSize=10"))
+        }
+    }
+
+    @Test
+    fun `T20-searchRecipes caches queries independently`() {
+        val transport = FakeTransport().apply {
+            recipesBody = json.encodeToString(RecipeSearchResponse.serializer(), RecipeSearchResponse(emptyList(), 0, 1, 20))
+        }
+        val index = MarketplaceIndex("https://market.example", transport, json, blocklistVerifier = blocklistVerifier)
+
+        runBlocking {
+            index.searchRecipes(query = "photo")
+            index.searchRecipes(query = "files")
+            index.searchRecipes(query = "photo") // cache hit
+
+            assertEquals(2, transport.requestLog.count { it.contains("/v1/recipes?") })
+        }
+    }
+
+    @Test
+    fun `T21-getRecipe decodes full envelope and caches`() {
+        var now = 1_000_000L
+        val recipe = sampleRecipe("com.example.photo.compress")
+        val transport = FakeTransport().apply {
+            recipeBody = json.encodeToString(RecipeEnvelope.serializer(), recipe)
+        }
+        val index = MarketplaceIndex("https://market.example", transport, json, blocklistVerifier = blocklistVerifier, clock = { now }, searchCacheTtlMs = 86_400_000)
+
+        runBlocking {
+            val first = index.getRecipe("com.example.photo.compress")
+            val second = index.getRecipe("com.example.photo.compress")
+
+            assertNotNull(first)
+            assertEquals("Example recipe", first.summary)
+            assertEquals(listOf("com.example.photo@^1.0.0"), first.requiredPlugins)
+            assertEquals("target", first.placeholders.single().key)
+            assertTrue(first.placeholders.single().required)
+            assertEquals("voice_command", first.triggerPreview?.type)
+            assertEquals(listOf("compress my photos"), first.triggerPreview?.inputs)
+            assertEquals("n1", first.workflow["nodes"]?.jsonArray?.first()?.jsonObject?.get("id")?.jsonPrimitive?.content)
+            assertEquals(first, second)
+            assertEquals(1, transport.requestLog.count { it.contains("/v1/recipes/com.example.photo.compress") })
+        }
+    }
+
+    @Test
+    fun `T22-getRecipe 404 yields null`() {
+        val transport = FakeTransport().apply { recipeStatusCode = 404 }
+        val index = MarketplaceIndex("https://market.example", transport, json, blocklistVerifier = blocklistVerifier)
+
+        runBlocking {
+            val recipe = index.getRecipe("no.such.recipe")
+
+            assertNull(recipe)
         }
     }
 
