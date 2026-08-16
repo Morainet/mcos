@@ -82,6 +82,16 @@ data class SearchResponse(
 )
 
 /**
+ * Search ordering ([09-marketplace.md §11.1]).
+ */
+enum class SearchSort {
+    relevance,
+    safety,
+    popularity,
+    newest,
+}
+
+/**
  * Reason a package was blocked ([09-marketplace.md §14.0]).
  */
 @Serializable

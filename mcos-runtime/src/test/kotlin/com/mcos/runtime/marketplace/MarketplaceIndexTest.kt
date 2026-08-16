@@ -73,6 +73,8 @@ class MarketplaceIndexTest {
         var searchBody: String = """{"results":[],"total":0,"page":1,"pageSize":20,"cacheTtlSeconds":86400}"""
         var packageBody: String = ""
         var packageStatusCode: Int = 200
+        var byCommandBody: String = "[]"
+        var byCommandStatusCode: Int = 200
         var blocklistBody: String = signedBlocklistBody(
             Blocklist(emptyList(), "v1", "2026-01-01T00:00:00Z", null),
         )
@@ -90,6 +92,7 @@ class MarketplaceIndexTest {
             transportException?.let { throw it }
             return when {
                 url.contains("/v1/plugins?") -> MarketplaceHttpResponse(200, searchBody)
+                url.contains("/v1/plugins/by-command/") -> MarketplaceHttpResponse(byCommandStatusCode, byCommandBody)
                 url.contains("/v1/plugins/") -> MarketplaceHttpResponse(packageStatusCode, packageBody)
                 url.contains("/v1/blocklist") -> {
                     blocklistRequestCount++
@@ -403,6 +406,75 @@ class MarketplaceIndexTest {
             val error = assertFailsWith<MarketplaceIndexException> { index.fetchBlocklist() }
             assertEquals("BLOCKLIST_SIGNATURE_INVALID", error.code)
             assertEquals(false, error.retryable)
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // T15-T18: Search parameters & by-command endpoint (§11.1)
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `T15-search forwards sort and minRuntimeVersion params`() {
+        val transport = FakeTransport().apply {
+            searchBody = json.encodeToString(SearchResponse.serializer(), SearchResponse(emptyList(), 0, 1, 20))
+        }
+        val index = MarketplaceIndex("https://market.example", transport, json, blocklistVerifier = blocklistVerifier)
+
+        runBlocking {
+            index.search(query = "photo", sort = SearchSort.safety, minRuntimeVersion = "0.9.0")
+
+            val url = transport.requestLog.single()
+            assertTrue(url.contains("query=photo"))
+            assertTrue(url.contains("sort=safety"))
+            assertTrue(url.contains("minRuntimeVersion=0.9.0"))
+            assertTrue(url.contains("page=1"))
+            assertTrue(url.contains("pageSize=20"))
+        }
+    }
+
+    @Test
+    fun `T16-different sorts are cached separately`() {
+        val transport = FakeTransport().apply {
+            searchBody = json.encodeToString(SearchResponse.serializer(), SearchResponse(emptyList(), 0, 1, 20))
+        }
+        val index = MarketplaceIndex("https://market.example", transport, json, blocklistVerifier = blocklistVerifier)
+
+        runBlocking {
+            index.search(query = "photo", sort = SearchSort.safety)
+            index.search(query = "photo", sort = SearchSort.popularity)
+            index.search(query = "photo", sort = SearchSort.safety) // cache hit
+
+            assertEquals(2, transport.requestLog.count { it.contains("/v1/plugins?") })
+        }
+    }
+
+    @Test
+    fun `T17-byCommand returns providers and caches within TTL`() {
+        var now = 1_000_000L
+        val transport = FakeTransport().apply {
+            byCommandBody = json.encodeToString(listOf(samplePackage("com.example.photo")))
+        }
+        val index = MarketplaceIndex("https://market.example", transport, json, blocklistVerifier = blocklistVerifier, clock = { now }, searchCacheTtlMs = 86_400_000)
+
+        runBlocking {
+            val first = index.byCommand("photo.compress")
+            val second = index.byCommand("photo.compress")
+
+            assertEquals(listOf("com.example.photo"), first.map { it.packageId })
+            assertEquals(first, second)
+            assertEquals(1, transport.requestLog.count { it.contains("/v1/plugins/by-command/") })
+        }
+    }
+
+    @Test
+    fun `T18-byCommand 404 yields empty list`() {
+        val transport = FakeTransport().apply { byCommandStatusCode = 404 }
+        val index = MarketplaceIndex("https://market.example", transport, json, blocklistVerifier = blocklistVerifier)
+
+        runBlocking {
+            val result = index.byCommand("no.such.command")
+
+            assertEquals(emptyList(), result)
         }
     }
 
