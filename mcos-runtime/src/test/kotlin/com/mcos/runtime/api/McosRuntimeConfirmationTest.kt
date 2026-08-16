@@ -50,7 +50,7 @@ class McosRuntimeConfirmationTest {
         val handle = runtime.execute(
             ExecuteRequest(Source.CHAT, Payload.DslText("test.write(x=\"1\")"))
         )
-        val events = observe(this, handle.runId)
+        val events = observe(this, runtime, handle.runId)
 
         val needed = awaitEvent(events) { it is RuntimeEvent.ConfirmationNeeded }
         assertNotNull(needed, "should emit ConfirmationNeeded for a write command")
@@ -65,6 +65,10 @@ class McosRuntimeConfirmationTest {
 
         assertTrue(awaitEvent(events) { it is RuntimeEvent.RunSucceeded } != null, "run should succeed after approval")
         assertTrue(events.any { it is RuntimeEvent.StepSucceeded }, "should emit StepSucceeded")
+
+        // Cancel the observer inside the runBlocking body so it can return;
+        // observe() emits a SharedFlow-backed stream that never completes.
+        stopObserving()
     }
 
     @Test
@@ -74,7 +78,7 @@ class McosRuntimeConfirmationTest {
         val handle = runtime.execute(
             ExecuteRequest(Source.CHAT, Payload.DslText("test.write(x=\"1\")"))
         )
-        val events = observe(this, handle.runId)
+        val events = observe(this, runtime, handle.runId)
 
         assertNotNull(awaitEvent(events) { it is RuntimeEvent.ConfirmationNeeded })
         runtime.respondConfirmation(handle.runId, "test.write", ConfirmationDecision.Reject)
@@ -83,6 +87,8 @@ class McosRuntimeConfirmationTest {
         assertNotNull(failed, "run should fail after rejection")
         assertTrue((failed as RuntimeEvent.RunFailed).error.contains("rejected", ignoreCase = true))
         assertTrue(events.any { it is RuntimeEvent.StepFailed }, "should emit StepFailed")
+
+        stopObserving()
     }
 
     @Test
@@ -98,12 +104,14 @@ class McosRuntimeConfirmationTest {
         val handle = shortRuntime.execute(
             ExecuteRequest(Source.CHAT, Payload.DslText("test.write(x=\"1\")"))
         )
-        val events = observe(this, handle.runId)
+        val events = observe(this, shortRuntime, handle.runId)
 
         assertNotNull(awaitEvent(events) { it is RuntimeEvent.ConfirmationNeeded })
         // Do not answer — let the confirmation timeout elapse.
         val failed = awaitEvent(events) { it is RuntimeEvent.RunFailed }
         assertTrue(failed != null, "timeout should reject the run")
+
+        stopObserving()
     }
 
     @Test
@@ -123,7 +131,7 @@ class McosRuntimeConfirmationTest {
                 )
             )
         )
-        val events = observe(this, handle.runId)
+        val events = observe(this, runtime, handle.runId)
 
         assertNotNull(awaitEvent(events) { it is RuntimeEvent.ConfirmationNeeded })
         runtime.respondConfirmation(handle.runId, "test.write", ConfirmationDecision.Approve())
@@ -131,6 +139,8 @@ class McosRuntimeConfirmationTest {
         assertNotNull(awaitEvent(events) { it is RuntimeEvent.RunSucceeded }, "run should succeed")
         val stepsSucceeded = events.filterIsInstance<RuntimeEvent.StepSucceeded>()
         assertEquals(3, stepsSucceeded.size, "all three steps should run")
+
+        stopObserving()
     }
 
     @Test
@@ -139,16 +149,29 @@ class McosRuntimeConfirmationTest {
         val handle = runtime.execute(
             ExecuteRequest(Source.CHAT, Payload.DslText("test.read(a=\"1\")"))
         )
-        val events = observe(this, handle.runId)
+        val events = observe(this, runtime, handle.runId)
         assertNotNull(awaitEvent(events) { it is RuntimeEvent.RunSucceeded })
 
         val responded = runtime.respondConfirmation(handle.runId, "test.read", ConfirmationDecision.Approve())
         assertFalse(responded, "no pending confirmation should exist for a read command")
+
+        stopObserving()
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────
 
-    private fun observe(scope: CoroutineScope, runId: String): MutableList<RuntimeEvent> {
+    /**
+     * Cancel the observer inside the runBlocking body so it can return.
+     * observe() emits a SharedFlow-backed stream that never completes, so the
+     * collect job must be cancelled explicitly (in @AfterTest is too late —
+     * runBlocking never returns, so the teardown never runs).
+     */
+    private suspend fun stopObserving() {
+        observeJob?.cancel()
+        observeJob?.join()
+    }
+
+    private fun observe(scope: CoroutineScope, runtime: McosRuntime, runId: String): MutableList<RuntimeEvent> {
         val events = mutableListOf<RuntimeEvent>()
         observeJob?.cancel()
         observeJob = scope.launch { runtime.observe(runId).collect { events.add(it) } }

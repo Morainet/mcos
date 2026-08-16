@@ -19,9 +19,12 @@ jobs:
   # ── Fast safety net: golden fixture gate ────────────────────────────────
   # Runs the DSL ↔ IR golden round-trip tests on their own so a regression
   # fails fast (~2 min) without waiting for the full JVM test suite.
+  # timeout-minutes + coreutils timeout: if a test hangs the job fails fast
+  # instead of silently running until GitHub's 6h default limit.
   golden-gate:
     name: Golden fixture gate
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -39,7 +42,7 @@ jobs:
 
       - name: Golden fixture gate (DSL ↔ IR round-trip)
         run: >-
-          ./gradlew :mcos-runtime:test --tests
+          timeout -k 60s 8m ./gradlew :mcos-runtime:test --tests
           "com.mcos.runtime.parse.DslParserTest"
           --console=plain --no-daemon
 
@@ -47,9 +50,14 @@ jobs:
   # Pure Kotlin/JVM modules (sdk, runtime, 4 plugins). Each shard is an
   # independent job so the wall-clock time drops from ~40 min (serial) to the
   # slowest shard (~8-12 min). fail-fast=false keeps every shard's report.
+  # runtime-platform was split into llm + core: the five-package combo hung
+  # for hours (SharedFlow observer never cancelled in McosRuntimeConfirmationTest),
+  # and a hang in one shard must not mask the other packages' results.
+  # timeout-minutes + `timeout -k 60s 25m` turn any hang into a hard failure.
   jvm-tests:
     name: JVM tests (${{ matrix.shard }})
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -77,10 +85,12 @@ jobs:
               --tests "com.mcos.runtime.executor.*"
               --tests "com.mcos.runtime.registry.*"
 
-          - shard: runtime-platform
+          - shard: runtime-platform-llm
+            tasks: ":mcos-runtime:test --tests \"com.mcos.runtime.llm.*\""
+
+          - shard: runtime-platform-core
             tasks: >-
               :mcos-runtime:test
-              --tests "com.mcos.runtime.llm.*"
               --tests "com.mcos.runtime.memory.*"
               --tests "com.mcos.runtime.permission.*"
               --tests "com.mcos.runtime.events.*"
@@ -112,7 +122,7 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Run tests (${{ matrix.shard }})
-        run: ./gradlew ${{ matrix.tasks }} --console=plain --no-daemon
+        run: timeout -k 60s 25m ./gradlew ${{ matrix.tasks }} --console=plain --no-daemon
 
       - name: Upload test reports
         if: ${{ !cancelled() }}
@@ -129,6 +139,7 @@ jobs:
   android-build:
     name: Android build (assembleDebug)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -148,7 +159,7 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Assemble debug APK
-        run: ./gradlew :mcos-android:assembleDebug --console=plain --no-daemon
+        run: timeout -k 60s 25m ./gradlew :mcos-android:assembleDebug --console=plain --no-daemon
 
       - name: Upload debug APK
         if: ${{ !cancelled() }}
