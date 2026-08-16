@@ -4,6 +4,7 @@ import com.mcos.runtime.security.PublisherKey
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -87,6 +88,35 @@ class MarketplaceIndex(
         } catch (e: Exception) {
             throw MarketplaceIndexException(200, "BAD_RESPONSE", "Marketplace response could not be parsed", false)
         }
+    }
+
+    /**
+     * POST a JSON body and return the raw response body. Error mapping mirrors
+     * [getTyped] (429 → `RATE_LIMITED`, 5xx retryable, transport → typed codes).
+     */
+    private suspend fun post(path: String, body: String): String {
+        val response = try {
+            transport.postJson(base(path), body, CONNECT_TIMEOUT_MS, REQUEST_TIMEOUT_MS)
+        } catch (e: MarketplaceTransportException) {
+            throw MarketplaceIndexException(0, e.code, e.message, e.retryable)
+        } catch (e: java.net.ConnectException) {
+            throw MarketplaceIndexException(0, "MARKETPLACE_UNREACHABLE", "Cannot reach marketplace: ${e.message}", true)
+        } catch (e: java.io.IOException) {
+            throw MarketplaceIndexException(0, "MARKETPLACE_IO", "Marketplace I/O error: ${e.message}", true)
+        }
+
+        if (response.statusCode == 429) {
+            throw MarketplaceIndexException(429, "RATE_LIMITED", "Marketplace rate limit exceeded", true)
+        }
+        if (response.statusCode !in 200..299) {
+            throw MarketplaceIndexException(
+                response.statusCode,
+                "HTTP_${response.statusCode}",
+                "Marketplace returned HTTP ${response.statusCode}",
+                response.statusCode >= 500,
+            )
+        }
+        return response.body
     }
 
     private suspend fun <T> cached(
@@ -231,6 +261,62 @@ class MarketplaceIndex(
                 throw e
             }
         }
+    }
+
+    /**
+     * Report a plugin to the marketplace ([09-marketplace.md §14.1]
+     * `POST /v1/reports`).
+     *
+     * @return the report tracking ID shown to the user.
+     * @throws MarketplaceIndexException on failure.
+     */
+    suspend fun reportPlugin(
+        packageId: String,
+        version: String,
+        reason: ReportReason,
+        description: String? = null,
+        anonymizedInfo: JsonObject? = null,
+    ): String {
+        val request = PluginReportRequest(
+            packageId = packageId,
+            version = version,
+            reason = reason.wireValue,
+            description = description,
+            anonymizedInfo = anonymizedInfo,
+        )
+        val responseBody = post("/v1/reports", json.encodeToString(PluginReportRequest.serializer(), request))
+        return try {
+            json.decodeFromString<ReportAck>(responseBody).reportId
+        } catch (e: Exception) {
+            throw MarketplaceIndexException(200, "BAD_RESPONSE", "Marketplace report acknowledgement could not be parsed", false)
+        }
+    }
+
+    /**
+     * Report an installation event for popularity aggregation
+     * ([09-marketplace.md §11.3] `POST /v1/telemetry/install`).
+     *
+     * Fire-and-forget; failures throw so callers can surface them. The client
+     * MUST only call this when the user enabled "Help improve the marketplace".
+     *
+     * @param anonymizedClientId SHA-256 of the device-bound id (not reversible).
+     * @param timestamp ISO-8601 timestamp of the installation.
+     * @throws MarketplaceIndexException on failure.
+     */
+    suspend fun recordInstallTelemetry(
+        packageId: String,
+        version: String,
+        anonymizedClientId: String,
+        timestamp: String,
+    ) {
+        val event = InstallTelemetryEvent(
+            packageId = packageId,
+            version = version,
+            event = "install",
+            anonymizedClientId = anonymizedClientId,
+            timestamp = timestamp,
+        )
+        post("/v1/telemetry/install", json.encodeToString(InstallTelemetryEvent.serializer(), event))
     }
 
     /**

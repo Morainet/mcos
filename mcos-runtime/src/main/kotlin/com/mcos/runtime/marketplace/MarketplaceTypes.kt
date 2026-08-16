@@ -2,6 +2,7 @@ package com.mcos.runtime.marketplace
 
 import com.mcos.runtime.security.Blocklist as SecurityBlocklist
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
 
 /**
  * Marketplace-facing permission entry ([09-marketplace.md §4.0]).
@@ -161,3 +162,56 @@ fun Blocklist.asSecurityBlocklist(): SecurityBlocklist =
     SecurityBlocklist { packageId, version ->
         packageId != null && version != null && isBlocklisted(packageId, version)
     }
+
+/**
+ * Reason for a user report ([09-marketplace.md §14.1]).
+ *
+ * `wireValue` matches the enum sent over the wire (the marketplace uses
+ * human-readable values with spaces).
+ */
+enum class ReportReason(val wireValue: String) {
+    Malware("malware"),
+    PrivacyViolation("privacy violation"),
+    Broken("broken"),
+    AbusiveBehavior("abusive behavior"),
+    Other("other"),
+}
+
+/**
+ * Body of `POST /v1/reports` ([09-marketplace.md §14.1]).
+ *
+ * @param anonymizedInfo optional device context (crash logs, plugin version)
+ *                       included only with the user's consent.
+ */
+@Serializable
+data class PluginReportRequest(
+    val packageId: String,
+    val version: String,
+    val reason: String,
+    val description: String? = null,
+    val anonymizedInfo: JsonObject? = null,
+)
+
+/**
+ * Acknowledgement with the user's tracking ID ([09-marketplace.md §14.1]).
+ */
+@Serializable
+data class ReportAck(
+    val reportId: String,
+)
+
+/**
+ * Body of `POST /v1/telemetry/install` ([09-marketplace.md §11.3]).
+ *
+ * Opt-in only: the client sends this when the user enabled
+ * "Help improve the marketplace". `anonymizedClientId` is a non-reversible
+ * SHA-256 hash of the device-bound id.
+ */
+@Serializable
+data class InstallTelemetryEvent(
+    val packageId: String,
+    val version: String,
+    val event: String,
+    val anonymizedClientId: String,
+    val timestamp: String,
+)
