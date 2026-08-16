@@ -45,6 +45,7 @@ class MarketplaceIndex(
     private data class CacheEntry<T>(val value: T, val fetchedAtMs: Long)
 
     private val searchCache = ConcurrentHashMap<String, CacheEntry<SearchResponse>>()
+    private val byCommandCache = ConcurrentHashMap<String, CacheEntry<List<PackageMetadata>>>()
     private val packageCache = ConcurrentHashMap<String, CacheEntry<PackageMetadata?>>()
     private val blocklistCache = ConcurrentHashMap<String, CacheEntry<Blocklist>>()
     private val revokedKeysCache = ConcurrentHashMap<String, CacheEntry<List<PublisherKey>>>()
@@ -111,17 +112,24 @@ class MarketplaceIndex(
     /**
      * Search the marketplace ([09-marketplace.md §11.1]).
      *
+     * [sort] defaults to `relevance` (the server default), which is omitted
+     * from the query string. [minRuntimeVersion] is a SemVer filter.
+     *
      * @throws MarketplaceIndexException on failure.
      */
     suspend fun search(
         query: String? = null,
         category: String? = null,
+        sort: SearchSort = SearchSort.relevance,
+        minRuntimeVersion: String? = null,
         page: Int = 1,
         pageSize: Int = 20,
     ): SearchResponse {
         val params = buildList {
             query?.takeIf { it.isNotBlank() }?.let { add("query=${encode(it)}") }
             category?.takeIf { it.isNotBlank() }?.let { add("category=${encode(it)}") }
+            if (sort != SearchSort.relevance) add("sort=${sort.name}")
+            minRuntimeVersion?.takeIf { it.isNotBlank() }?.let { add("minRuntimeVersion=${encode(it)}") }
             add("page=$page")
             add("pageSize=$pageSize")
         }.joinToString("&")
@@ -130,6 +138,27 @@ class MarketplaceIndex(
         return cached(searchCache, key, searchCacheTtlMs, staleOk = false) {
             getTyped("/v1/plugins?$params") { body ->
                 json.decodeFromString<SearchResponse>(body)
+            }
+        }
+    }
+
+    /**
+     * Find packages that provide [commandId] ([09-marketplace.md §11.1]
+     * `GET /v1/plugins/by-command/{commandId}`) — the candidate source for
+     * recommendations ([09-marketplace.md §9.2]).
+     *
+     * Returns an empty list when no package provides the command; that is a
+     * common non-error case for recommendations.
+     */
+    suspend fun byCommand(commandId: String): List<PackageMetadata> {
+        return cached(byCommandCache, commandId, searchCacheTtlMs, staleOk = false) {
+            try {
+                getTyped("/v1/plugins/by-command/${encode(commandId)}") { body ->
+                    json.decodeFromString<List<PackageMetadata>>(body)
+                }
+            } catch (e: MarketplaceIndexException) {
+                if (e.statusCode == 404) return@cached emptyList()
+                throw e
             }
         }
     }
