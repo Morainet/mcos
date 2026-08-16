@@ -47,6 +47,8 @@ class MarketplaceIndex(
     private val searchCache = ConcurrentHashMap<String, CacheEntry<SearchResponse>>()
     private val byCommandCache = ConcurrentHashMap<String, CacheEntry<List<PackageMetadata>>>()
     private val packageCache = ConcurrentHashMap<String, CacheEntry<PackageMetadata?>>()
+    private val recipeSearchCache = ConcurrentHashMap<String, CacheEntry<RecipeSearchResponse>>()
+    private val recipeCache = ConcurrentHashMap<String, CacheEntry<RecipeEnvelope?>>()
     private val blocklistCache = ConcurrentHashMap<String, CacheEntry<Blocklist>>()
     private val revokedKeysCache = ConcurrentHashMap<String, CacheEntry<List<PublisherKey>>>()
 
@@ -174,6 +176,55 @@ class MarketplaceIndex(
             try {
                 getTyped("/v1/plugins/${encode(packageId)}") { body ->
                     json.decodeFromString<PackageMetadata>(body)
+                }
+            } catch (e: MarketplaceIndexException) {
+                if (e.statusCode == 404) return@cached null
+                throw e
+            }
+        }
+    }
+
+    /**
+     * Search the recipe store ([09-marketplace.md §8.2, §11.1] `GET /v1/recipes`).
+     *
+     * Recipe name and summary are indexed; `query` and `category` are optional
+     * filters. Results are cached for the search TTL (24h).
+     *
+     * @throws MarketplaceIndexException on failure.
+     */
+    suspend fun searchRecipes(
+        query: String? = null,
+        category: String? = null,
+        page: Int = 1,
+        pageSize: Int = 20,
+    ): RecipeSearchResponse {
+        val params = buildList {
+            query?.takeIf { it.isNotBlank() }?.let { add("query=${encode(it)}") }
+            category?.takeIf { it.isNotBlank() }?.let { add("category=${encode(it)}") }
+            add("page=$page")
+            add("pageSize=$pageSize")
+        }.joinToString("&")
+
+        val key = "$params"
+        return cached(recipeSearchCache, key, searchCacheTtlMs, staleOk = false) {
+            getTyped("/v1/recipes?$params") { body ->
+                json.decodeFromString<RecipeSearchResponse>(body)
+            }
+        }
+    }
+
+    /**
+     * Fetch a single recipe envelope ([09-marketplace.md §8.2, §11.1]
+     * `GET /v1/recipes/{recipeId}`).
+     *
+     * @return null when the recipe does not exist (a 404 — non-error for the
+     *   install wizard).
+     */
+    suspend fun getRecipe(recipeId: String): RecipeEnvelope? {
+        return cached<RecipeEnvelope?>(recipeCache, recipeId, searchCacheTtlMs, staleOk = false) {
+            try {
+                getTyped("/v1/recipes/${encode(recipeId)}") { body ->
+                    json.decodeFromString<RecipeEnvelope>(body)
                 }
             } catch (e: MarketplaceIndexException) {
                 if (e.statusCode == 404) return@cached null

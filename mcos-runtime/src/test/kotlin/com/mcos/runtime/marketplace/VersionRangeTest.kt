@@ -86,11 +86,85 @@ class VersionRangeTest {
     }
 
     @Test
+    fun `caret keeps the major line`() {
+        val range = VersionRange("^1.2.3")
+        assertTrue(range.matches("1.2.3"))
+        assertTrue(range.matches("1.9.0"))
+        assertFalse(range.matches("0.9.0"))
+        assertFalse(range.matches("2.0.0"))
+    }
+
+    @Test
+    fun `caret on zero minor keeps the minor line`() {
+        val range = VersionRange("^0.2.3")
+        assertTrue(range.matches("0.2.3"))
+        assertTrue(range.matches("0.2.99"))
+        assertFalse(range.matches("0.3.0"))
+        assertFalse(range.matches("1.0.0"))
+    }
+
+    @Test
+    fun `caret on zero zero keeps the patch line`() {
+        val range = VersionRange("^0.0.3")
+        assertTrue(range.matches("0.0.3"))
+        assertFalse(range.matches("0.0.4"))
+        assertFalse(range.matches("0.1.0"))
+    }
+
+    @Test
+    fun `caret normalizes missing segments`() {
+        assertTrue(VersionRange("^1").matches("1.5.0"))
+        assertFalse(VersionRange("^1").matches("2.0.0"))
+        assertTrue(VersionRange("^0.0").matches("0.0.9"))
+        assertFalse(VersionRange("^0.0").matches("0.1.0"))
+        assertTrue(VersionRange("^0").matches("0.9.9"))
+        assertFalse(VersionRange("^0").matches("1.0.0"))
+    }
+
+    @Test
+    fun `tilde keeps the minor line`() {
+        val range = VersionRange("~1.2.3")
+        assertTrue(range.matches("1.2.3"))
+        assertTrue(range.matches("1.2.9"))
+        assertFalse(range.matches("1.3.0"))
+        assertFalse(range.matches("2.0.0"))
+    }
+
+    @Test
+    fun `tilde on a single segment keeps the major line`() {
+        val range = VersionRange("~1")
+        assertTrue(range.matches("1.0.0"))
+        assertTrue(range.matches("1.9.9"))
+        assertFalse(range.matches("2.0.0"))
+        assertTrue(VersionRange("~0").matches("0.5.0"))
+        assertFalse(VersionRange("~0").matches("1.0.0"))
+    }
+
+    @Test
+    fun `caret and tilde compose with plain bounds`() {
+        val range = VersionRange(">=1.0.0 ^1.5.0")
+        assertTrue(range.matches("1.5.0"))
+        assertFalse(range.matches("2.0.0"))
+        assertFalse(range.matches("1.4.0"))
+    }
+
+    @Test
     fun `invalid range never matches (fail-safe)`() {
         assertFalse(VersionRange("not-a-version").matches("1.0.0"))
         assertFalse(VersionRange("1.2.3.4").matches("1.2.3"))
         assertFalse(VersionRange(">= 1.0.0").matches("1.0.0"))
         assertFalse(VersionRange("abc >=1.0.0").matches("1.5.0"))
+        assertFalse(VersionRange("^not-a-version").matches("1.0.0"))
+        assertFalse(VersionRange("~1.2.3.4").matches("1.2.3"))
+    }
+
+    @Test
+    fun `isValid distinguishes malformed ranges`() {
+        assertTrue(VersionRange("*").isValid)
+        assertTrue(VersionRange(">=1.0.0 <2.0.0").isValid)
+        assertTrue(VersionRange("^1.2.3").isValid)
+        assertFalse(VersionRange("garbage").isValid)
+        assertFalse(VersionRange("^1.2.3.4").isValid)
     }
 
     @Test
