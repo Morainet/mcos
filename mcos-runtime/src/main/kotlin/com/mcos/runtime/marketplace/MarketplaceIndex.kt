@@ -2,6 +2,7 @@ package com.mcos.runtime.marketplace
 
 import com.mcos.runtime.security.PublisherKey
 import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.util.concurrent.ConcurrentHashMap
 
@@ -35,6 +36,7 @@ class MarketplaceIndex(
     private val baseUrl: String,
     private val transport: MarketplaceHttpTransport,
     private val json: Json = Json { ignoreUnknownKeys = true; explicitNulls = false },
+    private val blocklistVerifier: BlocklistVerifier,
     private val clock: () -> Long = System::currentTimeMillis,
     private val searchCacheTtlMs: Long = 24 * 60 * 60 * 1000,
     private val blocklistCacheTtlMs: Long = 60 * 60 * 1000,
@@ -77,6 +79,8 @@ class MarketplaceIndex(
 
         return try {
             decoder(response.body)
+        } catch (e: MarketplaceIndexException) {
+            throw e
         } catch (e: Exception) {
             throw MarketplaceIndexException(200, "BAD_RESPONSE", "Marketplace response could not be parsed", false)
         }
@@ -90,13 +94,18 @@ class MarketplaceIndex(
         fetch: suspend () -> T,
     ): T {
         val now = clock()
-        cache[key]?.let { entry ->
-            if (now - entry.fetchedAtMs < ttlMs) return entry.value
-            if (staleOk) return entry.value
+        val existing = cache[key]
+        if (existing != null && now - existing.fetchedAtMs < ttlMs) return existing.value
+        try {
+            val value = fetch()
+            cache[key] = CacheEntry(value, now)
+            return value
+        } catch (e: Exception) {
+            // Stale-ok caches (blocklist) fall back to the previous entry when the
+            // refresh fails — an expired blocklist is safer than none (§4.4).
+            if (staleOk && existing != null) return existing.value
+            throw e
         }
-        val value = fetch()
-        cache[key] = CacheEntry(value, now)
-        return value
     }
 
     /**
@@ -147,12 +156,29 @@ class MarketplaceIndex(
     /**
      * Fetch the signed blocklist ([09-marketplace.md §11.4, §14.0]).
      *
-     * Cache TTL is 1h and stale entries are served if the refresh fails.
+     * The response is verified against the marketplace's well-known public key
+     * ([09-marketplace.md §14.3]); an invalid signature is rejected and the
+     * previously accepted blocklist is kept. Cache TTL is 1h and stale entries
+     * are served if the refresh fails (§4.4).
+     *
+     * @throws MarketplaceIndexException with code `BLOCKLIST_SIGNATURE_INVALID`
+     *   when no trusted blocklist is available.
      */
     suspend fun fetchBlocklist(): Blocklist {
         return cached(blocklistCache, "blocklist", blocklistCacheTtlMs, staleOk = true) {
             getTyped("/v1/blocklist") { body ->
-                json.decodeFromString<Blocklist>(body)
+                val blocklist = json.decodeFromString<Blocklist>(body)
+                val payload = json.encodeToString(Blocklist.serializer(), blocklist.copy(signature = null))
+                    .toByteArray(Charsets.UTF_8)
+                if (!blocklistVerifier.verify(payload, blocklist.signature)) {
+                    throw MarketplaceIndexException(
+                        200,
+                        "BLOCKLIST_SIGNATURE_INVALID",
+                        "Blocklist signature verification failed; keeping previous blocklist",
+                        false,
+                    )
+                }
+                blocklist
             }
         }
     }
