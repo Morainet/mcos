@@ -99,6 +99,9 @@ class MarketplaceIndexTest {
         var blocklistRequestCount = 0
         var failAfterRequests = Int.MAX_VALUE
         var transportException: MarketplaceTransportException? = null
+        var postStatusCode = 201
+        var postBody: String = ""
+        val postLog = mutableListOf<Pair<String, String>>()
 
         override suspend fun getJson(
             url: String,
@@ -123,6 +126,17 @@ class MarketplaceIndexTest {
                 url.contains("/v1/keys/revoked") -> MarketplaceHttpResponse(200, revokedKeysBody)
                 else -> error("unexpected url: $url")
             }
+        }
+
+        override suspend fun postJson(
+            url: String,
+            body: String,
+            connectTimeoutMs: Long,
+            requestTimeoutMs: Long,
+        ): MarketplaceHttpResponse {
+            requestLog += url
+            postLog += url to body
+            return MarketplaceHttpResponse(postStatusCode, postBody)
         }
     }
 
@@ -580,6 +594,88 @@ class MarketplaceIndexTest {
             val recipe = index.getRecipe("no.such.recipe")
 
             assertNull(recipe)
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // T23-T26: User reports (§14.1) + install telemetry (§11.3)
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `T23-reportPlugin posts wire payload and returns tracking id`() {
+        val transport = FakeTransport().apply {
+            postStatusCode = 201
+            postBody = """{"reportId":"rpt_123"}"""
+        }
+        val index = MarketplaceIndex("https://market.example", transport, json, blocklistVerifier = blocklistVerifier)
+
+        runBlocking {
+            val reportId = index.reportPlugin(
+                packageId = "com.example.photo",
+                version = "1.0.0",
+                reason = ReportReason.PrivacyViolation,
+                description = "Uploads photos without consent",
+            )
+
+            assertEquals("rpt_123", reportId)
+            assertEquals(1, transport.postLog.size)
+            val (url, body) = transport.postLog.single()
+            assertTrue(url.endsWith("/v1/reports"))
+            assertTrue(body.contains("\"packageId\":\"com.example.photo\""))
+            assertTrue(body.contains("\"version\":\"1.0.0\""))
+            assertTrue(body.contains("\"reason\":\"privacy violation\""))
+            assertTrue(body.contains("Uploads photos without consent"))
+        }
+    }
+
+    @Test
+    fun `T24-reportPlugin maps 429 to RATE_LIMITED`() {
+        val transport = FakeTransport().apply { postStatusCode = 429 }
+        val index = MarketplaceIndex("https://market.example", transport, json, blocklistVerifier = blocklistVerifier)
+
+        runBlocking {
+            val error = assertFailsWith<MarketplaceIndexException> {
+                index.reportPlugin("com.example.photo", "1.0.0", ReportReason.Malware)
+            }
+            assertEquals(429, error.statusCode)
+            assertEquals("RATE_LIMITED", error.code)
+            assertTrue(error.retryable)
+        }
+    }
+
+    @Test
+    fun `T25-recordInstallTelemetry posts opt-in event`() {
+        val transport = FakeTransport().apply { postStatusCode = 202 }
+        val index = MarketplaceIndex("https://market.example", transport, json, blocklistVerifier = blocklistVerifier)
+
+        runBlocking {
+            index.recordInstallTelemetry(
+                packageId = "com.example.photo",
+                version = "1.0.0",
+                anonymizedClientId = "hash:abc123",
+                timestamp = "2026-08-16T10:00:00Z",
+            )
+
+            val (url, body) = transport.postLog.single()
+            assertTrue(url.endsWith("/v1/telemetry/install"))
+            assertTrue(body.contains("\"packageId\":\"com.example.photo\""))
+            assertTrue(body.contains("\"event\":\"install\""))
+            assertTrue(body.contains("hash:abc123"))
+            assertTrue(body.contains("2026-08-16T10:00:00Z"))
+        }
+    }
+
+    @Test
+    fun `T26-recordInstallTelemetry 5xx is retryable`() {
+        val transport = FakeTransport().apply { postStatusCode = 503 }
+        val index = MarketplaceIndex("https://market.example", transport, json, blocklistVerifier = blocklistVerifier)
+
+        runBlocking {
+            val error = assertFailsWith<MarketplaceIndexException> {
+                index.recordInstallTelemetry("com.example.photo", "1.0.0", "hash:abc", "2026-08-16T10:00:00Z")
+            }
+            assertEquals(503, error.statusCode)
+            assertTrue(error.retryable)
         }
     }
 

@@ -70,6 +70,27 @@ interface MarketplaceHttpTransport {
             "MarketplaceHttpTransport ${this::class.simpleName} does not support binary downloads"
         )
     }
+
+    /**
+     * POST a JSON body and return the raw response ([09-marketplace.md §11.3,
+     * §14.1] — telemetry and user reports are POST requests).
+     *
+     * Must set `Content-Type: application/json`. Same timeout / exception
+     * contract as [getJson].
+     *
+     * Default implementation fails explicitly so transports that do not
+     * implement POST fail loudly instead of silently dropping the report.
+     */
+    suspend fun postJson(
+        url: String,
+        body: String,
+        connectTimeoutMs: Long,
+        requestTimeoutMs: Long,
+    ): MarketplaceHttpResponse {
+        throw UnsupportedOperationException(
+            "MarketplaceHttpTransport ${this::class.simpleName} does not support POST requests"
+        )
+    }
 }
 
 /**
@@ -126,6 +147,33 @@ class JdkMarketplaceHttpTransport : MarketplaceHttpTransport {
             client.send(request, HttpResponse.BodyHandlers.ofByteArray()).body()
         } catch (e: java.net.http.HttpTimeoutException) {
             throw MarketplaceTransportException("MARKETPLACE_TIMEOUT", "Marketplace download timed out", true)
+        }
+        // ConnectException / IOException propagate to the caller's catch clauses.
+    }
+
+    override suspend fun postJson(
+        url: String,
+        body: String,
+        connectTimeoutMs: Long,
+        requestTimeoutMs: Long,
+    ): MarketplaceHttpResponse = withContext(Dispatchers.IO) {
+        val client = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofMillis(connectTimeoutMs))
+            .build()
+
+        val request = HttpRequest.newBuilder()
+            .uri(URI.create(url))
+            .header("Accept", "application/json")
+            .header("Content-Type", "application/json")
+            .timeout(Duration.ofMillis(requestTimeoutMs))
+            .POST(HttpRequest.BodyPublishers.ofString(body))
+            .build()
+
+        try {
+            val response = client.send(request, HttpResponse.BodyHandlers.ofString())
+            MarketplaceHttpResponse(response.statusCode(), response.body())
+        } catch (e: java.net.http.HttpTimeoutException) {
+            throw MarketplaceTransportException("MARKETPLACE_TIMEOUT", "Marketplace request timed out", true)
         }
         // ConnectException / IOException propagate to the caller's catch clauses.
     }
