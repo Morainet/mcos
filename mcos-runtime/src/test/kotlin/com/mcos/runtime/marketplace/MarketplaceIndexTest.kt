@@ -32,14 +32,15 @@ class MarketplaceIndexTest {
         updatedAt = "2026-01-01T00:00:00Z",
     )
 
-    private class FakeTransport : MarketplaceHttpTransport {
+    private open class FakeTransport : MarketplaceHttpTransport {
         val requestLog = mutableListOf<String>()
         var searchBody: String = """{"results":[],"total":0,"page":1,"pageSize":20,"cacheTtlSeconds":86400}"""
         var packageBody: String = ""
         var packageStatusCode: Int = 200
         var blocklistBody: String = """{"entries":[],"version":"v1","issuedAt":"2026-01-01T00:00:00Z","signature":null}"""
         var revokedKeysBody: String = "[]"
-        var failCount = 0
+        var blocklistRequestCount = 0
+        var failAfterRequests = Int.MAX_VALUE
         var transportException: MarketplaceTransportException? = null
 
         override suspend fun getJson(
@@ -53,7 +54,10 @@ class MarketplaceIndexTest {
                 url.contains("/v1/plugins?") -> MarketplaceHttpResponse(200, searchBody)
                 url.contains("/v1/plugins/") -> MarketplaceHttpResponse(packageStatusCode, packageBody)
                 url.contains("/v1/blocklist") -> {
-                    if (failCount-- > 0) throw MarketplaceTransportException("MARKETPLACE_TIMEOUT", "timeout", true)
+                    blocklistRequestCount++
+                    if (blocklistRequestCount > failAfterRequests) {
+                        throw MarketplaceTransportException("MARKETPLACE_TIMEOUT", "timeout", true)
+                    }
                     MarketplaceHttpResponse(200, blocklistBody)
                 }
                 url.contains("/v1/keys/revoked") -> MarketplaceHttpResponse(200, revokedKeysBody)
@@ -180,7 +184,7 @@ class MarketplaceIndexTest {
     @Test
     fun `T7-expired blocklist serves stale entry when refresh fails`() {
         var now = 1_000_000L
-        val transport = FakeTransport().apply { failCount = 1 }
+        val transport = FakeTransport().apply { failAfterRequests = 1 }
         val index = MarketplaceIndex("https://market.example", transport, json, clock = { now }, blocklistCacheTtlMs = 3_600_000)
 
         runBlocking {
