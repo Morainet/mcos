@@ -50,6 +50,26 @@ interface MarketplaceHttpTransport {
         connectTimeoutMs: Long,
         requestTimeoutMs: Long,
     ): MarketplaceHttpResponse
+
+    /**
+     * GET a binary resource (plugin artifact) and return its raw bytes
+     * ([09-marketplace.md §7.1] step 1).
+     *
+     * Implementations MUST throw [MarketplaceTransportException] for timeouts
+     * and network failures (same contract as [getJson]).
+     *
+     * Default implementation fails explicitly so transports that cannot
+     * download binaries fail loudly instead of silently.
+     */
+    suspend fun getBytes(
+        url: String,
+        connectTimeoutMs: Long,
+        requestTimeoutMs: Long,
+    ): ByteArray {
+        throw UnsupportedOperationException(
+            "MarketplaceHttpTransport ${this::class.simpleName} does not support binary downloads"
+        )
+    }
 }
 
 /**
@@ -83,6 +103,29 @@ class JdkMarketplaceHttpTransport : MarketplaceHttpTransport {
             // java.net.http-only exception: normalize so the caller never
             // references a class that does not exist on Android.
             throw MarketplaceTransportException("MARKETPLACE_TIMEOUT", "Marketplace request timed out", true)
+        }
+        // ConnectException / IOException propagate to the caller's catch clauses.
+    }
+
+    override suspend fun getBytes(
+        url: String,
+        connectTimeoutMs: Long,
+        requestTimeoutMs: Long,
+    ): ByteArray = withContext(Dispatchers.IO) {
+        val client = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofMillis(connectTimeoutMs))
+            .build()
+
+        val request = HttpRequest.newBuilder()
+            .uri(URI.create(url))
+            .timeout(Duration.ofMillis(requestTimeoutMs))
+            .GET()
+            .build()
+
+        try {
+            client.send(request, HttpResponse.BodyHandlers.ofByteArray()).body()
+        } catch (e: java.net.http.HttpTimeoutException) {
+            throw MarketplaceTransportException("MARKETPLACE_TIMEOUT", "Marketplace download timed out", true)
         }
         // ConnectException / IOException propagate to the caller's catch clauses.
     }
