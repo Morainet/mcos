@@ -6,7 +6,11 @@ import com.mcos.runtime.executor.Command
 import com.mcos.runtime.executor.Executor
 import com.mcos.runtime.ir.ExecutionIr
 import com.mcos.runtime.ir.ParseResult
+import com.mcos.runtime.marketplace.InstallProgress
+import com.mcos.runtime.marketplace.InstallResult
 import com.mcos.runtime.marketplace.MarketplaceIndex
+import com.mcos.runtime.marketplace.PluginInstaller
+import com.mcos.runtime.marketplace.UninstallResult
 import com.mcos.runtime.memory.EpisodicMemory
 import com.mcos.runtime.memory.EpisodicOutcome
 import com.mcos.runtime.memory.MemoryStore
@@ -99,6 +103,7 @@ class McosRuntime internal constructor(
     private val confirmationTimeoutMs: Long,
     private val pluginLoader: PluginLoader,
     private val marketplaceIndex: MarketplaceIndex?,
+    private val pluginInstaller: PluginInstaller?,
 ) {
     private val summarizer = RunSummarizer(episodicMemory)
     // ─── Confirmation flow (08-security.md §5) ──────────────────────────
@@ -382,6 +387,12 @@ class McosRuntime internal constructor(
      * configure one ([09-marketplace.md §4]).
      */
     fun marketplaceIndex(): MarketplaceIndex? = marketplaceIndex
+
+    /**
+     * Access the plugin installer (download → verify → stage → load,
+     * [09-marketplace.md §7]), or null when the host did not configure one.
+     */
+    fun pluginInstaller(): PluginInstaller? = pluginInstaller
 
     // ─── Internal helpers ────────────────────────────────────────────────
 
@@ -760,6 +771,10 @@ class McosRuntime internal constructor(
         // hosts that talk to a marketplace configure it.
         private var marketplaceIndex: MarketplaceIndex? = null
 
+        // End-to-end install flow (09-marketplace.md §7). Optional: hosts
+        // without a download dir / transport skip the installer.
+        private var pluginInstaller: PluginInstaller? = null
+
         fun withParser(parser: DslParser) = apply { this.parser = parser }
         fun withRegistry(registry: CommandRegistry) = apply { this.registry = registry }
         fun withPermissionKernel(kernel: PermissionKernel) = apply { this.permissionKernel = kernel }
@@ -792,6 +807,12 @@ class McosRuntime internal constructor(
          * Attach a marketplace index client ([09-marketplace.md §4]).
          */
         fun withMarketplaceIndex(index: MarketplaceIndex?) = apply { this.marketplaceIndex = index }
+
+        /**
+         * Attach an end-to-end plugin installer ([09-marketplace.md §7]).
+         * Optional — hosts without binary download support omit it.
+         */
+        fun withPluginInstaller(installer: PluginInstaller?) = apply { this.pluginInstaller = installer }
 
         fun build(): McosRuntime {
             val reg = registry ?: CommandRegistry()
@@ -836,6 +857,7 @@ class McosRuntime internal constructor(
                 confirmationTimeoutMs = confirmationTimeoutMs,
                 pluginLoader = loader,
                 marketplaceIndex = marketplaceIndex,
+                pluginInstaller = pluginInstaller,
             )
         }
     }

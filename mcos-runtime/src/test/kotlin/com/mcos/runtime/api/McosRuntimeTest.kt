@@ -529,6 +529,55 @@ class McosRuntimeTest {
     }
 
     // ═══════════════════════════════════════════════════════════════
+    // Installer wiring (09-marketplace.md §7)
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `I1-installer is null unless configured`() {
+        assertNull(runtime.pluginInstaller(), "default runtime has no installer")
+    }
+
+    @Test
+    fun `I2-builder wiring exposes the installer`() {
+        val gate = com.mcos.runtime.security.PluginTrustGate(
+            verifier = com.mcos.runtime.security.ArtifactVerifier(
+                com.mcos.runtime.security.InMemoryPublisherKeyStore()
+            ),
+            debugBuild = false,
+        )
+        val loader = com.mcos.runtime.plugin.PluginLoader(gate, CommandRegistry())
+        val installer = com.mcos.runtime.marketplace.PluginInstaller(
+            transport = object : com.mcos.runtime.marketplace.MarketplaceHttpTransport {
+                override suspend fun getJson(
+                    url: String,
+                    connectTimeoutMs: Long,
+                    requestTimeoutMs: Long,
+                ): com.mcos.runtime.marketplace.MarketplaceHttpResponse =
+                    error("not used")
+
+                override suspend fun getBytes(
+                    url: String,
+                    connectTimeoutMs: Long,
+                    requestTimeoutMs: Long,
+                ): ByteArray = error("not used")
+            },
+            verifier = com.mcos.runtime.security.ArtifactVerifier(
+                com.mcos.runtime.security.InMemoryPublisherKeyStore()
+            ),
+            keyStore = com.mcos.runtime.security.InMemoryPublisherKeyStore(),
+            loader = loader,
+            registry = CommandRegistry(),
+            downloadDir = kotlin.io.path.createTempDirectory("mcos-runtime-wiring").toString(),
+        )
+
+        val wired = McosRuntime.Builder()
+            .withPluginInstaller(installer)
+            .build()
+
+        assertSame(installer, wired.pluginInstaller())
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     // Helpers
     // ═══════════════════════════════════════════════════════════════
 
