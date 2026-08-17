@@ -108,23 +108,85 @@ flowchart TB
 
 \* 无障碍（Accessibility）桥接是可选的、受到高度限制，并且不是首选的集成路径。
 
-### 3.1 包 → 模块 → 阶段
+### 3.1 包 → 模块对照（按实际实现）
 
-| 包 | Gradle 模块 | 阶段 |
-|---------|---------------|-------|
-| `com.mcos.android.ui` | `mcos-android` | P1 |
-| `com.mcos.android.planner` | `mcos-android` | P1 |
-| `com.mcos.runtime.api` | `mcos-runtime` | P1 |
-| `com.mcos.runtime.parser` | `mcos-runtime` | P1 |
-| `com.mcos.runtime.registry` | `mcos-runtime` | P1 |
-| `com.mcos.runtime.permission` | `mcos-runtime` | P1 |
-| `com.mcos.runtime.scheduler` | `mcos-runtime` | P1 |
-| `com.mcos.runtime.executor` | `mcos-runtime` | P1 |
-| `com.mcos.runtime.audit` | `mcos-runtime` | P1 |
-| `com.mcos.runtime.eventbus` | `mcos-runtime` | P2（已留 seam） |
-| `com.mcos.runtime.memory` | `mcos-runtime` | P2（已留 seam） |
-| `com.mcos.runtime.workflow` | `mcos-runtime` | P2（已留 seam） |
-| `com.mcos.sdk` | `mcos-sdk` | P1 |
+运行时族已拆分为职责聚焦的 Gradle 模块；无论模块边界如何，包名保持
+`com.mcos.runtime.*` 不变（见 §3.3）。
+
+| 包 | Gradle 模块 | 依赖 |
+|----|------------|------|
+| `com.mcos.sdk` | `mcos-sdk` | — |
+| `com.mcos.runtime.security` · `audit` · `validate` · `permission` | `mcos-security` | sdk |
+| `com.mcos.runtime.api`（RuntimeTypes、StubHostServices）· `error` · `ir` · `events` · `registry` · `plugin` · `memory` · `executor` · `workflow` · `parse` | `mcos-runtime-core` | sdk、security |
+| `com.mcos.runtime.llm` | `mcos-llm` | sdk、security、runtime-core、runtime（facade） |
+| `com.mcos.runtime.marketplace` | `mcos-marketplace` | sdk、security、runtime-core |
+| `com.mcos.runtime.api`（McosRuntime facade、ConfirmationCoordinator、RunManager） | `mcos-runtime` | sdk、security、runtime-core、marketplace |
+| `com.mcos.android`（含 `host`） | `mcos-android` | runtime（facade）、llm、plugins |
+| — | `mcos-server` | runtime（facade） |
+| `com.mcos.plugin.*` | `plugins:mcos-plugin-*` | sdk |
+
+### 3.2 模块依赖图
+
+```mermaid
+graph LR
+  SDK[mcos-sdk]
+  SEC[mcos-security]
+  CORE[mcos-runtime-core]
+  LLM[mcos-llm]
+  MKT[mcos-marketplace]
+  FACADE[mcos-runtime<br/>facade]
+  AND[mcos-android]
+  SRV[mcos-server]
+  PLUGINS[mcos-plugin-*]
+
+  SEC --> SDK
+  CORE --> SDK
+  CORE --> SEC
+  LLM --> SDK
+  LLM --> SEC
+  LLM --> CORE
+  LLM --> FACADE
+  MKT --> SDK
+  MKT --> SEC
+  MKT --> CORE
+  FACADE --> SDK
+  FACADE --> SEC
+  FACADE --> CORE
+  FACADE --> MKT
+  AND --> FACADE
+  AND --> LLM
+  AND --> PLUGINS
+  SRV --> FACADE
+  PLUGINS --> SDK
+```
+
+值得注意的边：
+
+- `mcos-llm` 依赖 facade，因为 `ChatOrchestrator` 驱动完整的
+  `McosRuntime`；而 facade 本身**不**依赖 `mcos-llm`，因此模块层面
+  只存在单向依赖、无环。
+- `mcos-android` / `mcos-server` 只依赖 facade（`mcos-android` 另加
+  `mcos-llm`，因为宿主使用 chat 管线）——它们不直接触碰 core、
+  security 或 marketplace。
+
+### 3.3 模块边界规则
+
+**`internal` 可见性按模块生效。** 拆分后，某个 Gradle 模块内标记为
+`internal` 的声明对其他所有模块都不可见——包括共享同一包前缀的
+运行时族模块，也包括其他模块的测试源集。经验规则：
+
+- 跨模块的测试替身必须走公开 API 面（例如实现 `EventBus` 接口并
+  构造公开的 `EventSubscription`）。
+- 过去依赖同包 `internal` 的辅助耦合（如 `RateLimitKind.maxTokens`）
+  收进实现类所在的模块。
+- 与其把整个模块声明为 `api` 导出，不如把成员提升为 public；`api`
+  只用于出现在公开签名中的类型（`EventBus.observe` 的 `Flow`、
+  校验器的 `JsonObject`、`Executor` 构造器的 `SecurityConfig`）。
+
+**跨模块的 split-package 在 JVM 上合法，但属有意为之。**
+`com.mcos.runtime.api` 横跨 `mcos-runtime-core`（RuntimeTypes——
+核心管线发布的事件与请求类型）与 `mcos-runtime`（组装管线的
+McosRuntime facade）。仅 api 包允许这样做；其他包不得跨模块分布。
 
 ---
 
@@ -922,12 +984,12 @@ enum class McosErrorCode(val retryableDefault: Boolean) {
 
 ## 17. 与代码仓库及 P1 实现的映射
 
-> 所有代码侧模块都仅是**规格（spec-only）**（尚未实现）。仓库目前只有设计文档和 fixture。
+> 下表中的 P1 模块已在仓库内**实现**（运行时族、Android 壳、server、参考插件），CI 按模块测试任务分片；P2/P3 行仍为规格。各子系统状态见 [11-implementation-status.md](./11-implementation-status.md)。
 
 | 架构部分 | 主要仓库 / 包 | 目标阶段 |
 |--------------------|------------------------|--------------|
 | UI | `mcos-android` | P1 |
-| Runtime 内核 | `mcos-runtime` | P1 |
+| Runtime 内核 | `mcos-security` · `mcos-runtime-core` · `mcos-llm` · `mcos-marketplace` · `mcos-runtime`（facade） | P1 |
 | SDK API | `mcos-sdk` | P1 |
 | 参考插件 | `mcos-plugin-hello` | P1 |
 | 内置插件 | `mcos-plugin-system` · `mcos-plugin-camera` | P1 |
@@ -945,7 +1007,7 @@ enum class McosErrorCode(val retryableDefault: Boolean) {
 
 | P1 步骤 | 本文档 § |
 |---------|-----------|
-| 1. Gradle 多模块构建 | [§3.1](#31-package--module--phase) |
+| 1. Gradle 多模块构建 | [§3.1](#31-包--模块对照按实际实现) |
 | 2. `DslParser` | [§9.2](#92-stage-details) 阶段 1 |
 | 3. `CommandRegistry` | [§10](#10-command-registry-architecture) |
 | 4. `Executor` | [§9.2](#92-stage-details) 阶段 8、[§11.2](#112-executioncontext--accessors) |

@@ -152,6 +152,16 @@ data class ExecuteRequest(
 
 `RuntimeEvent` is an **11-variant sealed class** defined normatively in [01 §11.5](./01-architecture.md) (`RunStarted`, `StepStarted`, `Progress`, `Artifact`, `Log`, `ConfirmationNeeded`, `StepSucceeded`, `StepFailed`, `RunSucceeded`, `RunFailed`, `RunCancelled`). This document does not re-declare it; implementations MUST use the architecture doc's definition. `observe(runId)` returns a cold `Flow<RuntimeEvent>` that completes when the run reaches a terminal state (`RunSucceeded` / `RunFailed` / `RunCancelled`).
 
+**Run-event channel guarantees** (as implemented by `TypedEventBus`):
+
+| Property | Rule |
+|----------|------|
+| **Isolation** | Each run's events live in a **per-run** stream with its own replay buffer (`RUN_REPLAY = 512`). A run's history can never be evicted by traffic from *other* runs — the failure mode that motivated per-run isolation. |
+| **Early subscribers** | `execute()` returns its handle before the launched coroutine publishes `RunStarted`, so `observe()` on a not-yet-published run id **waits** for the first event rather than completing empty. |
+| **Late subscribers** | Replays the run's buffered history, then follows live; completes at the terminal event. |
+| **Retention** | Replay history is kept for the `MAX_RETAINED_FINISHED_RUNS = 128` most recently finished runs (FIFO). Observing an evicted finished run completes **empty** (tombstoned ids); observing an id older than the tombstone window behaves like a not-yet-started run. |
+| **Backpressure** | Within a run's own buffer: drop-oldest. The publisher never blocks. |
+
 ---
 
 ## 5. Parser Subsystem

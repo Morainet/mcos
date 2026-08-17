@@ -1,6 +1,7 @@
 package com.mcos.runtime.api
 
 import com.mcos.runtime.memory.MemoryStore
+import com.mcos.runtime.permission.DefaultPermissionKernel
 import com.mcos.runtime.permission.PermissionKernel
 import com.mcos.runtime.registry.CommandRegistry
 import com.mcos.sdk.*
@@ -29,7 +30,7 @@ class McosRuntimeConfirmationTest {
     @BeforeTest
     fun setUp() {
         registry = CommandRegistry()
-        permissions = PermissionKernel()
+        permissions = DefaultPermissionKernel()
         runtime = McosRuntime.Builder()
             .withRegistry(registry)
             .withPermissionKernel(permissions)

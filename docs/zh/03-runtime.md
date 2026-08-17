@@ -154,6 +154,16 @@ data class ExecuteRequest(
 
 `RuntimeEvent` 是一个 **11 变体的密封类（sealed class）**，规范定义见 [01 §11.5](./01-architecture.md)（`RunStarted`、`StepStarted`、`Progress`、`Artifact`、`Log`、`ConfirmationNeeded`、`StepSucceeded`、`StepFailed`、`RunSucceeded`、`RunFailed`、`RunCancelled`）。本文档不再重复声明；实现**必须**使用架构文档中的定义。`observe(runId)` 返回一个冷流 `Flow<RuntimeEvent>`，当运行到达终态（`RunSucceeded` / `RunFailed` / `RunCancelled`）时该流完成。
 
+**Run 事件通道保证**（`TypedEventBus` 的实现语义）：
+
+| 属性 | 规则 |
+|------|------|
+| **隔离** | 每个 run 的事件位于**独立的** per-run 流中，拥有自己的重放缓冲（`RUN_REPLAY = 512`）。一个 run 的历史永远不可能被**其他** run 的流量挤出——这正是 per-run 隔离所消除的故障模式。 |
+| **早订阅者** | `execute()` 在 launch 的协程发布 `RunStarted` 之前就返回 handle，因此对尚未发布过事件的 run id 调用 `observe()` 会**等待**首个事件，而不是空完成。 |
+| **晚订阅者** | 先重放该 run 的缓冲历史，再跟随实时事件；在终态事件处完成。 |
+| **保留** | 最近 `MAX_RETAINED_FINISHED_RUNS = 128` 个已结束 run 的重放历史按 FIFO 保留。观察已被驱逐的结束 run 会**空完成**（tombstone 记录）；超出 tombstone 窗口的古老 id 行为等同于尚未开始的 run。 |
+| **背压** | 在 run 自己的缓冲内 drop-oldest；发布方永不阻塞。 |
+
 ---
 
 ## 5. 解析器（Parser）子系统
