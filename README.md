@@ -6,14 +6,18 @@ MCOS is an open design for a **Mobile Command Bus**: a typed Command Protocol, o
 
 ## Status
 
-**Phase 1 — core runtime implemented (Draft v0.1.0). Phase 2 — workflow engine, typed event bus, memory enhancements, Android shell — implemented.**
+**Phase 1 — core runtime implemented (Draft v0.1.0). Phase 2 — workflow engine, typed event bus, memory enhancements, Android shell — implemented. Phase 3 — marketplace client (index, install pipeline, recipe store, reports, telemetry) — implemented.**
 
 The repository now contains a working multi-module Gradle project:
 
 | Module | Content | Status |
 |--------|---------|--------|
 | `mcos-sdk` | Plugin contracts (`McosPlugin`, `CommandHandler`, `HostServices`, `ExecutionContext`, `AuthStamp`) | ✅ |
-| `mcos-runtime` | DSL parser, command registry, 7-stage executor, permission kernel, rate limiter, egress policy, audit log, LLM planner/chat, workflow engine, event bus, memory | ✅ |
+| `mcos-runtime-core` | DSL parser → IR, command registry, 7-stage executor, event bus, workflow engine, memory | ✅ |
+| `mcos-security` | Permission kernel, audit log, artifact signatures, egress policy, rate limiter, crash quarantine, enterprise policy | ✅ |
+| `mcos-llm` | AI planner/chat, multi-provider registry, grammar-constrained decoding, prompt-injection guard | ✅ |
+| `mcos-marketplace` | Index client, install pipeline, blocklist verification, recipe store, dependency resolution, user reports, opt-in telemetry, install wizard | ✅ |
+| `mcos-runtime` | Facade (`McosRuntime` builder, confirmation coordinator, run manager) wiring all submodules | ✅ |
 | `mcos-android` | Compose CLI / Chat shell | ✅ |
 | `mcos-server` | Self-hosted sync endpoint: `SyncBlobTransport` REST contract + mandatory Bearer-token auth, opaque blob store | ✅ |
 
@@ -52,7 +56,11 @@ Golden DSL ↔ IR fixtures: [`docs/fixtures/`](./docs/fixtures/).
 Implemented topology:
 
 ```text
-mcos-runtime      Parser · Registry · Executor (7-stage) · Audit · Security · LLM
+mcos-runtime-core Parser → IR · Registry · Executor (7-stage) · EventBus · Workflow · Memory
+mcos-security     Permission kernel · Audit · Signatures · Egress · Rate limit · Enterprise policy
+mcos-llm          AI planner · Multi-provider registry · GBNF / JSON-schema decoding
+mcos-marketplace  Index client · Install pipeline · Recipe store · Reports · Telemetry
+mcos-runtime      Facade: McosRuntime builder · Confirmation coordinator · Run manager
 mcos-sdk          Plugin contracts
 plugins/
   mcos-plugin-hello     Reference sample (hello.world)        ✅
@@ -63,7 +71,7 @@ plugins/
   mcos-plugin-mcp       mcp.* adapter               (planned)
 mcos-android      Compose CLI / Chat shell           ✅
 mcos-server       Sync endpoint (REST + Bearer auth) ✅
-mcos-server       marketplace index         (planned, P3)
+mcos-server       marketplace index (host-side)     (planned, P3)
 ```
 
 For the full dependency graph and per-module target, see [`docs/en/REPOSITORIES.md`](./docs/en/REPOSITORIES.md).

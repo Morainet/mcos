@@ -10,6 +10,22 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### Module split: security / core / llm / marketplace (2026-08-17)
+- `mcos-runtime` split into four focused submodules, `mcos-runtime` itself remains as the **facade** (`McosRuntime` builder, `ConfirmationCoordinator`, `RunManager`) wiring them together:
+  - **`mcos-runtime-core`** — DSL parser → IR, command registry, 7-stage executor, event bus, workflow engine, memory.
+  - **`mcos-security`** — permission kernel, audit log, artifact signatures, egress policy, rate limiter, crash quarantine, enterprise policy.
+  - **`mcos-llm`** — AI planner/chat, multi-provider registry, grammar-constrained decoding (GBNF / JSON-schema), prompt-injection guard.
+  - **`mcos-marketplace`** — index client, install pipeline, blocklist verification, recipe store, reports, telemetry.
+
+### Marketplace client — install pipeline, search, governance (2026-08-16)
+- **Index client (09 §4.0/§11.1)**: `MarketplaceIndex` + `MarketplaceHttpTransport` — typed search with full params (`query`, `tags`, `minTrustLevel`, …) and `byCommand` endpoint (§11.1), 429/5xx retryable error mapping, cached GET.
+- **Search ranking (09 §9.1/§9.2)**: client-side `SearchRanking` — relevance + download count + recency + reviews score, recommendation fallbacks for empty results.
+- **Install pipeline (09 §7.0)**: `InstallState` state machine, `PluginInstaller` (download → verify → install → activate) with `PermissionDiff` update (§7.2) and uninstall (§7.3); **blocklist force-disable** (§14.4).
+- **Blocklist verification (09 §14.3)**: `BlocklistVerifier` — signature check before applying the blocklist.
+- **Recipe store (08 §8/§14.1)**: `searchRecipes`/`getRecipe` with `RecipeEnvelope`/`RecipePlaceholder`/`RecipeTriggerPreview`; **`RecipeDependencyResolver`** (`pluginId@semverRange`, §7.4) with `VersionRange` (`*` / exact / compare / `^` caret / `~` tilde); **`RecipeInstaller`** install wizard (§8.3) — `prepare` → `RecipeInstallPlan`, `submit` → `CompiledRecipe` with recursive `{{placeholder}}` IR token substitution and residual-token rejection.
+- **Governance (09 §14.1/§11.3)**: `reportPlugin` with `ReportReason` (malware / privacy violation / broken / abusive behavior / other) → `reportId`; opt-in `recordInstallTelemetry` (`InstallTelemetryEvent`).
+- **Tests**: +42 — `MarketplaceIndexTest` T19–T26, `RecipeEnvelopeTest` R1–R4, `RecipeDependencyResolverTest` D1–D12, `RecipeInstallerTest` I1–I11, `VersionRangeTest` caret/tilde/isValid. Total 746.
+
 ### Plugin trust levels & signature verification (2026-08-15)
 - **`TrustLevel` (08 §7.0)**: `BUILTIN` / `MARKETPLACE_VERIFIED` / `SIDELOAD_DEBUG` / `UNTRUSTED` — derived by the runtime from the artifact signature status (never self-asserted by plugins).
 - **`ArtifactVerifier` (09 §6.2)**: fail-closed six-step pipeline — SHA-256 integrity check, key resolution, key status check (REVOKED → reject), cached fast path (offline load), cryptographic signature verification (**Ed25519** preferred / **RSA-PSS-4096** legacy, with JCA name mapping), blocklist check; success cached as `(signingKeyId, payloadSha256)`.

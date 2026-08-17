@@ -42,7 +42,11 @@ MCOS 是一个开源的**移动命令总线（Mobile Command Bus）**设计：�
 已实现的多模块 Gradle 项目拓扑：
 
 ```
-mcos-runtime      Parser · Registry · Executor (7-stage) · Audit · Security · LLM · Workflow · EventBus · Memory
+mcos-runtime-core Parser → IR · Registry · Executor (7-stage) · EventBus · Workflow · Memory
+mcos-security     Permission kernel · Audit · Signatures · Egress · Rate limit · Enterprise policy
+mcos-llm          AI planner · Multi-provider registry · GBNF / JSON-schema decoding
+mcos-marketplace  Index client · Install pipeline · Recipe store · Reports · Telemetry
+mcos-runtime      Facade: McosRuntime builder · Confirmation coordinator · Run manager
 mcos-sdk          Plugin contracts
 plugins/
   mcos-plugin-hello     Reference sample (hello.world)        ✅
@@ -52,8 +56,8 @@ plugins/
   mcos-plugin-iot       home.* / iot.*              (planned)
   mcos-plugin-mcp       mcp.* adapter               (planned)
 mcos-android      Compose CLI / Chat shell           ✅
-mcos-server       同步端点（REST + Bearer 认证）       ✅
-mcos-server       市场索引                     (planned, P3)
+mcos-server       Sync endpoint (REST + Bearer auth) ✅
+mcos-server       marketplace index (host-side)     (planned, P3)
 ```
 
 完整的依赖图与各模块目标，见 [`docs/zh/REPOSITORIES.md`](./docs/zh/REPOSITORIES.md)。
@@ -62,14 +66,18 @@ mcos-server       市场索引                     (planned, P3)
 
 ## 项目状态
 
-**Phase 1 — 核心运行时已实现（Draft v0.1.0）。Phase 2 — 工作流引擎、类型化事件总线、记忆增强、Android 外壳已实现。**
+**Phase 1 — 核心运行时已实现（Draft v0.1.0）。Phase 2 — 工作流引擎、类型化事件总线、记忆增强、Android 外壳已实现。Phase 3 — 插件市场客户端（索引、安装流水线、配方商店、举报、遥测）已实现。**
 
 仓库现在包含可构建的多模块 Gradle 工程：
 
 | 模块 | 内容 | 状态 |
 |------|------|------|
 | `mcos-sdk` | 插件契约（`McosPlugin`、`CommandHandler`、`HostServices`、`ExecutionContext`、`AuthStamp`） | ✅ |
-| `mcos-runtime` | DSL 解析器、命令注册中心、7 阶段执行器、权限内核、限流器、出站策略、审计日志、LLM 规划/对话、工作流引擎、事件总线、记忆 | ✅ |
+| `mcos-runtime-core` | DSL 解析器 → IR、命令注册中心、7 阶段执行器、事件总线、工作流引擎、记忆 | ✅ |
+| `mcos-security` | 权限内核、审计日志、工件签名、出站策略、限流器、崩溃隔离、企业策略 | ✅ |
+| `mcos-llm` | AI 规划/对话、多 Provider 注册中心、语法约束解码、提示注入防护 | ✅ |
+| `mcos-marketplace` | 索引客户端、安装流水线、封禁清单验证、配方商店、依赖解析、用户举报、遥测、安装向导 | ✅ |
+| `mcos-runtime` | 门面（`McosRuntime` builder、确认协调器、运行管理器），组装各子模块 | ✅ |
 | `mcos-android` | Compose CLI / Chat 外壳 | ✅ |
 | `mcos-server` | 自托管同步端点：`SyncBlobTransport` REST 契约 + 强制 Bearer token 认证，不透明 blob 存储 | ✅ |
 
