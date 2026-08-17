@@ -19,7 +19,7 @@ AI 规划器将**目标**转化为**命令 DSL / 工作流 IR**。
 
 ### 1.1 架构定位
 
-规划器/智能体是一个**应用侧**组件（`com.mcos.android.planner`，[01 §3.1 / §6.2](./01-architecture.md)）。它位于运行时进程**之外**：运行时只看到一个 `PlannerBridge` 句柄（[03 §14](./03-runtime.md)），自身从不嵌入厂商 SDK（OpenAI/Gemini/Anthropic/…）。这一边界是刻意设计的 —— 它使运行时免受网络出口、API 密钥和模型版本漂移的影响，并允许应用在不触碰运行时代码的情况下更换提供商。
+规划器/智能体是一个**应用侧**组件（`com.morainet.mcos.android.planner`，[01 §3.1 / §6.2](./01-architecture.md)）。它位于运行时进程**之外**：运行时只看到一个 `PlannerBridge` 句柄（[03 §14](./03-runtime.md)），自身从不嵌入厂商 SDK（OpenAI/Gemini/Anthropic/…）。这一边界是刻意设计的 —— 它使运行时免受网络出口、API 密钥和模型版本漂移的影响，并允许应用在不触碰运行时代码的情况下更换提供商。
 
 规划器位于**10 阶段流水线上游**（阶段 1，Parse，[01 §4](./01-architecture.md)）。它产出的 IR 被送入阶段 1，方式与手写 DSL 完全一致：
 

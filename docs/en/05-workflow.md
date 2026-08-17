@@ -35,7 +35,7 @@ The Workflow Engine orchestrates **graphs of Command Protocol invocations** with
 
 ### 1.1 Engine positioning
 
-The Workflow Engine is a **sub-component of the Runtime** ([01 §6.3](./01-architecture.md)), package `com.mcos.runtime.workflow` ([03 §3](./03-runtime.md)). It is **not** one of the 10 pipeline stages defined in [01 §9.2](./01-architecture.md); rather, it sits **above** the pipeline. Each workflow step is an individual command invocation that re-enters the pipeline.
+The Workflow Engine is a **sub-component of the Runtime** ([01 §6.3](./01-architecture.md)), package `com.morainet.mcos.runtime.workflow` ([03 §3](./03-runtime.md)). It is **not** one of the 10 pipeline stages defined in [01 §9.2](./01-architecture.md); rather, it sits **above** the pipeline. Each workflow step is an individual command invocation that re-enters the pipeline.
 
 This document owns the graph-level concerns (IR shape, step types, triggers, join policies, compensation, retry coordination). Single-command concerns (parsing, schema validation, authorization, execution) are owned by [02](./02-command-protocol.md) and [03](./03-runtime.md) and are cross-referenced, not redefined.
 
@@ -160,7 +160,7 @@ stateDiagram-v2
 The JSON examples in §4.1–4.2 are illustrative; the **normative** types are these Kotlin data classes. The compile pass ([§1.2](#12-compile-time--run-time-separation)) produces a `CompiledWorkflow`; the JSON IR is the input to that pass.
 
 ```kotlin
-package com.mcos.runtime.workflow
+package com.morainet.mcos.runtime.workflow
 
 typealias StepId = String   // mirrors 01 §11.5
 

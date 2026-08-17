@@ -46,7 +46,7 @@ flowchart BT
 | | |
 |---|---|
 | 路径 | `mcos-sdk/` |
-| 包名 | `com.mcos.sdk` |
+| 包名 | `com.morainet.mcos.sdk` |
 | 职责 | 宿主侧契约层：`McosPlugin`、`CommandHandler`、`CommandDescriptor`、`SideEffectClass`、`CommandResult`、`ExecutionContext`。 |
 | 依赖 | （无——叶子层）`api` kotlinx-serialization-json、kotlinx-coroutines-core |
 | 技术栈 | Kotlin/JVM · JDK 17 · kotlinx.serialization |
@@ -57,7 +57,7 @@ flowchart BT
 | | |
 |---|---|
 | 路径 | `mcos-runtime/` |
-| 包名 | `com.mcos.runtime.*`（`ir`、`parse`、`registry`、`permission`、`scheduler`、`executor` 等） |
+| 包名 | `com.morainet.mcos.runtime.*`（`ir`、`parse`、`registry`、`permission`、`scheduler`、`executor` 等） |
 | 职责 | 解析 DSL → IR；Registry（注册表）、Permission Kernel（权限内核）、Scheduler（调度器）、Workflow Engine（工作流引擎）、Executor（执行器）、Audit（审计）。 |
 | 依赖 | `api(project(":mcos-sdk"))`；serialization-json、coroutines-core |
 | 技术栈 | Kotlin/JVM · JDK 17 · kotlinx.serialization |
@@ -68,7 +68,7 @@ flowchart BT
 | | |
 |---|---|
 | 路径 | `mcos-android/` |
-| 包名 | `com.mcos.android` |
+| 包名 | `com.morainet.mcos.android` |
 | 职责 | Jetpack Compose 客户端：DSL/Chat 输入、计划预览、确认交互、插件商店、设置、审计查看器。 |
 | 依赖 | `:mcos-runtime`、`:mcos-sdk`、各插件；AndroidX（core-ktx、lifecycle、activity-compose）、Compose BOM |
 | 技术栈 | Kotlin/Android · Compose · compileSdk 35 / minSdk 26 · JDK 17 |
@@ -79,7 +79,7 @@ flowchart BT
 | | |
 |---|---|
 | 路径 | `plugins/mcos-plugin-hello/` |
-| 包名 | `com.mcos.plugin.hello` |
+| 包名 | `com.morainet.mcos.plugin.hello` |
 | 职责 | 标准示例插件。`hello.world(name)` 返回一句问候。附带 `plugin.json` 清单。 |
 | 依赖 | `api(project(":mcos-sdk"))`；serialization-json、coroutines-core |
 | 技术栈 | Kotlin/JVM · JDK 17 |
@@ -90,7 +90,7 @@ flowchart BT
 | | |
 |---|---|
 | 路径 | `plugins/mcos-plugin-system/` |
-| 包名 | `com.mcos.plugin.system` |
+| 包名 | `com.morainet.mcos.plugin.system` |
 | 职责 | `sys.notify` / `sys.share` / `sys.intent.start` 命令。 |
 | 依赖 | `api(project(":mcos-sdk"))` |
 | 技术栈 | Kotlin/JVM · JDK 17 |
@@ -101,7 +101,7 @@ flowchart BT
 | | |
 |---|---|
 | 路径 | `plugins/mcos-plugin-camera/` |
-| 包名 | `com.mcos.plugin.camera` |
+| 包名 | `com.morainet.mcos.plugin.camera` |
 | 职责 | `camera.capture` / `camera.scan` 命令。 |
 | 依赖 | `api(project(":mcos-sdk"))` |
 | 技术栈 | Kotlin/JVM · JDK 17 |
@@ -112,7 +112,7 @@ flowchart BT
 | | |
 |---|---|
 | 路径 | `plugins/mcos-plugin-files/` |
-| 包名 | `com.mcos.plugin.files` |
+| 包名 | `com.morainet.mcos.plugin.files` |
 | 职责 | `file.list` / `file.search` / `photo.search` / `photo.compress` 命令。 |
 | 依赖 | `api(project(":mcos-sdk"))` |
 | 技术栈 | Kotlin/JVM · JDK 17 |
@@ -123,7 +123,7 @@ flowchart BT
 | | |
 |---|---|
 | 路径 | `mcos-server/` |
-| 包名 | `com.mcos.server` |
+| 包名 | `com.morainet.mcos.server` |
 | 职责 | 独立自托管同步端点：`SyncBlobTransport` REST 契约（`PUT|GET|DELETE /blobs/{id}`）+ 强制 Bearer token 认证；磁盘持久化存储不透明（已加密）blob，绝不解析内容。 |
 | 依赖 | 无（JDK `com.sun.net.httpserver`）；测试复用 `:mcos-runtime` 做真实 transport 互操作验证 |
 | 技术栈 | Kotlin/JVM · JDK 17 · 零第三方运行时依赖 |
@@ -155,7 +155,7 @@ flowchart BT
 | JVM toolchain | 17 |
 | kotlinx.serialization | 1.7.3+ |
 | kotlinx.coroutines | 1.9.0+ |
-| group（JVM 模块） | `com.mcos` |
+| group（JVM 模块） | `com.morainet.mcos` |
 | version（JVM 模块） | `0.1.0-SNAPSHOT` |
 
 > 以上为建议值，非承诺；首次真实构建可能锁定不同的兼容版本。
@@ -164,7 +164,7 @@ flowchart BT
 
 ## 5. 约定
 
-- **包根：** `com.mcos.<module>`——Android、runtime、sdk；插件为 `com.mcos.plugin.<name>`。
+- **包根：** `com.morainet.mcos.<module>`——Android、runtime、sdk；插件为 `com.morainet.mcos.plugin.<name>`。
 - **官方插件 ID：** `mcos.plugin.<name>`（示例插件 `example.hello` 除外）。
 - **清单约定：** 每个插件**应当**附带一份符合 [04-plugin-sdk.md](./04-plugin-sdk.md) §4 的 `plugin.json`。
 - **DSL / IR / Workflow 版本：** 见 [02-command-protocol.md](./02-command-protocol.md) §14（`dslVersion` 为 `MAJOR.MINOR`；命令契约为 SemVer）。

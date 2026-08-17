@@ -86,7 +86,7 @@ SDK 文档关注**逻辑**形态；具体的打包口味属于宿主关心的问
     "name": "MCOS",
     "url": "https://github.com/mcos-org"
   },
-  "entry": "com.mcos.plugin.camera.CameraPlugin",
+  "entry": "com.morainet.mcos.plugin.camera.CameraPlugin",
   "permissions": [
     {
       "type": "android",

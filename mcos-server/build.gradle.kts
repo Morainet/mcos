@@ -8,7 +8,7 @@ kotlin {
 }
 
 application {
-    mainClass.set("com.mcos.server.MainKt")
+    mainClass.set("com.morainet.mcos.server.MainKt")
 }
 
 dependencies {

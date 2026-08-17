@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "com.mcos.android"
+    namespace = "com.morainet.mcos.android"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.mcos.android"
+        applicationId = "com.morainet.mcos.android"
         minSdk = 26
         targetSdk = 35
         versionCode = 1

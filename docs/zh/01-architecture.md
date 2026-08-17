@@ -111,19 +111,19 @@ flowchart TB
 ### 3.1 包 → 模块对照（按实际实现）
 
 运行时族已拆分为职责聚焦的 Gradle 模块；无论模块边界如何，包名保持
-`com.mcos.runtime.*` 不变（见 §3.3）。
+`com.morainet.mcos.runtime.*` 不变（见 §3.3）。
 
 | 包 | Gradle 模块 | 依赖 |
 |----|------------|------|
-| `com.mcos.sdk` | `mcos-sdk` | — |
-| `com.mcos.runtime.security` · `audit` · `validate` · `permission` | `mcos-security` | sdk |
-| `com.mcos.runtime.api`（RuntimeTypes、StubHostServices）· `error` · `ir` · `events` · `registry` · `plugin` · `memory` · `executor` · `workflow` · `parse` | `mcos-runtime-core` | sdk、security |
-| `com.mcos.runtime.llm` | `mcos-llm` | sdk、security、runtime-core、runtime（facade） |
-| `com.mcos.runtime.marketplace` | `mcos-marketplace` | sdk、security、runtime-core |
-| `com.mcos.runtime.api`（McosRuntime facade、ConfirmationCoordinator、RunManager） | `mcos-runtime` | sdk、security、runtime-core、marketplace |
-| `com.mcos.android`（含 `host`） | `mcos-android` | runtime（facade）、llm、plugins |
+| `com.morainet.mcos.sdk` | `mcos-sdk` | — |
+| `com.morainet.mcos.runtime.security` · `audit` · `validate` · `permission` | `mcos-security` | sdk |
+| `com.morainet.mcos.runtime.api`（RuntimeTypes、StubHostServices）· `error` · `ir` · `events` · `registry` · `plugin` · `memory` · `executor` · `workflow` · `parse` | `mcos-runtime-core` | sdk、security |
+| `com.morainet.mcos.runtime.llm` | `mcos-llm` | sdk、security、runtime-core、runtime（facade） |
+| `com.morainet.mcos.runtime.marketplace` | `mcos-marketplace` | sdk、security、runtime-core |
+| `com.morainet.mcos.runtime.api`（McosRuntime facade、ConfirmationCoordinator、RunManager） | `mcos-runtime` | sdk、security、runtime-core、marketplace |
+| `com.morainet.mcos.android`（含 `host`） | `mcos-android` | runtime（facade）、llm、plugins |
 | — | `mcos-server` | runtime（facade） |
-| `com.mcos.plugin.*` | `plugins:mcos-plugin-*` | sdk |
+| `com.morainet.mcos.plugin.*` | `plugins:mcos-plugin-*` | sdk |
 
 ### 3.2 模块依赖图
 
@@ -184,7 +184,7 @@ graph LR
   校验器的 `JsonObject`、`Executor` 构造器的 `SecurityConfig`）。
 
 **跨模块的 split-package 在 JVM 上合法，但属有意为之。**
-`com.mcos.runtime.api` 横跨 `mcos-runtime-core`（RuntimeTypes——
+`com.morainet.mcos.runtime.api` 横跨 `mcos-runtime-core`（RuntimeTypes——
 核心管线发布的事件与请求类型）与 `mcos-runtime`（组装管线的
 McosRuntime facade）。仅 api 包允许这样做；其他包不得跨模块分布。
 
@@ -382,14 +382,14 @@ Planner **负责提议**。Runtime **负责校验并执行**。
 
 理由：UI 与长时间运行的工作流之间的崩溃隔离；更清晰的权限与审计边界；前台服务工作流不必绑定 UI 生命周期。
 
-**迁移 seam：** `com.mcos.android` 中的 `RuntimeClient` 是 App 侧唯一的接触点。在 MVP 中它持有直接的 `McosRuntime` 引用；在 V1 中它持有一个 Binder stub。UI 层对此完全无感。
+**迁移 seam：** `com.morainet.mcos.android` 中的 `RuntimeClient` 是 App 侧唯一的接触点。在 MVP 中它持有直接的 `McosRuntime` 引用；在 V1 中它持有一个 Binder stub。UI 层对此完全无感。
 
 ### 7.2 App↔Runtime 契约（传输无关）
 
-该契约在 `mcos-sdk`（`com.mcos.sdk.runtime.RuntimeFacade`）中定义为一个 Kotlin 接口。进程内 delegate 与 AIDL stub 都实现它：
+该契约在 `mcos-sdk`（`com.morainet.mcos.sdk.runtime.RuntimeFacade`）中定义为一个 Kotlin 接口。进程内 delegate 与 AIDL stub 都实现它：
 
 ```kotlin
-package com.mcos.sdk.runtime
+package com.morainet.mcos.sdk.runtime
 
 interface RuntimeFacade {
     suspend fun execute(request: ExecuteRequest): ExecuteHandle
@@ -425,7 +425,7 @@ interface RuntimeFacade {
 **V1 Service 定义骨架：**
 
 ```kotlin
-// mcos-runtime/src/main/aidl/com/mcos/runtime/IRuntimeService.aidl
+// mcos-runtime/src/main/aidl/com/morainet/mcos/runtime/IRuntimeService.aidl
 interface IRuntimeService {
     ExecuteHandleParcel execute(in ExecuteRequestParcel req, in IRuntimeCallback cb);
     PreviewResultParcel preview(in ExecuteRequestParcel req);
@@ -664,7 +664,7 @@ fun Throwable.toMcosError(): McosError = when (this) {
 SDK 文档（[04 §6](./04-plugin-sdk.md)）曾把插件 facade 称为 `PluginHost`；Runtime 文档称之为 `HostServices`。**本文档统一采用 `HostServices`** 作为唯一的 facade 类型：
 
 ```kotlin
-package com.mcos.sdk
+package com.morainet.mcos.sdk
 
 interface HostServices {
     fun files(): FileService
@@ -742,7 +742,7 @@ sealed class RuntimeEvent {
     data class RunStarted(…, val source: Source, val ir: ExecutionIr) : RuntimeEvent()
     data class StepStarted(…, val stepId: StepId, val commandId: CommandId) : RuntimeEvent()
     data class Progress(…, val stepId: StepId?, val percent: Int?, val message: String?) : RuntimeEvent()
-    data class Artifact(…, val stepId: StepId?, val artifact: com.mcos.sdk.Artifact) : RuntimeEvent()
+    data class Artifact(…, val stepId: StepId?, val artifact: com.morainet.mcos.sdk.Artifact) : RuntimeEvent()
     data class Log(…, val stepId: StepId?, val level: LogLevel, val message: String) : RuntimeEvent()
     data class ConfirmationNeeded(…, val stepId: StepId?, val prompt: ConfirmationPrompt) : RuntimeEvent()
     data class StepSucceeded(…, val stepId: StepId, val value: JsonElement?, val durationMs: Long) : RuntimeEvent()
@@ -905,7 +905,7 @@ App Function discovery
 ### 15.1 `McosErrorCode` enum
 
 ```kotlin
-package com.mcos.sdk
+package com.morainet.mcos.sdk
 
 enum class McosErrorCode(val retryableDefault: Boolean) {
     PARSE_ERROR(false),
