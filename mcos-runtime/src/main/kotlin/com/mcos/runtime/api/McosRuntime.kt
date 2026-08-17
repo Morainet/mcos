@@ -6,16 +6,13 @@ import com.mcos.runtime.executor.Command
 import com.mcos.runtime.executor.Executor
 import com.mcos.runtime.ir.ExecutionIr
 import com.mcos.runtime.ir.ParseResult
-import com.mcos.runtime.marketplace.InstallProgress
-import com.mcos.runtime.marketplace.InstallResult
-import com.mcos.runtime.marketplace.MarketplaceIndex
 import com.mcos.runtime.marketplace.PluginInstaller
-import com.mcos.runtime.marketplace.UninstallResult
 import com.mcos.runtime.memory.EpisodicMemory
 import com.mcos.runtime.memory.EpisodicOutcome
 import com.mcos.runtime.memory.MemoryStore
 import com.mcos.runtime.memory.RunSummarizer
 import com.mcos.runtime.parse.DslParser
+import com.mcos.runtime.permission.DefaultPermissionKernel
 import com.mcos.runtime.permission.PermissionKernel
 import com.mcos.runtime.plugin.LoadResult
 import com.mcos.runtime.plugin.PluginLoader
@@ -26,10 +23,14 @@ import com.mcos.runtime.security.ArtifactVerifier
 import com.mcos.runtime.security.AuthStampSigner
 import com.mcos.runtime.security.CrashQuarantine
 import com.mcos.runtime.security.EnterprisePolicySource
+import com.mcos.runtime.security.HmacAuthStampSigner
 import com.mcos.runtime.security.InMemoryPublisherKeyStore
-import com.mcos.runtime.security.NetworkEgressPolicy
+import com.mcos.runtime.security.NullAuditLog
 import com.mcos.runtime.security.PluginTrustGate
-import com.mcos.runtime.security.RateLimiter
+import com.mcos.runtime.security.ScopeBasedEgressPolicy
+import com.mcos.runtime.security.SecurityConfig
+import com.mcos.runtime.security.SlidingWindowCrashQuarantine
+import com.mcos.runtime.security.TokenBucketRateLimiter
 import com.mcos.sdk.McosPlugin
 import com.mcos.runtime.workflow.WorkflowEngine
 import com.mcos.runtime.workflow.WorkflowJson
@@ -37,17 +38,14 @@ import com.mcos.runtime.workflow.WorkflowOutcome
 import com.mcos.runtime.workflow.WorkflowResult
 import com.mcos.runtime.workflow.WorkflowStep
 import com.mcos.runtime.workflow.WorkflowStore
-import com.mcos.sdk.AuthStamp
 import com.mcos.sdk.CommandResult
 import com.mcos.sdk.MemoryFacade
-import com.mcos.sdk.SideEffectClass
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Top-level runtime facade that wires all subsystems together.
@@ -81,59 +79,52 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * @param parser The DSL parser (default: [DslParser]).
  * @param registry The command registry.
- * @param permissionKernel The permission kernel.
  * @param executor The command executor.
  * @param memory The memory store.
  * @param eventBus The event bus for publishing runtime events.
  * @param workflowStore The registry of named workflow definitions.
  * @param workflowEngine The engine that executes workflow definitions.
  * @param episodicMemory Archival-tier store for run summaries (§8).
+ * @param authStampSigner Signs the retry stamps minted by the confirmation flow.
+ * @param confirmationTimeoutMs How long a run suspends awaiting confirmation.
+ * @param pluginLoader The trust-gated plugin loader ([09-marketplace.md §7.0]).
+ * @param pluginInstaller Optional end-to-end installer ([09-marketplace.md §7]).
  */
 class McosRuntime internal constructor(
     private val parser: DslParser,
     private val registry: CommandRegistry,
-    private val permissionKernel: PermissionKernel,
     private val executor: Executor,
     private val memory: MemoryStore,
     private val eventBus: EventBus,
     private val workflowStore: WorkflowStore,
     private val workflowEngine: WorkflowEngine,
     private val episodicMemory: EpisodicMemory,
-    private val authStampSigner: AuthStampSigner?,
+    private val authStampSigner: AuthStampSigner,
     private val confirmationTimeoutMs: Long,
     private val pluginLoader: PluginLoader,
-    private val marketplaceIndex: MarketplaceIndex?,
     private val pluginInstaller: PluginInstaller?,
 ) {
     private val summarizer = RunSummarizer(episodicMemory)
+
     // ─── Confirmation flow (08-security.md §5) ──────────────────────────
     //
     // Commands whose side-effect class requires confirmation return
     // CONFIRMATION_REQUIRED. The run suspends on a deferred until the host
     // answers via respondConfirmation(); an approved command is retried with a
     // signed AuthStamp so the permission kernel is bypassed for exactly that
-    // command/run.
+    // command/run. See [ConfirmationCoordinator].
+    private val confirmations = ConfirmationCoordinator(
+        eventBus = eventBus,
+        signer = authStampSigner,
+        registry = registry,
+        timeoutMs = confirmationTimeoutMs,
+    )
 
-    private val pendingConfirmations = ConcurrentHashMap<String, CompletableDeferred<ConfirmationDecision>>()
-
-    private fun confirmationKey(runId: String, commandId: String) = "$runId\u0000$commandId"
     // ─── Active run tracking ─────────────────────────────────────────────
-
-    private val activeRuns = ConcurrentHashMap<String, Job>()
-
-    /**
-     * Owned coroutine scope for all run executions (P0-C2).
-     *
-     * Previously `execute()` created a fresh `CoroutineScope(Dispatchers.Default)`
-     * per call — an *orphan* scope with no parent, never cancelled, leaking one
-     * scope (and its dispatcher resources) per run. This owned scope fixes that:
-     *  - Every run launched by [execute] is a child of this scope, so
-     *    [shutdown] cleanly cancels them all.
-     *  - The [SupervisorJob] means one run's failure does not cancel sibling
-     *    runs (structured concurrency with failure isolation).
-     *  - [activeRuns] entries are removed from each run's `finally` block.
-     */
-    private val runScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    //
+    // Runs execute as children of an owned, supervised scope so shutdown()
+    // cancels them cleanly (P0-C2). See [RunManager].
+    private val runManager = RunManager()
 
     /**
      * Internal plan produced by payload parsing.
@@ -202,9 +193,9 @@ class McosRuntime internal constructor(
             return ExecuteHandle(runId, ExecutionStatus.COMPLETED)
         }
 
-        // Launch execution as a child of the owned runScope (P0-C2), so the
+        // Launch execution as a child of the owned run scope (P0-C2), so the
         // runtime owns the run's lifecycle and shutdown() cancels it cleanly.
-        val job = runScope.launch {
+        runManager.launch(runId) {
             val startTime = System.currentTimeMillis()
             try {
                 when (plan) {
@@ -216,12 +207,9 @@ class McosRuntime internal constructor(
                 eventBus.publish(runId, RuntimeEvent.RunCancelled(runId))
             } catch (e: Exception) {
                 eventBus.publish(runId, RuntimeEvent.RunFailed(runId, e.message ?: "Unknown error"))
-            } finally {
-                activeRuns.remove(runId)
             }
         }
 
-        activeRuns[runId] = job
         return ExecuteHandle(runId, ExecutionStatus.RUNNING)
     }
 
@@ -286,7 +274,7 @@ class McosRuntime internal constructor(
      * Cancel a running execution by its runId.
      */
     fun cancel(runId: String) {
-        activeRuns[runId]?.cancel()
+        runManager.cancel(runId)
     }
 
     /**
@@ -299,9 +287,7 @@ class McosRuntime internal constructor(
     fun shutdown() {
         // Cancel every active run; the SupervisorJob's children are cancelled
         // in bulk by cancelling the scope's job as well.
-        activeRuns.values.forEach { it.cancel() }
-        activeRuns.clear()
-        runScope.cancel()
+        runManager.shutdown()
     }
 
     /**
@@ -321,21 +307,12 @@ class McosRuntime internal constructor(
         runId: String,
         commandId: String,
         decision: ConfirmationDecision,
-    ): Boolean {
-        val deferred = pendingConfirmations[confirmationKey(runId, commandId)] ?: return false
-        deferred.complete(decision)
-        return true
-    }
+    ): Boolean = confirmations.respond(runId, commandId, decision)
 
     /**
      * Access the command registry.
      */
     fun registry(): CommandRegistry = registry
-
-    /**
-     * Access the permission kernel.
-     */
-    fun permissions(): PermissionKernel = permissionKernel
 
     /**
      * Access the memory facade.
@@ -346,11 +323,6 @@ class McosRuntime internal constructor(
      * Access the episodic (run-summary) memory store (§8).
      */
     fun episodicMemory(): EpisodicMemory = episodicMemory
-
-    /**
-     * Access the event bus.
-     */
-    fun events(): EventBus = eventBus
 
     /**
      * Access the workflow store for registering/loading named workflows.
@@ -381,12 +353,6 @@ class McosRuntime internal constructor(
         builtin = builtin,
         plugin = plugin,
     )
-
-    /**
-     * Access the marketplace index client, or null when the host did not
-     * configure one ([09-marketplace.md §4]).
-     */
-    fun marketplaceIndex(): MarketplaceIndex? = marketplaceIndex
 
     /**
      * Access the plugin installer (download → verify → stage → load,
@@ -473,13 +439,13 @@ class McosRuntime internal constructor(
                 }
                 is CommandResult.Err -> {
                     if (result.code == "CONFIRMATION_REQUIRED") {
-                        val decision = requestConfirmation(runId, index, cmd, result)
+                        val decision = confirmations.requestConfirmation(runId, index, cmd, result)
                         when (decision) {
                             is ConfirmationDecision.Approve -> {
                                 // Retry exactly this command with a signed, run-scoped
                                 // AuthStamp so the permission kernel is bypassed for
                                 // the confirmed command only (08-security.md §5.2).
-                                when (val retry = executor.execute(cmd.id, cmd.args, auth = mintAuthStamp(runId, cmd))) {
+                                when (val retry = executor.execute(cmd.id, cmd.args, auth = confirmations.mintAuthStamp(runId, cmd))) {
                                     is CommandResult.Ok -> {
                                         val retryDuration = System.currentTimeMillis() - stepStart
                                         eventBus.publish(
@@ -532,78 +498,7 @@ class McosRuntime internal constructor(
         eventBus.publish(runId, RuntimeEvent.RunSucceeded(runId, totalDuration))
     }
 
-    // ─── Confirmation helpers (08-security.md §5) ─────────────────────────
-
-    /**
-     * Publish the [RuntimeEvent.ConfirmationNeeded] notification and suspend
-     * the run until the host answers via [respondConfirmation] or the
-     * confirmation timeout elapses (timeout ⇒ reject).
-     */
-    private suspend fun requestConfirmation(
-        runId: String,
-        index: Int,
-        cmd: Command,
-        result: CommandResult.Err,
-    ): ConfirmationDecision {
-        val sideEffectClass = (result.details?.get("sideEffectClass") as? kotlinx.serialization.json.JsonPrimitive)?.content
-        eventBus.publish(
-            runId,
-            RuntimeEvent.ConfirmationNeeded(
-                runId = runId,
-                commandId = cmd.id,
-                reason = result.message,
-                sideEffectClass = sideEffectClass,
-            )
-        )
-        return awaitConfirmation(runId, cmd.id)
-    }
-
-    private suspend fun awaitConfirmation(runId: String, commandId: String): ConfirmationDecision {
-        val key = confirmationKey(runId, commandId)
-        val deferred = CompletableDeferred<ConfirmationDecision>()
-        pendingConfirmations[key] = deferred
-        try {
-            return withTimeoutOrNull(confirmationTimeoutMs) { deferred.await() }
-                ?: ConfirmationDecision.Reject
-        } finally {
-            pendingConfirmations.remove(key)
-        }
-    }
-
-    /**
-     * Mint a signed, run-scoped [AuthStamp] covering exactly the permissions
-     * required by `cmd`, so a confirmed command can be retried without going
-     * through the permission kernel again. Grants mirror what the kernel would
-     * have included on an ordinary Authorized path.
-     */
-    private fun mintAuthStamp(runId: String, cmd: Command): AuthStamp {
-        val descriptor = (registry.resolve(cmd.id) as? RegistryResolveResult.Found)?.entry?.descriptor
-        val now = System.currentTimeMillis()
-        val grants = buildSet {
-            descriptor?.permissions?.forEach { add(it.name) }
-            descriptor?.let { addAll(implicitScopes(it.sideEffectClass)) }
-        }
-        val stamp = AuthStamp(
-            runId = runId,
-            commandId = cmd.id,
-            pluginId = descriptor?.pluginId.orEmpty(),
-            grantsUsed = grants,
-            issuedAt = now,
-            expiresAt = now + AUTH_STAMP_TTL_MS,
-        )
-        return authStampSigner?.sign(stamp) ?: stamp
-    }
-
-    private fun implicitScopes(sideEffectClass: SideEffectClass): Set<String> = when (sideEffectClass) {
-        SideEffectClass.network -> setOf("network.*")
-        SideEffectClass.destructive -> setOf("mcos:destructive")
-        SideEffectClass.control -> setOf("mcos:control")
-        else -> emptySet()
-    }
-
-    private companion object {
-        const val AUTH_STAMP_TTL_MS = 30_000L
-    }
+    // ─── Confirmation helpers live in [ConfirmationCoordinator] ─────────
 
     /**
      * Record the run in the episodic memory (07-memory.md §9.4). The summary
@@ -748,28 +643,26 @@ class McosRuntime internal constructor(
         private var workflowEngine: WorkflowEngine? = null
 
         // Signed stamps are enabled by default so the production path is
-        // secure out of the box; pass null to disable.
-        private var authStampSigner: AuthStampSigner? = AuthStampSigner()
+        // secure out of the box; pass TrustingAuthStampSigner to disable
+        // (the named, greppable opt-out).
+        private var authStampSigner: AuthStampSigner = HmacAuthStampSigner()
 
         // Crash-loop quarantine (08-security.md §15.3) is on by default.
-        private var quarantine: CrashQuarantine? = CrashQuarantine()
+        // NoopCrashQuarantine is the named opt-out.
+        private var quarantine: CrashQuarantine = SlidingWindowCrashQuarantine()
 
         // How long a run stays suspended awaiting a confirmation response
         // (08-security.md §6.3) before it is treated as rejected.
         private var confirmationTimeoutMs: Long = 60_000
 
-        // Enterprise policy source (08-security.md §13). Null → no enterprise
-        // policy enforcement.
-        private var enterprisePolicySource: EnterprisePolicySource? = null
+        // Enterprise policy source (08-security.md §13). Defaults to the
+        // named no-policy source; enforcement is a deliberate wiring choice.
+        private var enterprisePolicySource: EnterprisePolicySource = EnterprisePolicySource.None
 
         // Plugin trust pipeline (09-marketplace.md §6). When no loader is
         // injected, a default trust gate + verifier + in-memory key store is
         // built so `loadPlugin` is fail-closed out of the box.
         private var pluginLoader: PluginLoader? = null
-
-        // Marketplace index client (09-marketplace.md §4). Optional: only
-        // hosts that talk to a marketplace configure it.
-        private var marketplaceIndex: MarketplaceIndex? = null
 
         // End-to-end install flow (09-marketplace.md §7). Optional: hosts
         // without a download dir / transport skip the installer.
@@ -784,8 +677,8 @@ class McosRuntime internal constructor(
         fun withEventBus(eventBus: EventBus) = apply { this.eventBus = eventBus }
         fun withWorkflowStore(store: WorkflowStore) = apply { this.workflowStore = store }
         fun withWorkflowEngine(engine: WorkflowEngine) = apply { this.workflowEngine = engine }
-        fun withAuthStampSigner(signer: AuthStampSigner?) = apply { this.authStampSigner = signer }
-        fun withQuarantine(quarantine: CrashQuarantine?) = apply { this.quarantine = quarantine }
+        fun withAuthStampSigner(signer: AuthStampSigner) = apply { this.authStampSigner = signer }
+        fun withQuarantine(quarantine: CrashQuarantine) = apply { this.quarantine = quarantine }
         fun withConfirmationTimeoutMs(ms: Long) = apply { this.confirmationTimeoutMs = ms }
 
         /**
@@ -793,7 +686,7 @@ class McosRuntime internal constructor(
          * Call [FileEnterprisePolicySource] or a custom implementation; for a
          * static policy use `EnterprisePolicySource.fixed(...)`.
          */
-        fun withEnterprisePolicySource(source: EnterprisePolicySource?) = apply { this.enterprisePolicySource = source }
+        fun withEnterprisePolicySource(source: EnterprisePolicySource) = apply { this.enterprisePolicySource = source }
 
         /**
          * Inject a custom plugin loader. When omitted, the default loader
@@ -804,11 +697,6 @@ class McosRuntime internal constructor(
         fun withPluginLoader(loader: PluginLoader) = apply { this.pluginLoader = loader }
 
         /**
-         * Attach a marketplace index client ([09-marketplace.md §4]).
-         */
-        fun withMarketplaceIndex(index: MarketplaceIndex?) = apply { this.marketplaceIndex = index }
-
-        /**
          * Attach an end-to-end plugin installer ([09-marketplace.md §7]).
          * Optional — hosts without binary download support omit it.
          */
@@ -816,16 +704,22 @@ class McosRuntime internal constructor(
 
         fun build(): McosRuntime {
             val reg = registry ?: CommandRegistry()
-            val perm = permissionKernel ?: PermissionKernel()
-            val exec = executor ?: Executor(
-                reg, StubHostServices(memory),
-                permissionKernel = perm,
-                rateLimiter = RateLimiter(),
-                egressPolicy = NetworkEgressPolicy(),
-                authStampSigner = authStampSigner,
+            val perm = permissionKernel ?: DefaultPermissionKernel()
+
+            // The executor's security posture is assembled from this builder's
+            // knobs. [NullAuditLog] preserves the historical default (no audit
+            // trail) — hosts pass an audit sink explicitly via a custom
+            // Executor/SecurityConfig when they want one.
+            val security = SecurityConfig(
+                kernel = perm,
+                rateLimiter = TokenBucketRateLimiter(),
+                egress = ScopeBasedEgressPolicy(),
+                signer = authStampSigner,
                 quarantine = quarantine,
-                enterprisePolicySource = enterprisePolicySource,
+                enterprisePolicy = enterprisePolicySource,
+                auditLog = NullAuditLog,
             )
+            val exec = executor ?: Executor(reg, StubHostServices(memory), security)
 
             // The workflow engine defaults to the same executor, so control
             // flow steps and flat commands share one execution pipeline.
@@ -846,7 +740,6 @@ class McosRuntime internal constructor(
             return McosRuntime(
                 parser = parser,
                 registry = reg,
-                permissionKernel = perm,
                 executor = exec,
                 memory = memory,
                 eventBus = eventBus,
@@ -856,33 +749,9 @@ class McosRuntime internal constructor(
                 authStampSigner = authStampSigner,
                 confirmationTimeoutMs = confirmationTimeoutMs,
                 pluginLoader = loader,
-                marketplaceIndex = marketplaceIndex,
                 pluginInstaller = pluginInstaller,
             )
         }
     }
 }
 
-/**
- * Minimal [com.mcos.sdk.HostServices] stub for tests and default construction.
- * Real Android host should provide a full implementation.
- */
-class StubHostServices(
-    override val memory: MemoryFacade,
-) : com.mcos.sdk.HostServices {
-    private val stubSecureStore = object : com.mcos.sdk.SecureStore {
-        private val entries = ConcurrentHashMap<String, String>()
-        override suspend fun get(key: String): String? = entries[key]
-        override suspend fun put(key: String, value: String) { entries[key] = value }
-        override suspend fun remove(key: String) { entries.remove(key) }
-    }
-
-    override val files: com.mcos.sdk.FileService get() = error("FileService not available in stub")
-    override val net: com.mcos.sdk.NetService get() = error("NetService not available in stub")
-    override val ui: com.mcos.sdk.UiService get() = error("UiService not available in stub")
-    override val secureStore: com.mcos.sdk.SecureStore get() = stubSecureStore
-    override val clock: com.mcos.sdk.Clock get() = object : com.mcos.sdk.Clock {
-        override fun nowMs(): Long = System.currentTimeMillis()
-    }
-    override val json: com.mcos.sdk.JsonService get() = error("JsonService not available in stub")
-}

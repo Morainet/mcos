@@ -13,6 +13,7 @@ application {
 
 dependencies {
     testImplementation(libs.kotlin.test)
-    // Interop tests exercise the real device-side transport against this server.
-    testImplementation(project(":mcos-runtime"))
+    // Interop tests exercise the real device-side transport against this
+    // server (memory package lives in :mcos-runtime-core after the split).
+    testImplementation(project(":mcos-runtime-core"))
 }

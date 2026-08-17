@@ -40,6 +40,10 @@ dependencies {
     // MCOS internal modules
     implementation(project(":mcos-sdk"))
     implementation(project(":mcos-runtime"))
+    // MainActivity wires the LLM chat pipeline directly (ChatOrchestrator,
+    // LlmPlanner, providers, AndroidLlmHttpTransport implements the llm
+    // transport interface), so the app module depends on :mcos-llm explicitly.
+    implementation(project(":mcos-llm"))
     implementation(project(":plugins:mcos-plugin-hello"))
     implementation(project(":plugins:mcos-plugin-system"))
     implementation(project(":plugins:mcos-plugin-camera"))
@@ -48,6 +52,7 @@ dependencies {
     // AndroidX
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.activity.compose)
 
     // Compose
@@ -60,4 +65,8 @@ dependencies {
     // Debug
     debugImplementation(libs.compose.ui.tooling)
     debugImplementation(libs.compose.ui.test.manifest)
+
+    // Unit tests (McosViewModel — plain JVM, no Robolectric needed)
+    testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
 }

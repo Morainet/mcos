@@ -107,23 +107,89 @@ flowchart TB
 
 \* Accessibility bridges are optional, highly restricted, and not the preferred integration path.
 
-### 3.1 Package → module → phase
+### 3.1 Package → module map (as built)
 
-| Package | Gradle module | Phase |
-|---------|---------------|-------|
-| `com.mcos.android.ui` | `mcos-android` | P1 |
-| `com.mcos.android.planner` | `mcos-android` | P1 |
-| `com.mcos.runtime.api` | `mcos-runtime` | P1 |
-| `com.mcos.runtime.parser` | `mcos-runtime` | P1 |
-| `com.mcos.runtime.registry` | `mcos-runtime` | P1 |
-| `com.mcos.runtime.permission` | `mcos-runtime` | P1 |
-| `com.mcos.runtime.scheduler` | `mcos-runtime` | P1 |
-| `com.mcos.runtime.executor` | `mcos-runtime` | P1 |
-| `com.mcos.runtime.audit` | `mcos-runtime` | P1 |
-| `com.mcos.runtime.eventbus` | `mcos-runtime` | P2 (seam now) |
-| `com.mcos.runtime.memory` | `mcos-runtime` | P2 (seam now) |
-| `com.mcos.runtime.workflow` | `mcos-runtime` | P2 (seam now) |
-| `com.mcos.sdk` | `mcos-sdk` | P1 |
+The runtime family is split into focused Gradle modules; package names stay
+`com.mcos.runtime.*` regardless of module boundaries (see §3.3).
+
+| Package(s) | Gradle module | Depends on |
+|------------|---------------|------------|
+| `com.mcos.sdk` | `mcos-sdk` | — |
+| `com.mcos.runtime.security` · `audit` · `validate` · `permission` | `mcos-security` | sdk |
+| `com.mcos.runtime.api` (RuntimeTypes, StubHostServices) · `error` · `ir` · `events` · `registry` · `plugin` · `memory` · `executor` · `workflow` · `parse` | `mcos-runtime-core` | sdk, security |
+| `com.mcos.runtime.llm` | `mcos-llm` | sdk, security, runtime-core, runtime (facade) |
+| `com.mcos.runtime.marketplace` | `mcos-marketplace` | sdk, security, runtime-core |
+| `com.mcos.runtime.api` (McosRuntime facade, ConfirmationCoordinator, RunManager) | `mcos-runtime` | sdk, security, runtime-core, marketplace |
+| `com.mcos.android` (+ `host`) | `mcos-android` | runtime (facade), llm, plugins |
+| — | `mcos-server` | runtime (facade) |
+| `com.mcos.plugin.*` | `plugins:mcos-plugin-*` | sdk |
+
+### 3.2 Module dependency graph
+
+```mermaid
+graph LR
+  SDK[mcos-sdk]
+  SEC[mcos-security]
+  CORE[mcos-runtime-core]
+  LLM[mcos-llm]
+  MKT[mcos-marketplace]
+  FACADE[mcos-runtime<br/>facade]
+  AND[mcos-android]
+  SRV[mcos-server]
+  PLUGINS[mcos-plugin-*]
+
+  SEC --> SDK
+  CORE --> SDK
+  CORE --> SEC
+  LLM --> SDK
+  LLM --> SEC
+  LLM --> CORE
+  LLM --> FACADE
+  MKT --> SDK
+  MKT --> SEC
+  MKT --> CORE
+  FACADE --> SDK
+  FACADE --> SEC
+  FACADE --> CORE
+  FACADE --> MKT
+  AND --> FACADE
+  AND --> LLM
+  AND --> PLUGINS
+  SRV --> FACADE
+  PLUGINS --> SDK
+```
+
+Notable edges:
+
+- `mcos-llm` depends on the facade because `ChatOrchestrator` drives a full
+  `McosRuntime`; the facade itself does **not** depend on `mcos-llm`, so the
+  cycle is one-directional at module level.
+- `mcos-android` / `mcos-server` depend only on the facade (plus `mcos-llm`
+  where the host uses the chat pipeline) — they never reach into core,
+  security, or marketplace directly.
+
+### 3.3 Module-boundary rules
+
+**`internal` visibility is module-scoped.** Since the split, a declaration
+marked `internal` in one Gradle module is invisible to every other module —
+including the runtime-family modules that share its package prefix, and
+including other modules' test source sets. Rules of thumb:
+
+- Cross-module test fakes must go through public API surface (e.g. implement
+  the `EventBus` interface and construct a public `EventSubscription`).
+- Helper couplings that used to rely on same-package `internal` (e.g.
+  `RateLimitKind.maxTokens`) live in the implementing class's module.
+- Prefer promoting a member to public over exporting a whole module as
+  `api`; reserve `api` for types appearing in public signatures (`Flow` in
+  `EventBus.observe`, `JsonObject` in validators, `SecurityConfig` in the
+  `Executor` constructor).
+
+**Split packages across modules are legal on JVM but deliberate.**
+`com.mcos.runtime.api` spans `mcos-runtime-core` (RuntimeTypes — the event
+and request types the core pipeline publishes) and `mcos-runtime` (the
+McosRuntime facade assembling the pipeline). Keep it that way only for the
+api package; do not spread other packages across modules.
+
 
 ---
 
@@ -921,12 +987,12 @@ enum class McosErrorCode(val retryableDefault: Boolean) {
 
 ## 17. Mapping to Repositories & P1 Implementation
 
-> All code-side modules are **spec-only** (not yet implemented). The repository holds design docs and fixtures today.
+> The P1 modules below are **implemented** in this repository (runtime family, Android shell, server, reference plugins), sharded across Gradle module test tasks in CI; P2/P3 rows remain spec-only. See [11-implementation-status.md](./11-implementation-status.md) for per-subsystem status.
 
 | Architecture piece | Primary repo / package | Target phase |
 |--------------------|------------------------|--------------|
 | UI | `mcos-android` | P1 |
-| Runtime kernel | `mcos-runtime` | P1 |
+| Runtime kernel | `mcos-security` · `mcos-runtime-core` · `mcos-llm` · `mcos-marketplace` · `mcos-runtime` (facade) | P1 |
 | SDK APIs | `mcos-sdk` | P1 |
 | Reference plugin | `mcos-plugin-hello` | P1 |
 | Built-in plugins | `mcos-plugin-system` · `mcos-plugin-camera` | P1 |
@@ -944,7 +1010,7 @@ Maps the 10-step P1 path from [11-implementation-status.md §6](./11-implementat
 
 | P1 step | This doc § |
 |---------|-----------|
-| 1. Gradle multi-module build | [§3.1](#31-package--module--phase) |
+| 1. Gradle multi-module build | [§3.1](#31-package--module--map-as-built) |
 | 2. `DslParser` | [§9.2](#92-stage-details) Stage 1 |
 | 3. `CommandRegistry` | [§10](#10-command-registry-architecture) |
 | 4. `Executor` | [§9.2](#92-stage-details) Stage 8, [§11.2](#112-executioncontext--accessors) |

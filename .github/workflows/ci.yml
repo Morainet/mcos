@@ -42,17 +42,17 @@ jobs:
 
       - name: Golden fixture gate (DSL ↔ IR round-trip)
         run: >-
-          timeout -k 60s 8m ./gradlew :mcos-runtime:test --tests
-          "com.mcos.runtime.parse.DslParserTest"
+          timeout -k 60s 8m ./gradlew :mcos-runtime-core:test
+          --tests "com.mcos.runtime.parse.DslParserTest"
           --console=plain --no-daemon
 
   # ── JVM tests, sharded to run in parallel ───────────────────────────────
-  # Pure Kotlin/JVM modules (sdk, runtime, 4 plugins). Each shard is an
-  # independent job so the wall-clock time drops from ~40 min (serial) to the
-  # slowest shard (~8-12 min). fail-fast=false keeps every shard's report.
-  # runtime-platform was split into llm + core: the five-package combo hung
-  # for hours (SharedFlow observer never cancelled in McosRuntimeConfirmationTest),
-  # and a hang in one shard must not mask the other packages' results.
+  # Pure Kotlin/JVM modules (sdk + the runtime split: security, runtime-core,
+  # llm, marketplace, facade + 4 plugins). Each shard is an independent job so
+  # the wall-clock time stays at the slowest shard. The old five-package
+  # --tests combo on one module hung for hours (SharedFlow observer never
+  # cancelled); per-module tasks eliminate that class of failure entirely —
+  # package-level parallelism is now Gradle's problem inside one module.
   # timeout-minutes + `timeout -k 60s 25m` turn any hang into a hard failure.
   jvm-tests:
     name: JVM tests (${{ matrix.shard }})
@@ -65,39 +65,23 @@ jobs:
           - shard: sdk
             tasks: ":mcos-sdk:test"
 
-          - shard: runtime-parse-marketplace-plugin
-            tasks: >-
-              :mcos-runtime:test
-              --tests "com.mcos.runtime.parse.*"
-              --tests "com.mcos.runtime.marketplace.*"
-              --tests "com.mcos.runtime.plugin.*"
-
           - shard: runtime-security
-            tasks: >-
-              :mcos-runtime:test
-              --tests "com.mcos.runtime.security.*"
-              --tests "com.mcos.runtime.audit.*"
-              --tests "com.mcos.runtime.validate.*"
+            tasks: ":mcos-security:test"
 
           - shard: runtime-core
-            tasks: >-
-              :mcos-runtime:test
-              --tests "com.mcos.runtime.executor.*"
-              --tests "com.mcos.runtime.registry.*"
+            tasks: ":mcos-runtime-core:test"
 
-          - shard: runtime-platform-llm
-            tasks: ":mcos-runtime:test --tests \"com.mcos.runtime.llm.*\""
+          - shard: runtime-llm
+            tasks: ":mcos-llm:test"
 
-          - shard: runtime-platform-core
-            tasks: >-
-              :mcos-runtime:test
-              --tests "com.mcos.runtime.memory.*"
-              --tests "com.mcos.runtime.permission.*"
-              --tests "com.mcos.runtime.events.*"
-              --tests "com.mcos.runtime.api.*"
+          - shard: runtime-marketplace
+            tasks: ":mcos-marketplace:test"
 
-          - shard: runtime-workflow
-            tasks: ":mcos-runtime:test --tests \"com.mcos.runtime.workflow.*\""
+          - shard: runtime-facade
+            tasks: ":mcos-runtime:test"
+
+          - shard: server
+            tasks: ":mcos-server:test"
 
           - shard: plugins
             tasks: >-
@@ -158,8 +142,8 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Assemble debug APK
-        run: timeout -k 60s 25m ./gradlew :mcos-android:assembleDebug --console=plain --no-daemon
+      - name: Unit tests + assemble debug APK
+        run: timeout -k 60s 25m ./gradlew :mcos-android:testDebugUnitTest :mcos-android:assembleDebug --console=plain --no-daemon
 
       - name: Upload debug APK
         if: ${{ !cancelled() }}

@@ -17,7 +17,11 @@ dependencyResolutionManagement {
 rootProject.name = "mcos"
 
 include(":mcos-sdk")
+include(":mcos-security")
+include(":mcos-runtime-core")
 include(":mcos-runtime")
+include(":mcos-llm")
+include(":mcos-marketplace")
 include(":mcos-android")
 include(":mcos-server")
 include(":plugins:mcos-plugin-hello")

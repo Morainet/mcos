@@ -32,7 +32,7 @@ import org.junit.Test
 
 class RunSummarizerTest {
 
-    private val permissions = com.mcos.runtime.permission.PermissionKernel()
+    private val permissions = com.mcos.runtime.permission.DefaultPermissionKernel()
 
     private fun newEpisodic(): EpisodicMemory = EpisodicMemory()
 
