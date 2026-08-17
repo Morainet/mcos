@@ -469,7 +469,7 @@ handler.invoke(ctx) with withTimeout(timeoutMs):
 [01 §10.3](./01-architecture.md) 引用了 `McosException` 作为插件为声明特定错误码而抛出的异常类型；它在此定义：
 
 ```kotlin
-package com.mcos.sdk
+package com.morainet.mcos.sdk
 
 data class McosException(
     val code: String,            // MUST be a valid McosErrorCode (01 §15.1) or plugin-namespaced code

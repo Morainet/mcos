@@ -46,7 +46,7 @@ Read bottom-up: `mcos-sdk` is the leaf contract layer; everything depends on it.
 | | |
 |---|---|
 | Path | `mcos-sdk/` |
-| Package | `com.mcos.sdk` |
+| Package | `com.morainet.mcos.sdk` |
 | Role | The host-facing contract layer: `McosPlugin`, `CommandHandler`, `CommandDescriptor`, `SideEffectClass`, `CommandResult`, `ExecutionContext`. |
 | Depends on | (none — leaf) `api` kotlinx-serialization-json, kotlinx-coroutines-core |
 | Stack | Kotlin/JVM · JDK 17 · kotlinx.serialization |
@@ -57,7 +57,7 @@ Read bottom-up: `mcos-sdk` is the leaf contract layer; everything depends on it.
 | | |
 |---|---|
 | Path | `mcos-runtime/` |
-| Package | `com.mcos.runtime.*` (`ir`, `parse`, `registry`, `permission`, `scheduler`, `executor`, …) |
+| Package | `com.morainet.mcos.runtime.*` (`ir`, `parse`, `registry`, `permission`, `scheduler`, `executor`, …) |
 | Role | Parse DSL → IR; Registry, Permission Kernel, Scheduler, Workflow Engine, Executor, Audit. |
 | Depends on | `api(project(":mcos-sdk"))`; serialization-json, coroutines-core |
 | Stack | Kotlin/JVM · JDK 17 · kotlinx.serialization |
@@ -68,7 +68,7 @@ Read bottom-up: `mcos-sdk` is the leaf contract layer; everything depends on it.
 | | |
 |---|---|
 | Path | `mcos-android/` |
-| Package | `com.mcos.android` |
+| Package | `com.morainet.mcos.android` |
 | Role | Jetpack Compose client: DSL/Chat input, plan preview, confirmation UX, plugin store, settings, audit viewer. |
 | Depends on | `:mcos-runtime`, `:mcos-sdk`, plugins; AndroidX (core-ktx, lifecycle, activity-compose), Compose BOM |
 | Stack | Kotlin/Android · Compose · compileSdk 35 / minSdk 26 · JDK 17 |
@@ -79,7 +79,7 @@ Read bottom-up: `mcos-sdk` is the leaf contract layer; everything depends on it.
 | | |
 |---|---|
 | Path | `plugins/mcos-plugin-hello/` |
-| Package | `com.mcos.plugin.hello` |
+| Package | `com.morainet.mcos.plugin.hello` |
 | Role | The canonical example plugin. `hello.world(name)` returns a greeting. Ships a `plugin.json` manifest. |
 | Depends on | `api(project(":mcos-sdk"))`; serialization-json, coroutines-core |
 | Stack | Kotlin/JVM · JDK 17 |
@@ -90,7 +90,7 @@ Read bottom-up: `mcos-sdk` is the leaf contract layer; everything depends on it.
 | | |
 |---|---|
 | Path | `plugins/mcos-plugin-system/` |
-| Package | `com.mcos.plugin.system` |
+| Package | `com.morainet.mcos.plugin.system` |
 | Role | `sys.notify` / `sys.share` / `sys.intent.start` commands. |
 | Depends on | `api(project(":mcos-sdk"))` |
 | Stack | Kotlin/JVM · JDK 17 |
@@ -101,7 +101,7 @@ Read bottom-up: `mcos-sdk` is the leaf contract layer; everything depends on it.
 | | |
 |---|---|
 | Path | `plugins/mcos-plugin-camera/` |
-| Package | `com.mcos.plugin.camera` |
+| Package | `com.morainet.mcos.plugin.camera` |
 | Role | `camera.capture` / `camera.scan` commands. |
 | Depends on | `api(project(":mcos-sdk"))` |
 | Stack | Kotlin/JVM · JDK 17 |
@@ -112,7 +112,7 @@ Read bottom-up: `mcos-sdk` is the leaf contract layer; everything depends on it.
 | | |
 |---|---|
 | Path | `plugins/mcos-plugin-files/` |
-| Package | `com.mcos.plugin.files` |
+| Package | `com.morainet.mcos.plugin.files` |
 | Role | `file.list` / `file.search` / `photo.search` / `photo.compress` commands. |
 | Depends on | `api(project(":mcos-sdk"))` |
 | Stack | Kotlin/JVM · JDK 17 |
@@ -123,7 +123,7 @@ Read bottom-up: `mcos-sdk` is the leaf contract layer; everything depends on it.
 | | |
 |---|---|
 | Path | `mcos-server/` |
-| Package | `com.mcos.server` |
+| Package | `com.morainet.mcos.server` |
 | Role | Standalone self-hosted sync endpoint: `SyncBlobTransport` REST contract (`PUT|GET|DELETE /blobs/{id}`) + mandatory Bearer-token auth; stores opaque (already-encrypted) blobs on disk and never parses them. |
 | Depends on | none (JDK `com.sun.net.httpserver`); tests use `:mcos-runtime` for real-transport interop |
 | Stack | Kotlin/JVM · JDK 17 · zero third-party runtime deps |
@@ -155,7 +155,7 @@ For the eventual Gradle build (to be created in P1). A version catalog (`gradle/
 | JVM toolchain | 17 |
 | kotlinx.serialization | 1.7.3+ |
 | kotlinx.coroutines | 1.9.0+ |
-| group (JVM modules) | `com.mcos` |
+| group (JVM modules) | `com.morainet.mcos` |
 | version (JVM modules) | `0.1.0-SNAPSHOT` |
 
 > These are recommendations, not commitments; the first real build may pin different compatible versions.
@@ -164,7 +164,7 @@ For the eventual Gradle build (to be created in P1). A version catalog (`gradle/
 
 ## 5. Conventions
 
-- **Package roots:** `com.mcos.<module>` — Android, runtime, sdk; `com.mcos.plugin.<name>` for plugins.
+- **Package roots:** `com.morainet.mcos.<module>` — Android, runtime, sdk; `com.morainet.mcos.plugin.<name>` for plugins.
 - **First-party plugin IDs:** `mcos.plugin.<name>` (except the sample `example.hello`).
 - **Manifest convention:** each plugin **should** ship a `plugin.json` matching [04-plugin-sdk.md](./04-plugin-sdk.md) §4.
 - **DSL / IR / Workflow versions:** see [02-command-protocol.md](./02-command-protocol.md) §14 (`dslVersion` is `MAJOR.MINOR`; command contracts are SemVer).

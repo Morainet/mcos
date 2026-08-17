@@ -467,7 +467,7 @@ handler.invoke(ctx) with withTimeout(timeoutMs):
 [01 §10.3](./01-architecture.md) references `McosException` as the exception type plugins throw to declare a specific error code; it is defined here:
 
 ```kotlin
-package com.mcos.sdk
+package com.morainet.mcos.sdk
 
 data class McosException(
     val code: String,            // MUST be a valid McosErrorCode (01 §15.1) or plugin-namespaced code

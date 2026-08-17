@@ -5,7 +5,7 @@
 ## 包结构
 
 ```
-com.mcos.runtime/
+com.morainet.mcos.runtime/
 ├── api/          # McosRuntime 门面 + 核心类型
 ├── audit/        # 审计日志（内存追加式）
 ├── error/        # 统一错误码

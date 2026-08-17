@@ -5,7 +5,7 @@
 ## 包结构
 
 ```
-com.mcos.android/
+com.morainet.mcos.android/
 ```
 
 ## 文件

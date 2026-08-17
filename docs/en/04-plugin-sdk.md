@@ -84,7 +84,7 @@ SDK docs focus on **logical** shape; packaging flavors are host concerns.
     "name": "MCOS",
     "url": "https://github.com/mcos-org"
   },
-  "entry": "com.mcos.plugin.camera.CameraPlugin",
+  "entry": "com.morainet.mcos.plugin.camera.CameraPlugin",
   "permissions": [
     {
       "type": "android",

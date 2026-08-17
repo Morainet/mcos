@@ -110,19 +110,19 @@ flowchart TB
 ### 3.1 Package → module map (as built)
 
 The runtime family is split into focused Gradle modules; package names stay
-`com.mcos.runtime.*` regardless of module boundaries (see §3.3).
+`com.morainet.mcos.runtime.*` regardless of module boundaries (see §3.3).
 
 | Package(s) | Gradle module | Depends on |
 |------------|---------------|------------|
-| `com.mcos.sdk` | `mcos-sdk` | — |
-| `com.mcos.runtime.security` · `audit` · `validate` · `permission` | `mcos-security` | sdk |
-| `com.mcos.runtime.api` (RuntimeTypes, StubHostServices) · `error` · `ir` · `events` · `registry` · `plugin` · `memory` · `executor` · `workflow` · `parse` | `mcos-runtime-core` | sdk, security |
-| `com.mcos.runtime.llm` | `mcos-llm` | sdk, security, runtime-core, runtime (facade) |
-| `com.mcos.runtime.marketplace` | `mcos-marketplace` | sdk, security, runtime-core |
-| `com.mcos.runtime.api` (McosRuntime facade, ConfirmationCoordinator, RunManager) | `mcos-runtime` | sdk, security, runtime-core, marketplace |
-| `com.mcos.android` (+ `host`) | `mcos-android` | runtime (facade), llm, plugins |
+| `com.morainet.mcos.sdk` | `mcos-sdk` | — |
+| `com.morainet.mcos.runtime.security` · `audit` · `validate` · `permission` | `mcos-security` | sdk |
+| `com.morainet.mcos.runtime.api` (RuntimeTypes, StubHostServices) · `error` · `ir` · `events` · `registry` · `plugin` · `memory` · `executor` · `workflow` · `parse` | `mcos-runtime-core` | sdk, security |
+| `com.morainet.mcos.runtime.llm` | `mcos-llm` | sdk, security, runtime-core, runtime (facade) |
+| `com.morainet.mcos.runtime.marketplace` | `mcos-marketplace` | sdk, security, runtime-core |
+| `com.morainet.mcos.runtime.api` (McosRuntime facade, ConfirmationCoordinator, RunManager) | `mcos-runtime` | sdk, security, runtime-core, marketplace |
+| `com.morainet.mcos.android` (+ `host`) | `mcos-android` | runtime (facade), llm, plugins |
 | — | `mcos-server` | runtime (facade) |
-| `com.mcos.plugin.*` | `plugins:mcos-plugin-*` | sdk |
+| `com.morainet.mcos.plugin.*` | `plugins:mcos-plugin-*` | sdk |
 
 ### 3.2 Module dependency graph
 
@@ -185,7 +185,7 @@ including other modules' test source sets. Rules of thumb:
   `Executor` constructor).
 
 **Split packages across modules are legal on JVM but deliberate.**
-`com.mcos.runtime.api` spans `mcos-runtime-core` (RuntimeTypes — the event
+`com.morainet.mcos.runtime.api` spans `mcos-runtime-core` (RuntimeTypes — the event
 and request types the core pipeline publishes) and `mcos-runtime` (the
 McosRuntime facade assembling the pipeline). Keep it that way only for the
 api package; do not spread other packages across modules.
@@ -385,14 +385,14 @@ Cloud is **not required** for local command execution.
 
 Rationale: crash isolation between UI and long-running workflows; clearer permission & audit boundary; foreground-service workflows without binding UI lifecycle.
 
-**Migration seam:** `RuntimeClient` in `com.mcos.android` is the only App-side touchpoint. In MVP it holds a direct `McosRuntime` reference; in V1 it holds a Binder stub. The UI layer never knows which.
+**Migration seam:** `RuntimeClient` in `com.morainet.mcos.android` is the only App-side touchpoint. In MVP it holds a direct `McosRuntime` reference; in V1 it holds a Binder stub. The UI layer never knows which.
 
 ### 7.2 App↔Runtime contract (transport-agnostic)
 
-The contract is defined once as a Kotlin interface in `mcos-sdk` (`com.mcos.sdk.runtime.RuntimeFacade`). Both the in-process delegate and the AIDL stub implement it:
+The contract is defined once as a Kotlin interface in `mcos-sdk` (`com.morainet.mcos.sdk.runtime.RuntimeFacade`). Both the in-process delegate and the AIDL stub implement it:
 
 ```kotlin
-package com.mcos.sdk.runtime
+package com.morainet.mcos.sdk.runtime
 
 interface RuntimeFacade {
     suspend fun execute(request: ExecuteRequest): ExecuteHandle
@@ -428,7 +428,7 @@ When the Binder transport is active, each `RuntimeFacade` method maps to an AIDL
 **V1 Service definition skeleton:**
 
 ```kotlin
-// mcos-runtime/src/main/aidl/com/mcos/runtime/IRuntimeService.aidl
+// mcos-runtime/src/main/aidl/com/morainet/mcos/runtime/IRuntimeService.aidl
 interface IRuntimeService {
     ExecuteHandleParcel execute(in ExecuteRequestParcel req, in IRuntimeCallback cb);
     PreviewResultParcel preview(in ExecuteRequestParcel req);
@@ -667,7 +667,7 @@ Sanitization strips stack traces, file paths, and anything matching `x-mcos-secr
 The SDK doc ([04 §6](./04-plugin-sdk.md)) historically called the plugin facade `PluginHost`; the Runtime doc called it `HostServices`. **This document standardizes on `HostServices`** as the single facade type:
 
 ```kotlin
-package com.mcos.sdk
+package com.morainet.mcos.sdk
 
 interface HostServices {
     fun files(): FileService
@@ -745,7 +745,7 @@ sealed class RuntimeEvent {
     data class RunStarted(…, val source: Source, val ir: ExecutionIr) : RuntimeEvent()
     data class StepStarted(…, val stepId: StepId, val commandId: CommandId) : RuntimeEvent()
     data class Progress(…, val stepId: StepId?, val percent: Int?, val message: String?) : RuntimeEvent()
-    data class Artifact(…, val stepId: StepId?, val artifact: com.mcos.sdk.Artifact) : RuntimeEvent()
+    data class Artifact(…, val stepId: StepId?, val artifact: com.morainet.mcos.sdk.Artifact) : RuntimeEvent()
     data class Log(…, val stepId: StepId?, val level: LogLevel, val message: String) : RuntimeEvent()
     data class ConfirmationNeeded(…, val stepId: StepId?, val prompt: ConfirmationPrompt) : RuntimeEvent()
     data class StepSucceeded(…, val stepId: StepId, val value: JsonElement?, val durationMs: Long) : RuntimeEvent()
@@ -908,7 +908,7 @@ Highlights:
 ### 15.1 `McosErrorCode` enum
 
 ```kotlin
-package com.mcos.sdk
+package com.morainet.mcos.sdk
 
 enum class McosErrorCode(val retryableDefault: Boolean) {
     PARSE_ERROR(false),

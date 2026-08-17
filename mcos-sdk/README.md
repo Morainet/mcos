@@ -5,7 +5,7 @@ SDK 接口层——定义插件与运行时之间的公共契约。
 ## 包结构
 
 ```
-com.mcos.sdk/
+com.morainet.mcos.sdk/
 ```
 
 ## 核心接口

@@ -19,7 +19,7 @@ It does **not** execute side effects. The Runtime does.
 
 ### 1.1 Architectural Positioning
 
-The Planner/Agent is an **App-side** component (`com.mcos.android.planner`, [01 §3.1 / §6.2](./01-architecture.md)). It lives **outside** the Runtime process: the Runtime only sees a `PlannerBridge` handle ([03 §14](./03-runtime.md)) and never embeds vendor SDKs (OpenAI/Gemini/Anthropic/…) itself. The boundary is deliberate — it keeps the Runtime free of network egress, API keys, and model-version drift, and lets the App swap providers without touching Runtime code.
+The Planner/Agent is an **App-side** component (`com.morainet.mcos.android.planner`, [01 §3.1 / §6.2](./01-architecture.md)). It lives **outside** the Runtime process: the Runtime only sees a `PlannerBridge` handle ([03 §14](./03-runtime.md)) and never embeds vendor SDKs (OpenAI/Gemini/Anthropic/…) itself. The boundary is deliberate — it keeps the Runtime free of network egress, API keys, and model-version drift, and lets the App swap providers without touching Runtime code.
 
 The Planner sits **upstream of the 10-stage pipeline** (Stage 1, Parse, [01 §4](./01-architecture.md)). It produces an IR that is fed *into* Stage 1 exactly as a hand-typed DSL would be:
 
