@@ -249,7 +249,7 @@ SDK 文档关注**逻辑**形态；具体的打包口味属于宿主关心的问
 
 ## 5. 核心 SDK 接口（Kotlin）
 
-> 🚧 **Implementation status:** the repository is currently design-only — **no SDK code exists yet**. The full lifecycle (`onLoad`/`onUnload`), `manifest`, `cancel()`, and `retryable` below are all part of the P1 target contract. Implement toward this spec; see [11-implementation-status.md](./11-implementation-status.md) §7.
+> ✅ **Implementation status:** `McosPlugin` / `CommandHandler`（含 `cancel()` 钩子）已在 `mcos-sdk` 落地，由四个参考插件与全量测试覆盖。与规范的已知差异：`CommandId` 为 `String` 别名；`retryable` 由运行时的 `McosException`→`CommandResult.Err` 映射承载。见 [11-implementation-status.md](./11-implementation-status.md) §7。
 
 ```kotlin
 interface McosPlugin {
@@ -341,7 +341,7 @@ IR 的 `meta` 字段（[02 §8.2](./02-command-protocol.md)）—— `source`、
 
 ## 6. HostServices（面向插件的门面）
 
-> 🚧 **Implementation status:** `HostServices` and its service interfaces are **not yet implemented**. They are the P1 target so plugins depend on scoped services rather than a raw Android `Context`. The historical name `PluginHost` is retired — [01 §11.1](./01-architecture.md) standardizes on `HostServices`.
+> ✅ **Implementation status:** `HostServices` 与 §6.1–6.6 全部接口已在 `mcos-sdk` 落地（JVM 桩 + `mcos-android` 真实现）。v0.x 已知差异：实现用 `val` 属性（规范示意 `fun`），部分签名更精简（`NetService.request(method, url, body, headers)`、`Clock.nowMs()`）——全量签名对齐是 [11-implementation-status.md](./11-implementation-status.md) 记录的 🟡 缺口。§6.7–6.10 的可选能力为 v0.x 增补。
 
 插件应当依赖**门面（facades）**，而非整个 Android 框架。
 
@@ -354,6 +354,15 @@ interface HostServices {
     fun clock(): Clock
     fun json(): kotlinx.serialization.json.Json
     fun memory(): MemoryFacade   // read-only view for plugins; P2 (see 01 §11.1)
+
+    // 可选平台能力（v0.x 增补，接口默认 null）：
+    // 无该能力的宿主（如纯 JVM）不覆写即保持 null，
+    // 插件必须如实上报 UNAVAILABLE，绝不伪造数据或假成功。
+    val notifications: NotificationService?   // §6.7
+    val media: MediaService?                  // §6.7
+    val deviceInfo: DeviceInfoService?        // §6.8
+    val clipboard: ClipboardService?          // §6.9
+    val haptics: HapticsService?              // §6.10
 }
 ```
 
@@ -419,6 +428,8 @@ data class ActivityResult(val resultCode: Int, val data: android.content.Intent?
 
 `startActivityForResult` 会**挂起**调用处理器的协程；运行时将操作系统 `onActivityResult` 回调桥接回来以恢复协程（[03 §9.4](./03-runtime.md)）。处理器的 `timeoutMs` 截止时间在此挂起期间持续计时。`UiService` 方法在 `Dispatchers.Main` 上派发 —— 插件代码无需切换调度器即可调用它们。
 
+`toast` 为 v0.x 增补：默认实现抛出 `UNAVAILABLE`（无 UI 宿主不伪造弹出）；Android 宿主经主线程 `Handler` 弹出真实 `Toast`。无 `sys.toast` 命令 —— toast 供插件在自身流程内做轻量反馈，不进入命令面。
+
 ### 6.4 `SecureStore` —— 由 Keystore 支持的密钥存储
 
 按插件命名空间的键值存储，由 Android Keystore 支持（[08 §9](./08-security.md)）。键的作用域限定在插件 ID 内；一个插件无法读取另一个插件的密钥。
@@ -457,6 +468,68 @@ interface MemoryFacade {
 ```
 
 `put` / `delete` / `import` **对插件不可用** —— 写入通过 Planner 经用户确认后进行（[07 §5.1](./07-memory.md)）。如果处理器需要持久化数据，应使用 `FileService`（设备本地）或通过 `NetService` 调用自有的后端。
+
+### 6.7 `NotificationService` / `MediaService` —— 可选平台能力（v0.x 补记规范）
+
+早期切片已实现但未在此处补记规范，现补齐。二者遵循**可选能力模式**：接口默认 `null`，无对应平台的宿主不覆写，插件见 `null` 时上报 `UNAVAILABLE`（`sys.notify` 的 P0-F1 语义）。
+
+```kotlin
+interface NotificationService {
+    suspend fun notify(title: String, text: String): String   // returns channel/notification id
+}
+
+interface MediaService {
+    suspend fun compress(
+        uris: List<String>, quality: Int,
+        maxWidth: Int? = null, maxHeight: Int? = null,
+    ): List<String>   // JPEG 压缩/缩放后的输出 URI（保持顺序，跳过 null）
+}
+```
+
+`NotificationService` 对应 `sys.notify`（`POST_NOTIFICATIONS` 运行时授权未给时命令如实报 `PERMISSION_DENIED`）。`MediaService` 服务于相机插件的照片压缩链路。
+
+### 6.8 `DeviceInfoService` —— 设备信息（v0.x 增补）
+
+支撑 `sys.device.*` 六条命令（battery/wifi/screen/volume/location/brightness 查询与设置）。核心契约：**如实报告**——宿主无法确定的数据项返回 `null`，绝不猜测（P2-F3 语义：曾经返回硬编码假数据的实现已被清除）。
+
+```kotlin
+interface DeviceInfoService {
+    suspend fun battery(): BatteryInfo        // percent, charging, temperatureC?
+    suspend fun wifi(): WifiInfo              // connected; ssid/strength 在无定位授权时为 null（Android 9+ 限制）
+    suspend fun screen(): ScreenInfo          // widthPx, heightPx, densityDpi, rotation, brightness?
+    suspend fun volume(): VolumeInfo          // musicPercent, ringPercent?, alarmPercent?
+    suspend fun location(): LocationInfo?     // 无定位结果时返回 null —— 命令层输出 no_fix，不是错误
+    suspend fun brightness(): BrightnessInfo  // level (0-255), auto
+    suspend fun setBrightness(level: Int)     // WRITE_SETTINGS 特殊授权缺失时抛 PERMISSION_DENIED，不伪造成功
+}
+```
+
+Android 权限约束与降级语义：`wifi` 的 SSID/RSSI 需要 `ACCESS_FINE_LOCATION` 运行时授权，缺失时返回 `connected=true, ssid=null, strength=null`；`location` 需要 `ACCESS_FINE_LOCATION`，未授权时抛 `PERMISSION_DENIED`（附可操作的提示），授权但无定位结果返回 `null` → 命令输出 `{"status":"no_fix","location":null}`；`setBrightness` 需要 WRITE_SETTINGS 特殊授权（系统设置中「修改系统设置」开关），缺失时抛 `PERMISSION_DENIED`。本项目当前**没有应用内 `requestPermissions` 引导流**（🟡 见 11）——未授权状态由命令如实报错，引导用户去系统设置。
+
+### 6.9 `ClipboardService` —— 剪贴板（v0.x 增补）
+
+支撑 `sys.clipboard` 读写两模式。
+
+```kotlin
+interface ClipboardService {
+    suspend fun set(text: String)
+    suspend fun get(): String?   // 空剪贴板或宿主无法读取（Android 后台限制）时返回 null
+}
+```
+
+`get()` 返回 `null` 与「剪贴板为空」不可区分 —— 命令层一律如实报 `UNAVAILABLE`，绝不编造文本。**剪贴板文本是不可信输入**（[08 §11.1](./08-security.md)）：用户可能复制了对抗性文本，`sys.clipboard` 读模式的结果恒带 `untrusted: true` 标注，供下游提示注入防御使用。
+
+### 6.10 `HapticsService` —— 震动反馈（v0.x 增补）
+
+支撑 `sys.vibrate`。
+
+```kotlin
+interface HapticsService {
+    suspend fun vibrate(durationMs: Int)
+}
+```
+
+无震动器的宿主保持 `null` → 命令报 `UNAVAILABLE`。曾经的「假成功」（不触达硬件即返回 `vibrated`）已被移除 —— 审计轨迹必须只记录真实发生的震动。Android 实现走 `VibratorManager`（API 31+）/ 旧版 `Vibrator` 兼容分支。
 
 ---
 
@@ -973,7 +1046,7 @@ class HelloWorldHandler : CommandHandler {
 
 ## 17. 内置插件集（第一方）
 
-> 以下插件均为**仅规范（spec-only）**（尚未实现）。前四个为 P1 参考集；其余在后续阶段落地。
+> ✅ **Implementation status:** 前四个插件（hello / system / camera / files）已在 `plugins/` 落地并带一致性测试，同时是 marketplace 的 curated 内置集；其余仍为 spec-only。
 >
 > **本表是内置命令表面的单一真相源。** 所有其他文档（路线图、仓库拓扑、愿景）引用本表，而非维护独立的命令清单。若某命令出现在其他文档但不在本表中，它是未记录的——应加入本表或从引用文档中移除。`mcos.plugin.system` 插件同时拥有 `sys.*` 和 `sys.device.*` 命名空间（设备查询是系统 API 封装，归入保留的 `sys` 根而非单独的 `device` 根——`device` 不是保留命名空间，见 [02 §4.3](./02-command-protocol.md)）。
 

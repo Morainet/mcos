@@ -109,19 +109,23 @@ flowchart TB
 
 ### 3.1 Package → module map (as built)
 
-The runtime family is split into focused Gradle modules; package names stay
-`com.morainet.mcos.runtime.*` regardless of module boundaries (see §3.3).
+The runtime family is split into focused Gradle modules. Since 2026-08-17 every
+module exclusively owns its `com.morainet.mcos.<module>.*` root namespace: the
+`runtime.` prefix is reserved for the runtime kernel (the `mcos-runtime`
+facade and `mcos-runtime-core`), while security / llm / marketplace and the
+rest root at their module names (see §3.3). The mapping is enforced by
+`PackageBoundariesTest`.
 
 | Package(s) | Gradle module | Depends on |
 |------------|---------------|------------|
 | `com.morainet.mcos.sdk` | `mcos-sdk` | — |
-| `com.morainet.mcos.runtime.security` · `audit` · `validate` · `permission` | `mcos-security` | sdk |
-| `com.morainet.mcos.runtime.api` (RuntimeTypes, StubHostServices) · `error` · `ir` · `events` · `registry` · `plugin` · `memory` · `executor` · `workflow` · `parse` | `mcos-runtime-core` | sdk, security |
-| `com.morainet.mcos.runtime.llm` | `mcos-llm` | sdk, security, runtime-core, runtime (facade) |
-| `com.morainet.mcos.runtime.marketplace` | `mcos-marketplace` | sdk, security, runtime-core |
-| `com.morainet.mcos.runtime.api` (McosRuntime facade, ConfirmationCoordinator, RunManager) | `mcos-runtime` | sdk, security, runtime-core, marketplace |
-| `com.morainet.mcos.android` (+ `host`) | `mcos-android` | runtime (facade), llm, plugins |
-| — | `mcos-server` | runtime (facade) |
+| `com.morainet.mcos.security` (security kernel) · `security.audit` · `security.validate` · `security.permission` | `mcos-security` | sdk |
+| `com.morainet.mcos.runtime.core`: `core.api` (RuntimeGateway, RuntimeTypes, StubHostServices) plus `core.error` · `core.ir` · `core.events` · `core.registry` · `core.plugin` · `core.memory` · `core.executor` · `core.workflow` · `core.parse` | `mcos-runtime-core` | sdk, security |
+| `com.morainet.mcos.llm` | `mcos-llm` | sdk, runtime-core |
+| `com.morainet.mcos.marketplace` | `mcos-marketplace` | sdk, security, runtime-core |
+| `com.morainet.mcos.runtime` (bare) · `com.morainet.mcos.runtime.api` (McosRuntime facade, ConfirmationCoordinator, RunManager) | `mcos-runtime` | sdk, security, runtime-core, marketplace |
+| `com.morainet.mcos.android` (+ `host`) | `mcos-android` | sdk, security, runtime-core, runtime (facade), llm, marketplace, plugins |
+| `com.morainet.mcos.server` | `mcos-server` | runtime-core (test only) |
 | `com.morainet.mcos.plugin.*` | `plugins:mcos-plugin-*` | sdk |
 
 ### 3.2 Module dependency graph
@@ -142,9 +146,7 @@ graph LR
   CORE --> SDK
   CORE --> SEC
   LLM --> SDK
-  LLM --> SEC
   LLM --> CORE
-  LLM --> FACADE
   MKT --> SDK
   MKT --> SEC
   MKT --> CORE
@@ -152,21 +154,28 @@ graph LR
   FACADE --> SEC
   FACADE --> CORE
   FACADE --> MKT
+  AND --> SDK
+  AND --> SEC
+  AND --> CORE
   AND --> FACADE
   AND --> LLM
+  AND --> MKT
   AND --> PLUGINS
-  SRV --> FACADE
+  SRV --> CORE
   PLUGINS --> SDK
 ```
 
 Notable edges:
 
-- `mcos-llm` depends on the facade because `ChatOrchestrator` drives a full
-  `McosRuntime`; the facade itself does **not** depend on `mcos-llm`, so the
-  cycle is one-directional at module level.
-- `mcos-android` / `mcos-server` depend only on the facade (plus `mcos-llm`
-  where the host uses the chat pipeline) — they never reach into core,
-  security, or marketplace directly.
+- `mcos-llm` and the facade **do not depend on each other**: `ChatOrchestrator`
+  drives the kernel through the `RuntimeGateway` port in `runtime.core.api`
+  (`execute()` + `observe()`, canonically implemented by the facade's
+  `McosRuntime`) — llm and the facade are sibling clients of the kernel, wired
+  together at the consumer (e.g. `McosViewModel`). The module graph stays
+  acyclic.
+- `mcos-android` declares every edge directly (sdk, security, core, facade,
+  llm, marketplace, plugins) and relies on no `api` re-exports; `mcos-server`
+  depends on core in tests only.
 
 ### 3.3 Module-boundary rules
 
@@ -184,12 +193,26 @@ including other modules' test source sets. Rules of thumb:
   `EventBus.observe`, `JsonObject` in validators, `SecurityConfig` in the
   `Executor` constructor).
 
-**Split packages across modules are legal on JVM but deliberate.**
-`com.morainet.mcos.runtime.api` spans `mcos-runtime-core` (RuntimeTypes — the event
-and request types the core pipeline publishes) and `mcos-runtime` (the
-McosRuntime facade assembling the pipeline). Keep it that way only for the
-api package; do not spread other packages across modules.
+**Split packages across modules are forbidden.**
+Historically `com.morainet.mcos.runtime.api` spanned `mcos-runtime-core`
+(RuntimeTypes — the event and request types the core pipeline publishes) and
+`mcos-runtime` (the McosRuntime facade), and `runtime.memory` was borrowed by
+the facade module's test tree; both were migrated (2026-08-17): the core
+pipeline types now live in `com.morainet.mcos.runtime.core.api`
+(`mcos-runtime-core` only) and `runtime.api` keeps only the facade
+(`mcos-runtime`). No package may be spread across modules — enforced by the
+`PackageBoundariesTest` guard test in `mcos-runtime`.
 
+**Package names align one-to-one with modules.**
+The same day saw a full alignment pass: core's nine subsystem packages moved
+under `runtime.core.*`; security's four packages were re-rooted at
+`com.morainet.mcos.security.*` (the former `runtime.security` flattening into
+the module root); `runtime.llm` became `com.morainet.mcos.llm` and
+`runtime.marketplace` became `com.morainet.mcos.marketplace`. The `runtime.`
+prefix now belongs exclusively to the two runtime-kernel modules (facade +
+core); every other module owns `com.morainet.mcos.<module>.*`. That mapping is
+enforced by `PackageBoundariesTest`'s longest-prefix rule table — a new module
+must deliberately register its root package there.
 
 ---
 

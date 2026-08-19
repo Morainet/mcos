@@ -1,43 +1,54 @@
 package com.morainet.mcos.runtime.api
 
-import com.morainet.mcos.runtime.events.EventBus
-import com.morainet.mcos.runtime.events.TypedEventBus
-import com.morainet.mcos.runtime.executor.Command
-import com.morainet.mcos.runtime.executor.Executor
-import com.morainet.mcos.runtime.ir.ExecutionIr
-import com.morainet.mcos.runtime.ir.ParseResult
-import com.morainet.mcos.runtime.marketplace.PluginInstaller
-import com.morainet.mcos.runtime.memory.EpisodicMemory
-import com.morainet.mcos.runtime.memory.EpisodicOutcome
-import com.morainet.mcos.runtime.memory.MemoryStore
-import com.morainet.mcos.runtime.memory.RunSummarizer
-import com.morainet.mcos.runtime.parse.DslParser
-import com.morainet.mcos.runtime.permission.DefaultPermissionKernel
-import com.morainet.mcos.runtime.permission.PermissionKernel
-import com.morainet.mcos.runtime.plugin.LoadResult
-import com.morainet.mcos.runtime.plugin.PluginLoader
-import com.morainet.mcos.runtime.registry.CommandRegistry
-import com.morainet.mcos.runtime.registry.ResolveResult as RegistryResolveResult
-import com.morainet.mcos.runtime.security.ArtifactSignature
-import com.morainet.mcos.runtime.security.ArtifactVerifier
-import com.morainet.mcos.runtime.security.AuthStampSigner
-import com.morainet.mcos.runtime.security.CrashQuarantine
-import com.morainet.mcos.runtime.security.EnterprisePolicySource
-import com.morainet.mcos.runtime.security.HmacAuthStampSigner
-import com.morainet.mcos.runtime.security.InMemoryPublisherKeyStore
-import com.morainet.mcos.runtime.security.NullAuditLog
-import com.morainet.mcos.runtime.security.PluginTrustGate
-import com.morainet.mcos.runtime.security.ScopeBasedEgressPolicy
-import com.morainet.mcos.runtime.security.SecurityConfig
-import com.morainet.mcos.runtime.security.SlidingWindowCrashQuarantine
-import com.morainet.mcos.runtime.security.TokenBucketRateLimiter
+import com.morainet.mcos.runtime.core.api.ConfirmationDecision
+import com.morainet.mcos.runtime.core.api.ExecuteHandle
+import com.morainet.mcos.runtime.core.api.ExecuteRequest
+import com.morainet.mcos.runtime.core.api.ExecutionStatus
+import com.morainet.mcos.runtime.core.api.Payload
+import com.morainet.mcos.runtime.core.api.PreviewCommand
+import com.morainet.mcos.runtime.core.api.PreviewResult
+import com.morainet.mcos.runtime.core.api.RuntimeEvent
+import com.morainet.mcos.runtime.core.api.RuntimeGateway
+import com.morainet.mcos.runtime.core.api.StubHostServices
+import com.morainet.mcos.runtime.core.events.EventBus
+import com.morainet.mcos.runtime.core.events.TypedEventBus
+import com.morainet.mcos.runtime.core.executor.Command
+import com.morainet.mcos.runtime.core.executor.Executor
+import com.morainet.mcos.runtime.core.ir.ExecutionIr
+import com.morainet.mcos.runtime.core.ir.ParseResult
+import com.morainet.mcos.marketplace.PluginInstaller
+import com.morainet.mcos.runtime.core.memory.EpisodicMemory
+import com.morainet.mcos.runtime.core.memory.EpisodicOutcome
+import com.morainet.mcos.runtime.core.memory.MemoryStore
+import com.morainet.mcos.runtime.core.memory.RunSummarizer
+import com.morainet.mcos.runtime.core.parse.DslParser
+import com.morainet.mcos.security.permission.DefaultPermissionKernel
+import com.morainet.mcos.security.permission.PermissionKernel
+import com.morainet.mcos.runtime.core.plugin.LoadResult
+import com.morainet.mcos.runtime.core.plugin.PluginLoader
+import com.morainet.mcos.runtime.core.registry.CommandRegistry
+import com.morainet.mcos.runtime.core.registry.ResolveResult as RegistryResolveResult
+import com.morainet.mcos.security.ArtifactSignature
+import com.morainet.mcos.security.ArtifactVerifier
+import com.morainet.mcos.security.AuthStampSigner
+import com.morainet.mcos.security.CrashQuarantine
+import com.morainet.mcos.security.EnterprisePolicySource
+import com.morainet.mcos.security.HmacAuthStampSigner
+import com.morainet.mcos.security.InMemoryPublisherKeyStore
+import com.morainet.mcos.security.NullAuditLog
+import com.morainet.mcos.security.PluginTrustGate
+import com.morainet.mcos.security.ScopeBasedEgressPolicy
+import com.morainet.mcos.security.SecurityConfig
+import com.morainet.mcos.security.SlidingWindowCrashQuarantine
+import com.morainet.mcos.security.TokenBucketRateLimiter
+import com.morainet.mcos.security.audit.AuditLog
 import com.morainet.mcos.sdk.McosPlugin
-import com.morainet.mcos.runtime.workflow.WorkflowEngine
-import com.morainet.mcos.runtime.workflow.WorkflowJson
-import com.morainet.mcos.runtime.workflow.WorkflowOutcome
-import com.morainet.mcos.runtime.workflow.WorkflowResult
-import com.morainet.mcos.runtime.workflow.WorkflowStep
-import com.morainet.mcos.runtime.workflow.WorkflowStore
+import com.morainet.mcos.runtime.core.workflow.WorkflowEngine
+import com.morainet.mcos.runtime.core.workflow.WorkflowJson
+import com.morainet.mcos.runtime.core.workflow.WorkflowOutcome
+import com.morainet.mcos.runtime.core.workflow.WorkflowResult
+import com.morainet.mcos.runtime.core.workflow.WorkflowStep
+import com.morainet.mcos.runtime.core.workflow.WorkflowStore
 import com.morainet.mcos.sdk.CommandResult
 import com.morainet.mcos.sdk.MemoryFacade
 import kotlinx.coroutines.*
@@ -103,7 +114,7 @@ class McosRuntime internal constructor(
     private val confirmationTimeoutMs: Long,
     private val pluginLoader: PluginLoader,
     private val pluginInstaller: PluginInstaller?,
-) {
+) : RuntimeGateway {
     private val summarizer = RunSummarizer(episodicMemory)
 
     // ─── Confirmation flow (08-security.md §5) ──────────────────────────
@@ -167,7 +178,7 @@ class McosRuntime internal constructor(
      *
      * @return [ExecuteHandle] that can be used to observe or cancel the run.
      */
-    suspend fun execute(request: ExecuteRequest): ExecuteHandle {
+    override suspend fun execute(request: ExecuteRequest): ExecuteHandle {
         val runId = UUID.randomUUID().toString()
         val timestamp = System.currentTimeMillis()
 
@@ -293,7 +304,7 @@ class McosRuntime internal constructor(
     /**
      * Observe runtime events for a specific run as a [Flow].
      */
-    fun observe(runId: String): Flow<RuntimeEvent> = eventBus.observe(runId)
+    override fun observe(runId: String): Flow<RuntimeEvent> = eventBus.observe(runId)
 
     /**
      * Answer a pending confirmation request (08-security.md §5). The run that
@@ -668,9 +679,29 @@ class McosRuntime internal constructor(
         // without a download dir / transport skip the installer.
         private var pluginInstaller: PluginInstaller? = null
 
+        // Audit sink (03-runtime.md §13). NullAuditLog keeps "no audit trail"
+        // as the explicit default; hosts opt in with InMemoryAuditLog (tests)
+        // or FileAuditLog (persistence across restarts).
+        private var auditLog: AuditLog = NullAuditLog
+
         fun withParser(parser: DslParser) = apply { this.parser = parser }
         fun withRegistry(registry: CommandRegistry) = apply { this.registry = registry }
         fun withPermissionKernel(kernel: PermissionKernel) = apply { this.permissionKernel = kernel }
+
+        /**
+         * Inject a host-built [Executor]. Its SecurityConfig wins over the
+         * builder-assembled one — including the permission kernel, stamp
+         * signer and audit log. Stateful security components MUST be the
+         * same instances the facade uses, or the flows that span both sides
+         * break: e.g. a [HmacAuthStampSigner] that differs from the one in
+         * the injected executor's SecurityConfig makes every post-approval
+         * AuthStamp fail verification ("failed signature verification"),
+         * because the ConfirmationCoordinator signs with this builder's
+         * signer while the executor verifies with its own. Pass the shared
+         * instances explicitly via [withPermissionKernel] /
+         * [withAuthStampSigner] / [withAuditLog] AND copy them into the
+         * executor's SecurityConfig.
+         */
         fun withExecutor(executor: Executor) = apply { this.executor = executor }
         fun withMemory(memory: MemoryStore) = apply { this.memory = memory }
         fun withEpisodicMemory(episodicMemory: EpisodicMemory) = apply { this.episodicMemory = episodicMemory }
@@ -702,14 +733,23 @@ class McosRuntime internal constructor(
          */
         fun withPluginInstaller(installer: PluginInstaller?) = apply { this.pluginInstaller = installer }
 
+        /**
+         * Set the audit sink for both wiring paths the builder assembles:
+         * the runtime-local [SecurityConfig] (when no [Executor] is injected)
+         * and the default [WorkflowEngine]. With [withExecutor], the injected
+         * executor's own SecurityConfig wins — wrap your audit log there
+         * instead. Defaults to [NullAuditLog].
+         */
+        fun withAuditLog(auditLog: AuditLog) = apply { this.auditLog = auditLog }
+
         fun build(): McosRuntime {
             val reg = registry ?: CommandRegistry()
             val perm = permissionKernel ?: DefaultPermissionKernel()
 
             // The executor's security posture is assembled from this builder's
             // knobs. [NullAuditLog] preserves the historical default (no audit
-            // trail) — hosts pass an audit sink explicitly via a custom
-            // Executor/SecurityConfig when they want one.
+            // trail) — hosts opt in via [withAuditLog] or by passing their own
+            // Executor/SecurityConfig.
             val security = SecurityConfig(
                 kernel = perm,
                 rateLimiter = TokenBucketRateLimiter(),
@@ -717,13 +757,13 @@ class McosRuntime internal constructor(
                 signer = authStampSigner,
                 quarantine = quarantine,
                 enterprisePolicy = enterprisePolicySource,
-                auditLog = NullAuditLog,
+                auditLog = auditLog,
             )
             val exec = executor ?: Executor(reg, StubHostServices(memory), security)
 
             // The workflow engine defaults to the same executor, so control
             // flow steps and flat commands share one execution pipeline.
-            val wfEngine = workflowEngine ?: WorkflowEngine(exec)
+            val wfEngine = workflowEngine ?: WorkflowEngine(exec, auditLog)
 
             // Default trust pipeline: fail-closed PluginTrustGate over an
             // empty in-memory key store. Hosts that verify marketplace

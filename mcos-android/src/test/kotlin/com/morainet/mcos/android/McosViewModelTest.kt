@@ -1,11 +1,5 @@
 package com.morainet.mcos.android
 
-import com.morainet.mcos.android.host.ActivityResultBridge
-import com.morainet.mcos.android.host.InMemoryFacade
-import com.morainet.mcos.plugin.hello.HelloPlugin
-import com.morainet.mcos.runtime.api.McosRuntime
-import com.morainet.mcos.runtime.api.StubHostServices
-import com.morainet.mcos.runtime.registry.CommandRegistry
 import com.morainet.mcos.sdk.SecureStore
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
@@ -180,21 +174,13 @@ class McosViewModelTest {
     // Helpers
     // ═══════════════════════════════════════════════════════════════
 
-    /** Real facade + registry with a real built-in plugin, stub host services. */
-    private fun buildDeps(secureStore: SecureStore): AppDeps {
-        val registry = CommandRegistry()
-        val runtime = McosRuntime.Builder()
-            .withRegistry(registry)
-            .build()
-        return AppDeps(
-            runtime = runtime,
-            hostServices = StubHostServices(InMemoryFacade()),
-            registry = registry,
-            plugins = listOf(HelloPlugin()),
-            resultBridge = ActivityResultBridge(),
-            secureStore = secureStore,
-        )
-    }
+    /**
+     * Real facade + registry with a real built-in plugin, stub host services,
+     * and the production marketplace chain (see [TestMarketplace.deps]); the
+     * DSL tests below never touch the marketplace pieces.
+     */
+    private fun buildDeps(secureStore: SecureStore): AppDeps =
+        TestMarketplace.deps(secureStore = secureStore)
 
     private class FakeSecureStore(initial: String? = null) : SecureStore {
         private val entries = mutableMapOf<String, String>()

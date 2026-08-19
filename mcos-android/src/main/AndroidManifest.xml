@@ -7,6 +7,16 @@
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- sys.vibrate / sys.device.* — normal or special-access permissions; the
+         runtime grant is requested on-device (no in-app requestPermissions flow
+         yet, commands degrade honestly when ungranted). -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.WRITE_SETTINGS" />
+    <!-- Normal install-time permission: ConnectivityManager state for
+         sys.device.wifi's connected check. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <application
         android:allowBackup="true"

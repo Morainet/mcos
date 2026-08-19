@@ -1,0 +1,570 @@
+package com.morainet.mcos.marketplace
+
+import com.morainet.mcos.runtime.core.registry.CommandRegistry
+import com.morainet.mcos.security.ArtifactSignature
+import com.morainet.mcos.security.ArtifactVerifier
+import com.morainet.mcos.security.Blocklist as SecurityBlocklist
+import com.morainet.mcos.security.EmptyBlocklist
+import com.morainet.mcos.security.PublisherKey
+import com.morainet.mcos.security.PublisherKeyStore
+import com.morainet.mcos.security.VerifyResult
+import com.morainet.mcos.runtime.core.plugin.LoadResult
+import com.morainet.mcos.runtime.core.plugin.PluginLoader
+import com.morainet.mcos.sdk.McosPlugin
+import java.io.File
+import java.util.concurrent.ConcurrentHashMap
+
+/**
+ * Result of [PluginInstaller.installPackage].
+ */
+sealed class InstallResult {
+    /** Plugin downloaded, verified, staged and registered. */
+    data class Installed(
+        val packageId: String,
+        val version: String,
+        val trustLevel: com.morainet.mcos.security.TrustLevel,
+        val commandsRegistered: Int,
+        val aliasesRegistered: Int,
+    ) : InstallResult()
+
+    /** Download / verification / load failure. */
+    data class Failed(
+        val packageId: String,
+        val reason: String,
+        val code: String,
+    ) : InstallResult()
+}
+
+/**
+ * Result of [PluginInstaller.updatePackage].
+ */
+sealed class UpdateResult {
+    /** Update adds or escalates elevated/destructive permissions — needs fresh consent. */
+    data class NeedsConsent(val diff: PermissionDiff) : UpdateResult()
+
+    /** Update proceeded (silent or consented) and the plugin was reinstalled. */
+    data class Installed(
+        val packageId: String,
+        val version: String,
+        val trustLevel: com.morainet.mcos.security.TrustLevel,
+        val commandsRegistered: Int,
+        val aliasesRegistered: Int,
+    ) : UpdateResult()
+
+    data class Failed(
+        val packageId: String,
+        val reason: String,
+        val code: String,
+    ) : UpdateResult()
+}
+
+/**
+ * Result of [PluginInstaller.uninstallPackage].
+ */
+sealed class UninstallResult {
+    /** Plugin unregistered, artifact removed, back to NOT_INSTALLED. */
+    data object Done : UninstallResult()
+
+    data class Failed(
+        val packageId: String,
+        val reason: String,
+        val code: String,
+    ) : UninstallResult()
+}
+
+/**
+ * One package force-disabled by [PluginInstaller.applyBlocklist]
+ * ([09-marketplace.md §14.4]).
+ *
+ * The host uses this to notify the user and write the
+ * `plugin.force_disabled { packageId, version, reason }` audit record.
+ */
+data class ForceDisabled(
+    val packageId: String,
+    val version: String,
+    val reason: BlocklistReason,
+)
+
+/**
+ * Result of [PluginInstaller.rehydrateInstalled] for one package.
+ *
+ * [plugin] is set only on INSTALLED outcomes — the loader registers
+ * descriptors but never calls `onLoad`; the host loads it.
+ */
+data class RehydrateOutcome(
+    val packageId: String,
+    val version: String,
+    val plugin: McosPlugin?,
+    val state: InstallState,
+    val reason: String? = null,
+)
+
+/**
+ * End-to-end plugin install / update / uninstall flow
+ * ([09-marketplace.md §7]).
+ *
+ * Install pipeline (normative, §7.1):
+ *
+ * ```
+ * DOWNLOADING → VERIFYING → STAGING → LOADING → INSTALLED
+ * ```
+ *
+ * - DOWNLOADING: artifact bytes fetched via [MarketplaceHttpTransport.getBytes].
+ * - VERIFYING:  SHA-256 + publisher signature via [ArtifactVerifier].
+ * - STAGING:    artifact written to [downloadDir].
+ * - LOADING:    [PluginLoader] registers the plugin (trust gate re-checked).
+ * - INSTALLED:  plugin active. Install consent ≠ runtime grant: permissions
+ *               are still requested per invocation (§7.1 steps 6-7).
+ *
+ * Failure transitions (VERIFYING/LOADING → FAILED) clean up the staged file.
+ *
+ * Persistence: with an [InstallRecordStore] wired, install success pins the
+ * verified facts (record + publisher key + signature envelope, the
+ * FileAuditLog snapshot paradigm) and every durable transition writes
+ * through. On restart the records restore state tracking only — command
+ * registration is [rehydrateInstalled]'s job, and it re-verifies the staged
+ * artifact before trusting anything (a persisted record is a claim, never
+ * proof). Without a store the installer is pure-memory, as before.
+ *
+ * @param downloadDir directory where artifacts are staged
+ *   (`downloadDir/<packageId>-<version>.mcos`).
+ * @param onProgress progress callback, invoked on every state change.
+ */
+class PluginInstaller(
+    private val transport: MarketplaceHttpTransport,
+    private val verifier: ArtifactVerifier,
+    private val keyStore: PublisherKeyStore,
+    private val loader: PluginLoader,
+    private val registry: CommandRegistry,
+    private val downloadDir: String,
+    private val onProgress: (InstallProgress) -> Unit = {},
+    initialBlocklist: SecurityBlocklist = EmptyBlocklist,
+    /**
+     * Durable install records (09-marketplace.md §7). When null the
+     * installer stays pure-memory — restarts read as NOT_INSTALLED, the
+     * pre-persistence behaviour every existing construction site relies on.
+     */
+    private val installRecordStore: InstallRecordStore? = null,
+) {
+    private val states = ConcurrentHashMap<String, InstallState>()
+
+    /** Version of the artifact currently installed (or force-disabled) per package. */
+    private val installedVersions = ConcurrentHashMap<String, String>()
+
+    /** Durable install records mirrored from [installRecordStore]. */
+    private val records = ConcurrentHashMap<String, PersistedInstallRecord>()
+
+    /** Active blocklist used for the pre-download check (§14.0). */
+    @Volatile
+    private var blocklist: SecurityBlocklist = initialBlocklist
+
+    init {
+        // Replay durable records. A missing/corrupt/tampered store loads
+        // empty — fail closed, nothing is resurrected from untrusted bytes.
+        // Records restore state tracking only; command registration is
+        // [rehydrateInstalled]'s job (it re-verifies first).
+        installRecordStore?.load()?.forEach { record ->
+            records[record.packageId] = record
+            installedVersions[record.packageId] = record.version
+            states[record.packageId] = runCatching { InstallState.valueOf(record.state) }
+                .getOrDefault(InstallState.NOT_INSTALLED)
+        }
+    }
+
+    /** Current state of a package; defaults to [InstallState.NOT_INSTALLED]. */
+    fun stateOf(packageId: String): InstallState = states[packageId] ?: InstallState.NOT_INSTALLED
+
+    /** Installed version of a package (survives restart via rehydration), or null. */
+    fun installedVersion(packageId: String): String? = installedVersions[packageId]
+
+    private fun setState(packageId: String, version: String?, state: InstallState, message: String? = null) {
+        states[packageId] = state
+        onProgress(InstallProgress(packageId, state, version, message = message))
+    }
+
+    /**
+     * Download, verify, stage and load a plugin
+     * ([09-marketplace.md §7.1]).
+     *
+     * @param metadata package metadata from the marketplace index.
+     * @param pluginFactory decodes the verified artifact bytes into a plugin
+     *   instance ([PluginLoader] then registers it). The factory is only
+     *   called after verification passed.
+     */
+    suspend fun installPackage(
+        metadata: PackageMetadata,
+        pluginFactory: (ByteArray) -> McosPlugin,
+    ): InstallResult {
+        val packageId = metadata.packageId
+        val version = metadata.version
+
+        // Blocklist gate (§14.0): never fetch or stage a known-bad artifact.
+        if (blocklist.isBlocklisted(packageId, version)) {
+            setState(packageId, version, InstallState.FAILED, "package is blocklisted")
+            return InstallResult.Failed(packageId, "package is blocklisted", "blocklisted")
+        }
+
+        // ── DOWNLOADING ────────────────────────────────────────────────────
+        setState(packageId, version, InstallState.DOWNLOADING)
+        val bytes = try {
+            transport.getBytes(metadata.artifact.url, CONNECT_TIMEOUT_MS, REQUEST_TIMEOUT_MS)
+        } catch (e: MarketplaceTransportException) {
+            setState(packageId, version, InstallState.FAILED, e.message)
+            return InstallResult.Failed(packageId, e.message, e.code)
+        } catch (e: Exception) {
+            setState(packageId, version, InstallState.FAILED, e.message)
+            return InstallResult.Failed(packageId, e.message ?: "download failed", "download_failed")
+        }
+
+        // ── VERIFYING ──────────────────────────────────────────────────────
+        setState(packageId, version, InstallState.VERIFYING)
+        val signature = signatureFor(metadata)
+        if (signature == null) {
+            setState(packageId, version, InstallState.FAILED, "unknown signing key")
+            return InstallResult.Failed(packageId, "unknown signing key", "unknown_key")
+        }
+        val verify = verifier.verify(bytes, signature, packageId, version)
+        if (verify is VerifyResult.Rejected) {
+            setState(packageId, version, InstallState.FAILED, verify.reason)
+            return InstallResult.Failed(packageId, verify.reason, verify.reason)
+        }
+
+        // ── STAGING ────────────────────────────────────────────────────────
+        setState(packageId, version, InstallState.STAGING)
+        val staged = File(downloadDir, "$packageId-$version.mcos")
+        try {
+            staged.parentFile?.mkdirs()
+            staged.writeBytes(bytes)
+        } catch (e: Exception) {
+            setState(packageId, version, InstallState.FAILED, e.message)
+            return InstallResult.Failed(packageId, e.message ?: "staging failed", "staging_failed")
+        }
+
+        // ── LOADING ────────────────────────────────────────────────────────
+        setState(packageId, version, InstallState.LOADING)
+        val plugin = try {
+            pluginFactory(bytes)
+        } catch (e: Exception) {
+            staged.delete()
+            setState(packageId, version, InstallState.FAILED, e.message)
+            return InstallResult.Failed(packageId, e.message ?: "plugin decode failed", "decode_failed")
+        }
+        return when (val result = loader.load(packageId, version, bytes, signature, builtin = false, plugin = plugin)) {
+            is LoadResult.Installed -> {
+                installedVersions[packageId] = version
+                // Pin the verified fact: record + publisher key + signature
+                // survive the restart. A missing key cannot happen after a
+                // successful verify — if it somehow does, skip the record
+                // (rehydrate would fail closed anyway).
+                val pinnedKey = keyStore.get(signature.signingKeyId)
+                if (installRecordStore != null && pinnedKey != null) {
+                    records[packageId] = PersistedInstallRecord(
+                        packageId = packageId,
+                        version = version,
+                        state = InstallState.INSTALLED.name,
+                        trustLevel = result.trustLevel.name,
+                        installedAt = System.currentTimeMillis(),
+                        artifactFileName = staged.name,
+                        signature = signature,
+                        publisherKey = pinnedKey,
+                    )
+                    persistRecords()
+                }
+                setState(packageId, version, InstallState.INSTALLED)
+                InstallResult.Installed(
+                    packageId = packageId,
+                    version = version,
+                    trustLevel = result.trustLevel,
+                    commandsRegistered = result.commandsRegistered,
+                    aliasesRegistered = result.aliasesRegistered,
+                )
+            }
+            is LoadResult.Denied -> {
+                staged.delete()
+                setState(packageId, version, InstallState.FAILED, result.reason)
+                InstallResult.Failed(packageId, result.reason, result.code)
+            }
+            is LoadResult.Failed -> {
+                staged.delete()
+                setState(packageId, version, InstallState.FAILED, result.message)
+                InstallResult.Failed(packageId, result.message, "load_failed")
+            }
+        }
+    }
+
+    /**
+     * Update a plugin to a new marketplace version
+     * ([09-marketplace.md §7.2]).
+     *
+     * Computes the permission diff between [oldMeta] and [newMeta]. If the
+     * diff requires fresh consent (added/changed elevated or destructive
+     * permissions) and [consentGiven] is false, returns
+     * [UpdateResult.NeedsConsent] without downloading anything. Otherwise
+     * re-runs the install pipeline for [newMeta].
+     *
+     * @param consentGiven set to true after the user accepted the diff
+     *   (returned by a previous [UpdateResult.NeedsConsent] call).
+     */
+    suspend fun updatePackage(
+        oldMeta: PackageMetadata,
+        newMeta: PackageMetadata,
+        consentGiven: Boolean = false,
+        pluginFactory: (ByteArray) -> McosPlugin,
+    ): UpdateResult {
+        val diff = computePermissionDiff(oldMeta, newMeta)
+        if (diff.consentRequired && !consentGiven) {
+            return UpdateResult.NeedsConsent(diff)
+        }
+        return when (val result = installPackage(newMeta, pluginFactory)) {
+            is InstallResult.Installed -> UpdateResult.Installed(
+                packageId = result.packageId,
+                version = result.version,
+                trustLevel = result.trustLevel,
+                commandsRegistered = result.commandsRegistered,
+                aliasesRegistered = result.aliasesRegistered,
+            )
+            is InstallResult.Failed -> UpdateResult.Failed(result.packageId, result.reason, result.code)
+        }
+    }
+
+    /**
+     * Uninstall a plugin ([09-marketplace.md §7.3]).
+     *
+     * Unregisters all descriptors, revokes grants (handled by the host via
+     * [onUninstall] if provided), deletes the staged artifact, and returns to
+     * [InstallState.NOT_INSTALLED].
+     *
+     * @param onUninstall optional host hook invoked between unregistering and
+     *   deleting the artifact (e.g. grant revocation, SecureStore cleanup).
+     */
+    suspend fun uninstallPackage(
+        packageId: String,
+        onUninstall: (suspend () -> Unit)? = null,
+    ): UninstallResult {
+        setState(packageId, null, InstallState.UNINSTALLING)
+        try {
+            registry.unregister(packageId)
+            onUninstall?.invoke()
+
+            // Delete every staged artifact for this package.
+            File(downloadDir).listFiles()?.forEach { file ->
+                if (file.name.startsWith("$packageId-")) file.delete()
+            }
+        } catch (e: Exception) {
+            setState(packageId, null, InstallState.FAILED, e.message)
+            return UninstallResult.Failed(packageId, e.message ?: "uninstall failed", "uninstall_failed")
+        }
+        installedVersions.remove(packageId)
+        dropRecord(packageId)
+        setState(packageId, null, InstallState.NOT_INSTALLED)
+        return UninstallResult.Done
+    }
+
+    /**
+     * Apply the marketplace blocklist ([09-marketplace.md §14.4]).
+     *
+     * Every installed plugin whose `(packageId, version)` matches an entry is
+     * force-disabled: its descriptors are drained from the registry and its
+     * [InstallState] transitions to [InstallState.DISABLED] (the artifact
+     * stays on disk — the user can uninstall or wait for a patched version).
+     *
+     * The returned [ForceDisabled] list is the host's cue to notify the user
+     * and write the `plugin.force_disabled { packageId, version, reason }`
+     * audit record. The active blocklist is also replaced, so subsequent
+     * installs of affected versions are rejected by [installPackage].
+     *
+     * A [BlocklistReason.SECURITY_VULNERABILITY] disable is auto-lifted by
+     * installing a version outside the entry's range (normal re-install).
+     */
+    suspend fun applyBlocklist(blocklistDoc: Blocklist): List<ForceDisabled> {
+        this.blocklist = blocklistDoc.asSecurityBlocklist()
+        val disabled = mutableListOf<ForceDisabled>()
+        for (entry in blocklistDoc.entries) {
+            val version = installedVersions[entry.packageId] ?: continue
+            when (stateOf(entry.packageId)) {
+                InstallState.INSTALLED, InstallState.UPDATE_AVAILABLE -> {
+                    if (!VersionRange(entry.versionRange).matches(version)) continue
+                    registry.unregister(entry.packageId)
+                    setState(entry.packageId, version, InstallState.DISABLED, "blocked: ${entry.reason}")
+                    updateRecordState(entry.packageId, InstallState.DISABLED)
+                    disabled += ForceDisabled(entry.packageId, version, entry.reason)
+                }
+                // Already disabled / not installed / in-flight: leave alone.
+                else -> Unit
+            }
+        }
+        return disabled
+    }
+
+    /** Replace the active blocklist used by [installPackage]'s pre-download gate. */
+    fun updateBlocklist(blocklist: SecurityBlocklist) {
+        this.blocklist = blocklist
+    }
+
+    // ─── External transitions (§7.0) ─────────────────────────────────────
+
+    /** Mark a package as having a newer marketplace version. */
+    fun markUpdateAvailable(packageId: String, newVersion: String) {
+        // Derived marker — intentionally NOT persisted (a restart re-derives
+        // it from the index; the durable record stays INSTALLED).
+        setState(packageId, newVersion, InstallState.UPDATE_AVAILABLE)
+    }
+
+    /** Trust downgrade / quarantine (§14.4): installed but not loaded. */
+    fun markDisabled(packageId: String) {
+        setState(packageId, null, InstallState.DISABLED)
+        updateRecordState(packageId, InstallState.DISABLED)
+    }
+
+    /** User re-enables a disabled plugin (with warning). */
+    fun markEnabled(packageId: String) {
+        setState(packageId, installedVersions[packageId], InstallState.INSTALLED)
+        updateRecordState(packageId, InstallState.INSTALLED)
+    }
+
+    /** Cleanup after a failure: back to NOT_INSTALLED. */
+    fun resetFailed(packageId: String) {
+        installedVersions.remove(packageId)
+        dropRecord(packageId)
+        setState(packageId, null, InstallState.NOT_INSTALLED)
+    }
+
+    // ─── Rehydration (§7.0, restart) ─────────────────────────────────────
+
+    /**
+     * Restore marketplace installs after a restart: for every persisted
+     * INSTALLED record, re-seed the pinned publisher key ([seedKey]), read
+     * the staged artifact, **re-run the full verify pipeline** — a
+     * persisted record is a claim, never proof; tampered staged bytes fail
+     * closed and the record is dropped — then register via [PluginLoader].
+     *
+     * DISABLED records restore their state only; they stay unloaded by
+     * design (§14.4).
+     *
+     * The [PluginLoader] registers descriptors but does not call `onLoad`;
+     * each successful [RehydrateOutcome.plugin] is the host's to load, the
+     * same division of labour as [installPackage].
+     *
+     * @param pluginFactory resolves a package id to a `(bytes) -> plugin`
+     *   decoder; a null factory (no local implementation — dynamic `.mcos`
+     *   loading is a later slice) fails that record without dropping it.
+     * @param seedKey feeds the pinned publisher key back into the shared
+     *   key store (e.g. `InMemoryPublisherKeyStore::put`), so both this
+     *   verifier and the loader's trust gate can verify.
+     */
+    suspend fun rehydrateInstalled(
+        pluginFactory: (packageId: String) -> ((ByteArray) -> McosPlugin)?,
+        seedKey: (PublisherKey) -> Unit = {},
+    ): List<RehydrateOutcome> {
+        val outcomes = mutableListOf<RehydrateOutcome>()
+        for (record in records.values.toList()) {
+            val packageId = record.packageId
+            if (record.state == InstallState.DISABLED.name) {
+                outcomes += RehydrateOutcome(packageId, record.version, null, InstallState.DISABLED)
+                continue
+            }
+            setState(packageId, record.version, InstallState.VERIFYING, "rehydrating")
+            val bytes = try {
+                File(downloadDir, record.artifactFileName).takeIf { it.isFile }?.readBytes()
+            } catch (_: Exception) {
+                null
+            }
+            if (bytes == null) {
+                dropRecord(packageId)
+                setState(packageId, record.version, InstallState.FAILED, "staged artifact missing")
+                outcomes += RehydrateOutcome(packageId, record.version, null, InstallState.FAILED, "staged artifact missing")
+                continue
+            }
+            seedKey(record.publisherKey)
+            val verify = verifier.verify(bytes, record.signature, packageId, record.version)
+            if (verify is VerifyResult.Rejected) {
+                dropRecord(packageId)
+                setState(packageId, record.version, InstallState.FAILED, "rehydrate rejected: ${verify.reason}")
+                outcomes += RehydrateOutcome(packageId, record.version, null, InstallState.FAILED, verify.reason)
+                continue
+            }
+            val factory = pluginFactory(packageId)
+            if (factory == null) {
+                // Verified artifact, but this build cannot decode it. Keep
+                // the record — a future build with dynamic loading (or the
+                // curated factory mapping) can still restore it.
+                setState(packageId, record.version, InstallState.FAILED, "no local implementation")
+                outcomes += RehydrateOutcome(packageId, record.version, null, InstallState.FAILED, "no local implementation")
+                continue
+            }
+            setState(packageId, record.version, InstallState.LOADING, "rehydrating")
+            var plugin: McosPlugin? = null
+            val result = try {
+                loader.load(
+                    packageId, record.version, bytes, record.signature,
+                    builtin = false,
+                    plugin = factory(bytes).also { plugin = it },
+                )
+            } catch (e: Exception) {
+                dropRecord(packageId)
+                setState(packageId, record.version, InstallState.FAILED, e.message)
+                outcomes += RehydrateOutcome(packageId, record.version, null, InstallState.FAILED, e.message ?: "load failed")
+                continue
+            }
+            when (result) {
+                is LoadResult.Installed -> {
+                    setState(packageId, record.version, InstallState.INSTALLED)
+                    outcomes += RehydrateOutcome(packageId, record.version, plugin, InstallState.INSTALLED)
+                }
+                is LoadResult.Denied -> {
+                    dropRecord(packageId)
+                    setState(packageId, record.version, InstallState.FAILED, result.reason)
+                    outcomes += RehydrateOutcome(packageId, record.version, null, InstallState.FAILED, result.reason)
+                }
+                is LoadResult.Failed -> {
+                    dropRecord(packageId)
+                    setState(packageId, record.version, InstallState.FAILED, result.message)
+                    outcomes += RehydrateOutcome(packageId, record.version, null, InstallState.FAILED, result.message)
+                }
+            }
+        }
+        return outcomes
+    }
+
+    // ─── Durable records ─────────────────────────────────────────────────
+
+    /** Flip a persisted record's state; no-op when no record exists. */
+    private fun updateRecordState(packageId: String, state: InstallState) {
+        val record = records[packageId] ?: return
+        records[packageId] = record.copy(state = state.name)
+        persistRecords()
+    }
+
+    /** Drop a persisted record (uninstall / failed rehydrate). */
+    private fun dropRecord(packageId: String) {
+        records.remove(packageId)
+        persistRecords()
+    }
+
+    private fun persistRecords() {
+        installRecordStore?.save(records.values.toList())
+    }
+
+    // ─── Internals ────────────────────────────────────────────────────────
+
+    /**
+     * Rebuild the [ArtifactSignature] envelope from marketplace metadata.
+     * The algorithm is looked up from the publisher key store (the index
+     * `ArtifactRef` does not carry the algorithm label).
+     */
+    private fun signatureFor(metadata: PackageMetadata): ArtifactSignature? {
+        val key = keyStore.get(metadata.artifact.signingKeyId) ?: return null
+        return ArtifactSignature(
+            payloadSha256 = metadata.artifact.sha256,
+            signature = metadata.artifact.signature,
+            signingKeyId = metadata.artifact.signingKeyId,
+            algorithm = key.algorithm,
+            signedAt = metadata.updatedAt,
+        )
+    }
+
+    private companion object {
+        const val CONNECT_TIMEOUT_MS = 10_000L
+        const val REQUEST_TIMEOUT_MS = 30_000L
+    }
+}

@@ -44,6 +44,15 @@ dependencies {
     // LlmPlanner, providers, AndroidLlmHttpTransport implements the llm
     // transport interface), so the app module depends on :mcos-llm explicitly.
     implementation(project(":mcos-llm"))
+    // Marketplace UI (search / install / uninstall) wires MarketplaceIndex and
+    // PluginInstaller directly; AndroidMarketplaceHttpTransport implements the
+    // marketplace transport interface (Android has no java.net.http module).
+    implementation(project(":mcos-marketplace"))
+    // The app reads core subsystem types (CommandRegistry, PluginLoader,
+    // Executor) and security types (EnterprisePolicy, ArtifactVerifier)
+    // directly; declare the edges instead of relying on transitive api leaks.
+    implementation(project(":mcos-runtime-core"))
+    implementation(project(":mcos-security"))
     implementation(project(":plugins:mcos-plugin-hello"))
     implementation(project(":plugins:mcos-plugin-system"))
     implementation(project(":plugins:mcos-plugin-camera"))

@@ -61,6 +61,28 @@ interface HostServices {
      * a stub result when null.
      */
     val media: MediaService? get() = null
+
+    /**
+     * Optional device-information service (battery / Wi-Fi / screen /
+     * volume / location / brightness). Null on hosts without a device
+     * platform (e.g. plain JVM). Plugins must surface UNAVAILABLE —
+     * never fabricated telemetry — when null.
+     */
+    val deviceInfo: DeviceInfoService? get() = null
+
+    /**
+     * Optional system clipboard. Null on hosts without a clipboard;
+     * a host whose clipboard is restricted (Android background limits)
+     * returns null from [ClipboardService.get] rather than fabricating
+     * text. Clipboard text is untrusted input (08-security.md 11.1).
+     */
+    val clipboard: ClipboardService? get() = null
+
+    /**
+     * Optional haptics (vibration). Null on hosts without a vibrator —
+     * plugins must surface UNAVAILABLE rather than a fake success.
+     */
+    val haptics: HapticsService? get() = null
 }
 
 /**
@@ -95,6 +117,69 @@ interface MediaService {
         maxWidth: Int? = null,
         maxHeight: Int? = null,
     ): List<String>
+}
+
+/**
+ * Device telemetry + brightness control. Implementations report the REAL
+ * host state — a datum the host cannot determine (e.g. Wi-Fi SSID without
+ * the location permission) is returned as null, never guessed.
+ */
+interface DeviceInfoService {
+    suspend fun battery(): BatteryInfo
+    suspend fun wifi(): WifiInfo
+    suspend fun screen(): ScreenInfo
+    suspend fun volume(): VolumeInfo
+
+    /** Last known location, or null when the host has no fix. */
+    suspend fun location(): LocationInfo?
+    suspend fun brightness(): BrightnessInfo
+
+    /** Set screen brightness (0-255). Implementations surface permission
+     *  failures as errors instead of pretending the level changed. */
+    suspend fun setBrightness(level: Int)
+}
+
+data class BatteryInfo(val percent: Int, val charging: Boolean, val temperatureC: Int? = null)
+
+/** [ssid]/[strength] are null when unavailable (e.g. no location permission on Android 10+). */
+data class WifiInfo(val connected: Boolean, val ssid: String? = null, val strength: Int? = null)
+
+data class ScreenInfo(
+    val widthPx: Int,
+    val heightPx: Int,
+    val densityDpi: Int,
+    val rotation: Int,
+    val brightness: Int? = null,
+)
+
+data class VolumeInfo(
+    val musicPercent: Int,
+    val ringPercent: Int? = null,
+    val alarmPercent: Int? = null,
+)
+
+data class LocationInfo(
+    val lat: Double,
+    val lng: Double,
+    val accuracyM: Float? = null,
+    val timestampMs: Long? = null,
+)
+
+data class BrightnessInfo(val level: Int, val auto: Boolean)
+
+/**
+ * System clipboard. [get] returns null when the clipboard is empty or the
+ * host cannot read it (Android restricts background access) — implementations
+ * must not fabricate text. Returned text is untrusted input (08-security.md 11.1).
+ */
+interface ClipboardService {
+    suspend fun set(text: String)
+    suspend fun get(): String?
+}
+
+/** Haptic feedback (vibration). */
+interface HapticsService {
+    suspend fun vibrate(durationMs: Int)
 }
 
 interface FileService {
@@ -135,6 +220,15 @@ interface NetService {
 interface UiService {
     /** Start an Android Activity for result. Returns result data or null. */
     suspend fun startActivityForResult(intent: Map<String, String>): Map<String, String>?
+
+    /**
+     * Show a transient toast (04-plugin-sdk.md 6.3). The default throws
+     * [McosException] UNAVAILABLE so hosts without a UI surface an honest
+     * failure instead of a silent no-op.
+     */
+    suspend fun toast(message: String) {
+        throw McosException("UNAVAILABLE", "Toast is not available on this host")
+    }
 }
 
 interface SecureStore {

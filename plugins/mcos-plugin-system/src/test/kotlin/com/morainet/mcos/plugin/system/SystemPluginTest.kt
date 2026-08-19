@@ -218,8 +218,9 @@ class SystemPluginTest {
     // ═══════════════════════════════════════════════════════════════
 
     @Test
-    fun `S13-sys_clipboard write mode`() = runBlocking {
-        val handler = plugin.handlers()["sys.clipboard"]!!
+    fun `S13-sys_clipboard write mode calls the host clipboard`() = runBlocking {
+        val (capablePlugin, svc) = capablePlugin()
+        val handler = capablePlugin.handlers()["sys.clipboard"]!!
         val args = buildJsonObject { put("text", JsonPrimitive("Copy me")) }
         val ctx = execCtx("sys.clipboard", args)
 
@@ -229,6 +230,9 @@ class SystemPluginTest {
         val value = (result as CommandResult.Ok).value!!.jsonObject
         assertEquals("write", value["operation"]!!.jsonPrimitive.content)
         assertEquals("Copy me", value["text"]!!.jsonPrimitive.content)
+        assertEquals("Copy me", svc.fakeClipboard.lastSet, "write mode must reach the host clipboard")
+        capablePlugin.onUnload()
+        Unit
     }
 
     @Test
@@ -238,6 +242,40 @@ class SystemPluginTest {
 
         val ex = assertFailsWith<McosException> { handler.invoke(ctx) }
         assertEquals("UNAVAILABLE", ex.code)
+        Unit
+    }
+
+    @Test
+    fun `S14-1-sys_clipboard read mode returns text tagged untrusted`() = runBlocking {
+        // 08-security.md 11.1: clipboard text is untrusted input (the user may
+        // have copied adversarial text) — the read result must carry the tag.
+        val (capablePlugin, svc) = capablePlugin()
+        svc.fakeClipboard.current = "user-copied text"
+        val handler = capablePlugin.handlers()["sys.clipboard"]!!
+
+        val result = handler.invoke(execCtx("sys.clipboard", JsonObject(emptyMap())))
+
+        assertTrue(result is CommandResult.Ok)
+        val value = (result as CommandResult.Ok).value!!.jsonObject
+        assertEquals("read", value["operation"]!!.jsonPrimitive.content)
+        assertEquals("user-copied text", value["text"]!!.jsonPrimitive.content)
+        assertEquals(true, value["untrusted"]!!.jsonPrimitive.boolean)
+        capablePlugin.onUnload()
+        Unit
+    }
+
+    @Test
+    fun `S14-2-sys_clipboard read of empty clipboard throws UNAVAILABLE`() = runBlocking {
+        // Empty and unreadable are indistinguishable — never a fabricated Ok.
+        val (capablePlugin, svc) = capablePlugin()
+        svc.fakeClipboard.current = null
+        val handler = capablePlugin.handlers()["sys.clipboard"]!!
+
+        val ex = assertFailsWith<McosException> {
+            handler.invoke(execCtx("sys.clipboard", JsonObject(emptyMap())))
+        }
+        assertEquals("UNAVAILABLE", ex.code)
+        capablePlugin.onUnload()
         Unit
     }
 
@@ -287,28 +325,46 @@ class SystemPluginTest {
 
     @Test
     fun `S19-sys_vibrate succeeds with default duration`() = runBlocking {
-        val handler = plugin.handlers()["sys.vibrate"]!!
-        val ctx = execCtx("sys.vibrate", JsonObject(emptyMap()))
+        val (capablePlugin, svc) = capablePlugin()
+        val handler = capablePlugin.handlers()["sys.vibrate"]!!
 
-        val result = handler.invoke(ctx)
+        val result = handler.invoke(execCtx("sys.vibrate", JsonObject(emptyMap())))
 
         assertTrue(result is CommandResult.Ok)
         val value = (result as CommandResult.Ok).value!!.jsonObject
         assertEquals("vibrated", value["status"]!!.jsonPrimitive.content)
         assertEquals(500, value["durationMs"]!!.jsonPrimitive.int)
+        assertEquals(500, svc.fakeHaptics.lastDurationMs, "default duration must reach the host haptics")
+        assertEquals(1, svc.fakeHaptics.vibrateCount)
+        capablePlugin.onUnload()
+        Unit
+    }
+
+    @Test
+    fun `S19-1-sys_vibrate without haptics capability throws UNAVAILABLE`() = runBlocking {
+        val handler = plugin.handlers()["sys.vibrate"]!!
+
+        val ex = assertFailsWith<McosException> {
+            handler.invoke(execCtx("sys.vibrate", JsonObject(emptyMap())))
+        }
+        assertEquals("UNAVAILABLE", ex.code)
+        Unit
     }
 
     @Test
     fun `S20-sys_vibrate succeeds with custom duration`() = runBlocking {
-        val handler = plugin.handlers()["sys.vibrate"]!!
+        val (capablePlugin, svc) = capablePlugin()
+        val handler = capablePlugin.handlers()["sys.vibrate"]!!
         val args = buildJsonObject { put("duration", JsonPrimitive(2000)) }
-        val ctx = execCtx("sys.vibrate", args)
 
-        val result = handler.invoke(ctx)
+        val result = handler.invoke(execCtx("sys.vibrate", args))
 
         assertTrue(result is CommandResult.Ok)
         val value = (result as CommandResult.Ok).value!!.jsonObject
         assertEquals(2000, value["durationMs"]!!.jsonPrimitive.int)
+        assertEquals(2000, svc.fakeHaptics.lastDurationMs, "custom duration must reach the host haptics")
+        capablePlugin.onUnload()
+        Unit
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -502,6 +558,140 @@ class SystemPluginTest {
         assertTrue(cmd.permissions.any { it.name.contains("WRITE_SETTINGS") })
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // S39-S46: device queries on a capable host (real capability wiring)
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `S39-sys_device_battery maps host battery info`() = runBlocking {
+        val (capablePlugin, svc) = capablePlugin()
+        svc.fakeDeviceInfo.batteryInfo = BatteryInfo(percent = 87, charging = true, temperatureC = 30)
+        val handler = capablePlugin.handlers()["sys.device.battery"]!!
+
+        val result = handler.invoke(execCtx("sys.device.battery", JsonObject(emptyMap())))
+
+        val value = (result as CommandResult.Ok).value!!.jsonObject
+        assertEquals(87, value["percent"]!!.jsonPrimitive.int)
+        assertEquals(true, value["charging"]!!.jsonPrimitive.boolean)
+        assertEquals(30, value["temperatureC"]!!.jsonPrimitive.int)
+        capablePlugin.onUnload()
+        Unit
+    }
+
+    @Test
+    fun `S40-sys_device_wifi maps host wifi info and keeps unknown ssid null`() = runBlocking {
+        val (capablePlugin, svc) = capablePlugin()
+        svc.fakeDeviceInfo.wifiInfo = WifiInfo(connected = false, ssid = null, strength = null)
+        val handler = capablePlugin.handlers()["sys.device.wifi"]!!
+
+        val result = handler.invoke(execCtx("sys.device.wifi", JsonObject(emptyMap())))
+
+        val value = (result as CommandResult.Ok).value!!.jsonObject
+        assertEquals(false, value["connected"]!!.jsonPrimitive.boolean)
+        assertTrue(value["ssid"] is JsonNull, "unknown SSID must surface as null, never a guess")
+        assertTrue(value["strength"] is JsonNull)
+        capablePlugin.onUnload()
+        Unit
+    }
+
+    @Test
+    fun `S41-sys_device_screen maps host screen info`() = runBlocking {
+        val (capablePlugin, svc) = capablePlugin()
+        svc.fakeDeviceInfo.screenInfo = ScreenInfo(1080, 2400, densityDpi = 420, rotation = 1, brightness = 128)
+        val handler = capablePlugin.handlers()["sys.device.screen"]!!
+
+        val result = handler.invoke(execCtx("sys.device.screen", JsonObject(emptyMap())))
+
+        val value = (result as CommandResult.Ok).value!!.jsonObject
+        assertEquals(1080, value["widthPx"]!!.jsonPrimitive.int)
+        assertEquals(2400, value["heightPx"]!!.jsonPrimitive.int)
+        assertEquals(420, value["densityDpi"]!!.jsonPrimitive.int)
+        assertEquals(1, value["rotation"]!!.jsonPrimitive.int)
+        assertEquals(128, value["brightness"]!!.jsonPrimitive.int)
+        capablePlugin.onUnload()
+        Unit
+    }
+
+    @Test
+    fun `S42-sys_device_volume maps host volume info`() = runBlocking {
+        val (capablePlugin, svc) = capablePlugin()
+        svc.fakeDeviceInfo.volumeInfo = VolumeInfo(musicPercent = 40, ringPercent = 60, alarmPercent = 80)
+        val handler = capablePlugin.handlers()["sys.device.volume"]!!
+
+        val result = handler.invoke(execCtx("sys.device.volume", JsonObject(emptyMap())))
+
+        val value = (result as CommandResult.Ok).value!!.jsonObject
+        assertEquals(40, value["music"]!!.jsonPrimitive.int)
+        assertEquals(60, value["ring"]!!.jsonPrimitive.int)
+        assertEquals(80, value["alarm"]!!.jsonPrimitive.int)
+        capablePlugin.onUnload()
+        Unit
+    }
+
+    @Test
+    fun `S43-sys_device_location maps a real fix`() = runBlocking {
+        val (capablePlugin, svc) = capablePlugin()
+        svc.fakeDeviceInfo.locationInfo = LocationInfo(22.5431, 114.0579, accuracyM = 25f, timestampMs = 1_700_000_000_000)
+        val handler = capablePlugin.handlers()["sys.device.location"]!!
+
+        val result = handler.invoke(execCtx("sys.device.location", JsonObject(emptyMap())))
+
+        val value = (result as CommandResult.Ok).value!!.jsonObject
+        assertEquals("ok", value["status"]!!.jsonPrimitive.content)
+        assertEquals(22.5431, value["lat"]!!.jsonPrimitive.double, 1e-9)
+        assertEquals(114.0579, value["lng"]!!.jsonPrimitive.double, 1e-9)
+        assertEquals(25f, value["accuracyM"]!!.jsonPrimitive.float, 1e-6f)
+        assertEquals(1_700_000_000_000, value["timestampMs"]!!.jsonPrimitive.long)
+        capablePlugin.onUnload()
+        Unit
+    }
+
+    @Test
+    fun `S44-sys_device_location without a fix returns no_fix not an error`() = runBlocking {
+        val (capablePlugin, svc) = capablePlugin()
+        svc.fakeDeviceInfo.locationInfo = null
+        val handler = capablePlugin.handlers()["sys.device.location"]!!
+
+        val result = handler.invoke(execCtx("sys.device.location", JsonObject(emptyMap())))
+
+        val value = (result as CommandResult.Ok).value!!.jsonObject
+        assertEquals("no_fix", value["status"]!!.jsonPrimitive.content)
+        assertTrue(value["location"] is JsonNull, "absence is data, never a fabricated coordinate")
+        capablePlugin.onUnload()
+        Unit
+    }
+
+    @Test
+    fun `S45-sys_device_brightness query maps level and auto`() = runBlocking {
+        val (capablePlugin, svc) = capablePlugin()
+        svc.fakeDeviceInfo.brightnessInfo = BrightnessInfo(level = 128, auto = false)
+        val handler = capablePlugin.handlers()["sys.device.brightness"]!!
+
+        val result = handler.invoke(execCtx("sys.device.brightness", JsonObject(emptyMap())))
+
+        val value = (result as CommandResult.Ok).value!!.jsonObject
+        assertEquals(128, value["level"]!!.jsonPrimitive.int)
+        assertEquals(false, value["auto"]!!.jsonPrimitive.boolean)
+        capablePlugin.onUnload()
+        Unit
+    }
+
+    @Test
+    fun `S46-sys_device_brightness set calls host and reports the level`() = runBlocking {
+        val (capablePlugin, svc) = capablePlugin()
+        val handler = capablePlugin.handlers()["sys.device.brightness"]!!
+        val args = buildJsonObject { put("level", JsonPrimitive(200)) }
+
+        val result = handler.invoke(execCtx("sys.device.brightness", args))
+
+        val value = (result as CommandResult.Ok).value!!.jsonObject
+        assertEquals("set", value["status"]!!.jsonPrimitive.content)
+        assertEquals(200, value["level"]!!.jsonPrimitive.int)
+        assertEquals(200, svc.fakeDeviceInfo.lastSetBrightness, "set mode must reach the host brightness setter")
+        capablePlugin.onUnload()
+        Unit
+    }
+
     // ─── Helpers ──────────────────────────────────────────────────────────
 
     private fun execCtx(commandId: String, args: JsonObject): ExecutionContext {
@@ -512,12 +702,24 @@ class SystemPluginTest {
             services = stubServices,
         )
     }
+
+    /**
+     * A plugin loaded with [CapableSystemHostServices] for the success-path
+     * tests. Handlers read capabilities from the services captured at
+     * onLoad — the same path a real host takes.
+     */
+    private fun capablePlugin(): Pair<SystemPlugin, CapableSystemHostServices> {
+        val services = CapableSystemHostServices()
+        val capable = SystemPlugin()
+        runBlocking { capable.onLoad(services) }
+        return capable to services
+    }
 }
 
 /**
  * Minimal HostServices stub for system plugin tests.
  */
-class StubSystemHostServices : HostServices {
+open class StubSystemHostServices : HostServices {
     override val files: FileService get() = error("FileService not available")
     override val net: NetService get() = error("NetService not available")
     override val memory: MemoryFacade = object : MemoryFacade {
@@ -539,5 +741,60 @@ class StubSystemHostServices : HostServices {
     override val json: JsonService get() = error("JsonService not available")
     override val notifications: NotificationService? = object : NotificationService {
         override suspend fun notify(title: String, text: String): String = "test-channel"
+    }
+}
+
+/**
+ * [StubSystemHostServices] plus recording fakes for the device-info /
+ * clipboard / haptics capabilities, for the success-path tests. The base
+ * stub keeps them null — the UNAVAILABLE regression tests rely on that.
+ */
+class CapableSystemHostServices : StubSystemHostServices() {
+    val fakeDeviceInfo = FakeDeviceInfoService()
+    val fakeClipboard = FakeClipboardService()
+    val fakeHaptics = FakeHapticsService()
+    override val deviceInfo: DeviceInfoService get() = fakeDeviceInfo
+    override val clipboard: ClipboardService get() = fakeClipboard
+    override val haptics: HapticsService get() = fakeHaptics
+}
+
+class FakeDeviceInfoService : DeviceInfoService {
+    var batteryInfo = BatteryInfo(percent = 87, charging = true, temperatureC = 30)
+    var wifiInfo = WifiInfo(connected = true, ssid = "HomeNet", strength = -55)
+    var screenInfo = ScreenInfo(1080, 2400, densityDpi = 420, rotation = 1, brightness = 128)
+    var volumeInfo = VolumeInfo(musicPercent = 40, ringPercent = 60, alarmPercent = 80)
+    var locationInfo: LocationInfo? = LocationInfo(22.5431, 114.0579, accuracyM = 25f, timestampMs = 1_700_000_000_000)
+    var brightnessInfo = BrightnessInfo(level = 128, auto = false)
+    var lastSetBrightness: Int? = null
+
+    override suspend fun battery() = batteryInfo
+    override suspend fun wifi() = wifiInfo
+    override suspend fun screen() = screenInfo
+    override suspend fun volume() = volumeInfo
+    override suspend fun location() = locationInfo
+    override suspend fun brightness() = brightnessInfo
+    override suspend fun setBrightness(level: Int) {
+        lastSetBrightness = level
+    }
+}
+
+class FakeClipboardService : ClipboardService {
+    var current: String? = "copied text"
+    var lastSet: String? = null
+
+    override suspend fun set(text: String) {
+        lastSet = text
+    }
+
+    override suspend fun get(): String? = current
+}
+
+class FakeHapticsService : HapticsService {
+    var lastDurationMs: Int? = null
+    var vibrateCount = 0
+
+    override suspend fun vibrate(durationMs: Int) {
+        lastDurationMs = durationMs
+        vibrateCount++
     }
 }

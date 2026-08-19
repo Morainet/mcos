@@ -37,7 +37,7 @@ Wi‑Fi Office connected → vpn.connect
 
 ### 1.1 引擎定位
 
-工作流引擎是 **Runtime 的一个子组件**（[01 §6.3](./01-architecture.md)），位于包 `com.morainet.mcos.runtime.workflow`（[03 §3](./03-runtime.md)）。它**不是** [01 §9.2](./01-architecture.md) 中定义的 10 个流水线阶段之一，而是位于流水线**之上**。每个工作流步骤都是一次单独的命令调用，会重新进入流水线。
+工作流引擎是 **Runtime 的一个子组件**（[01 §6.3](./01-architecture.md)），位于包 `com.morainet.mcos.runtime.core.workflow`（[03 §3](./03-runtime.md)）。它**不是** [01 §9.2](./01-architecture.md) 中定义的 10 个流水线阶段之一，而是位于流水线**之上**。每个工作流步骤都是一次单独的命令调用，会重新进入流水线。
 
 本文档负责图层面的事务（IR 形态、步骤类型、触发器、连接策略（join policy）、补偿、重试协调）。单命令层面的事务（解析、schema 校验、授权、执行）由 [02](./02-command-protocol.md) 和 [03](./03-runtime.md) 负责，本文档以交叉引用方式引用，不再重新定义。
 
@@ -162,7 +162,7 @@ stateDiagram-v2
 §4.1–4.2 中的 JSON 示例仅为示例；**规范（normative）**类型是以下 Kotlin data class。编译阶段（[§1.2](#12-compile-time--run-time-separation)）产出一个 `CompiledWorkflow`；JSON IR 是该阶段的输入。
 
 ```kotlin
-package com.morainet.mcos.runtime.workflow
+package com.morainet.mcos.runtime.core.workflow
 
 typealias StepId = String   // mirrors 01 §11.5
 

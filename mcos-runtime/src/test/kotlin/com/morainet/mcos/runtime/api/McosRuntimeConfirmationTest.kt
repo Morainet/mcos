@@ -1,9 +1,18 @@
 package com.morainet.mcos.runtime.api
 
-import com.morainet.mcos.runtime.memory.MemoryStore
-import com.morainet.mcos.runtime.permission.DefaultPermissionKernel
-import com.morainet.mcos.runtime.permission.PermissionKernel
-import com.morainet.mcos.runtime.registry.CommandRegistry
+import com.morainet.mcos.runtime.core.api.ConfirmationDecision
+import com.morainet.mcos.runtime.core.api.ExecuteRequest
+import com.morainet.mcos.runtime.core.api.Payload
+import com.morainet.mcos.runtime.core.api.RuntimeEvent
+import com.morainet.mcos.runtime.core.api.Source
+import com.morainet.mcos.runtime.core.api.StubHostServices
+import com.morainet.mcos.runtime.core.executor.Executor
+import com.morainet.mcos.runtime.core.memory.MemoryStore
+import com.morainet.mcos.security.HmacAuthStampSigner
+import com.morainet.mcos.security.SecurityConfig
+import com.morainet.mcos.security.permission.DefaultPermissionKernel
+import com.morainet.mcos.security.permission.PermissionKernel
+import com.morainet.mcos.runtime.core.registry.CommandRegistry
 import com.morainet.mcos.sdk.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -156,6 +165,79 @@ class McosRuntimeConfirmationTest {
         val responded = runtime.respondConfirmation(handle.runId, "test.read", ConfirmationDecision.Approve())
         assertFalse(responded, "no pending confirmation should exist for a read command")
 
+        stopObserving()
+    }
+
+    // ─── Injected-executor wiring (the demo-shell shape) ─────────────────
+    // SecurityConfig.defaults() fabricates its own HmacAuthStampSigner with
+    // a fresh random key, while the ConfirmationCoordinator signs retry
+    // stamps with the builder's signer. Unshared signers reject every
+    // approved stamp at Executor Stage 6 ("failed signature verification") —
+    // the demo hit this the moment the permission bootstrap let
+    // camera.capture reach the confirmation flow.
+
+    @Test
+    fun `injected executor without a shared signer fails approved stamps`() = runBlocking {
+        registerCommand("test.write", SideEffectClass.write)
+        val splitRuntime = McosRuntime.Builder()
+            .withRegistry(registry)
+            .withMemory(MemoryStore())
+            .withConfirmationTimeoutMs(5_000)
+            .withExecutor(
+                Executor(
+                    registry = registry,
+                    hostServices = StubHostServices(MemoryStore()),
+                    security = SecurityConfig.defaults(),
+                )
+            )
+            .build()
+
+        val handle = splitRuntime.execute(
+            ExecuteRequest(Source.CHAT, Payload.DslText("test.write(x=\"1\")"))
+        )
+        val events = observe(this, splitRuntime, handle.runId)
+        assertNotNull(awaitEvent(events) { it is RuntimeEvent.ConfirmationNeeded })
+        assertTrue(
+            splitRuntime.respondConfirmation(handle.runId, "test.write", ConfirmationDecision.Approve())
+        )
+
+        val failed = awaitEvent(events) { it is RuntimeEvent.RunFailed }
+        assertNotNull(failed, "unshared signer must fail the approved retry")
+        assertTrue(
+            (failed as RuntimeEvent.RunFailed).error.contains("failed signature verification"),
+            "expected the signature-verification failure, got: ${failed.error}",
+        )
+        stopObserving()
+    }
+
+    @Test
+    fun `injected executor with the shared facade signer completes approved runs`() = runBlocking {
+        registerCommand("test.write", SideEffectClass.write)
+        val sharedSigner = HmacAuthStampSigner()
+        val wiredRuntime = McosRuntime.Builder()
+            .withRegistry(registry)
+            .withMemory(MemoryStore())
+            .withConfirmationTimeoutMs(5_000)
+            .withAuthStampSigner(sharedSigner)
+            .withExecutor(
+                Executor(
+                    registry = registry,
+                    hostServices = StubHostServices(MemoryStore()),
+                    security = SecurityConfig.defaults().copy(signer = sharedSigner),
+                )
+            )
+            .build()
+
+        val handle = wiredRuntime.execute(
+            ExecuteRequest(Source.CHAT, Payload.DslText("test.write(x=\"1\")"))
+        )
+        val events = observe(this, wiredRuntime, handle.runId)
+        assertNotNull(awaitEvent(events) { it is RuntimeEvent.ConfirmationNeeded })
+        assertTrue(
+            wiredRuntime.respondConfirmation(handle.runId, "test.write", ConfirmationDecision.Approve())
+        )
+
+        assertNotNull(awaitEvent(events) { it is RuntimeEvent.RunSucceeded }, "approved run should succeed with the shared signer")
         stopObserving()
     }
 

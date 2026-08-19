@@ -247,7 +247,7 @@ The runtime-side `CommandDescriptor` produced from the manifest is normative in 
 
 ## 5. Core SDK Interfaces (Kotlin)
 
-> 🚧 **Implementation status:** the repository is currently design-only — **no SDK code exists yet**. The full lifecycle (`onLoad`/`onUnload`), `manifest`, `cancel()`, and `retryable` below are all part of the P1 target contract. Implement toward this spec; see [11-implementation-status.md](./11-implementation-status.md) §7.
+> ✅ **Implementation status:** `McosPlugin` / `CommandHandler` (including the `cancel()` hook) live in `mcos-sdk`, exercised by the four reference plugins and the full test suite. Known deltas from this spec: `CommandId` is a plain `String` typealias, and `retryable` is carried by the runtime's `McosException`→`CommandResult.Err` mapping. See [11-implementation-status.md](./11-implementation-status.md) §7.
 
 ```kotlin
 interface McosPlugin {
@@ -339,7 +339,7 @@ The IR `meta` field ([02 §8.2](./02-command-protocol.md)) — `source`, `confid
 
 ## 6. HostServices (Plugin-Facing Facade)
 
-> 🚧 **Implementation status:** `HostServices` and its service interfaces are **not yet implemented**. They are the P1 target so plugins depend on scoped services rather than a raw Android `Context`. The historical name `PluginHost` is retired — [01 §11.1](./01-architecture.md) standardizes on `HostServices`.
+> ✅ **Implementation status:** `HostServices` and every §6.1–6.6 interface live in `mcos-sdk` (JVM stubs + real Android implementations in `mcos-android`). v0.x deltas: services are `val` properties (the spec sketch shows `fun`) and some signatures are leaner (`NetService.request(method, url, body, headers)`, `Clock.nowMs()`) — full-signature alignment is tracked as a 🟡 gap in [11-implementation-status.md](./11-implementation-status.md). §6.7–6.10 optional capabilities were added in v0.x.
 
 Plugins should depend on **facades**, not the entire Android framework.
 
@@ -352,6 +352,15 @@ interface HostServices {
     fun clock(): Clock
     fun json(): kotlinx.serialization.json.Json
     fun memory(): MemoryFacade   // read-only view for plugins; P2 (see 01 §11.1)
+
+    // Optional platform capabilities (added in v0.x; interface default null):
+    // hosts without the capability (e.g. plain JVM) simply do not override,
+    // and plugins must surface UNAVAILABLE — never fabricated data or fake success.
+    val notifications: NotificationService?   // §6.7
+    val media: MediaService?                  // §6.7
+    val deviceInfo: DeviceInfoService?        // §6.8
+    val clipboard: ClipboardService?          // §6.9
+    val haptics: HapticsService?              // §6.10
 }
 ```
 
@@ -417,6 +426,8 @@ data class ActivityResult(val resultCode: Int, val data: android.content.Intent?
 
 `startActivityForResult` **suspends** the calling handler coroutine; the Runtime bridges the OS `onActivityResult` callback back to resume it ([03 §9.4](./03-runtime.md)). The handler's `timeoutMs` deadline continues to run across this suspension. `UiService` methods dispatch on `Dispatchers.Main` — plugin code need not switch dispatchers to call them.
 
+`toast` was added in v0.x: the default implementation throws `UNAVAILABLE` (hosts without UI do not fake a popup); the Android host posts a real `Toast` via a main-thread `Handler`. There is **no `sys.toast` command** — toast is for a plugin's own lightweight in-flow feedback, not part of the command surface.
+
 ### 6.4 `SecureStore` — Keystore-Backed Secrets
 
 Per-plugin namespaced key-value store backed by the Android Keystore ([08 §9](./08-security.md)). Keys are scoped to the plugin id; one plugin cannot read another's secrets.
@@ -455,6 +466,68 @@ interface MemoryFacade {
 ```
 
 `put` / `delete` / `import` are **not** available to plugins — writes go through the Planner with user confirmation ([07 §5.1](./07-memory.md)). If a handler needs to persist data, it uses `FileService` (device-local) or its own backend via `NetService`.
+
+### 6.7 `NotificationService` / `MediaService` — Optional Platform Capabilities (v0.x spec backfill)
+
+Implemented in earlier slices but never spec'd here — now recorded. Both follow the **optional-capability pattern**: interface default `null`, hosts without the platform do not override, and plugins surface `UNAVAILABLE` when they see `null` (the `sys.notify` P0-F1 semantics).
+
+```kotlin
+interface NotificationService {
+    suspend fun notify(title: String, text: String): String   // returns channel/notification id
+}
+
+interface MediaService {
+    suspend fun compress(
+        uris: List<String>, quality: Int,
+        maxWidth: Int? = null, maxHeight: Int? = null,
+    ): List<String>   // output URIs after JPEG compress/resize (order kept, nulls dropped)
+}
+```
+
+`NotificationService` backs `sys.notify` (when the `POST_NOTIFICATIONS` runtime grant is absent the command reports a real `PERMISSION_DENIED`). `MediaService` serves the camera plugin's photo-compression pipeline.
+
+### 6.8 `DeviceInfoService` — Device Info (added in v0.x)
+
+Backs the six `sys.device.*` commands (battery/wifi/screen/volume/location/brightness query + set). Core contract: **report the truth** — a datum the host cannot determine is returned as `null`, never guessed (P2-F3 semantics: an earlier implementation returned hardcoded fake data and has been removed).
+
+```kotlin
+interface DeviceInfoService {
+    suspend fun battery(): BatteryInfo        // percent, charging, temperatureC?
+    suspend fun wifi(): WifiInfo              // connected; ssid/strength null without location grant (Android 9+)
+    suspend fun screen(): ScreenInfo          // widthPx, heightPx, densityDpi, rotation, brightness?
+    suspend fun volume(): VolumeInfo          // musicPercent, ringPercent?, alarmPercent?
+    suspend fun location(): LocationInfo?     // null when no fix — the command emits no_fix, not an error
+    suspend fun brightness(): BrightnessInfo  // level (0-255), auto
+    suspend fun setBrightness(level: Int)     // throws PERMISSION_DENIED without WRITE_SETTINGS — never fakes success
+}
+```
+
+Android permission constraints and degradation semantics: SSID/RSSI require the `ACCESS_FINE_LOCATION` runtime grant — without it `wifi()` returns `connected=true, ssid=null, strength=null`; `location()` throws an actionable `PERMISSION_DENIED` without the grant, and returns `null` (→ `{"status":"no_fix","location":null}`) when granted but no fix exists; `setBrightness` requires the WRITE_SETTINGS special access ("Modify system settings" in system settings) and throws `PERMISSION_DENIED` without it. There is currently **no in-app `requestPermissions` flow** (🟡 see 11) — ungranted states are reported honestly and the user is pointed to system settings.
+
+### 6.9 `ClipboardService` — Clipboard (added in v0.x)
+
+Backs `sys.clipboard`'s read and write modes.
+
+```kotlin
+interface ClipboardService {
+    suspend fun set(text: String)
+    suspend fun get(): String?   // null when empty or unreadable (Android background restrictions)
+}
+```
+
+A `null` from `get()` is indistinguishable from an empty clipboard — the command surfaces `UNAVAILABLE`, never fabricated text. **Clipboard text is untrusted input** ([08 §11.1](./08-security.md)): the user may have copied adversarial text, so `sys.clipboard` read results always carry `untrusted: true` for downstream prompt-injection defenses.
+
+### 6.10 `HapticsService` — Haptic Feedback (added in v0.x)
+
+Backs `sys.vibrate`.
+
+```kotlin
+interface HapticsService {
+    suspend fun vibrate(durationMs: Int)
+}
+```
+
+Hosts without a vibrator stay `null` → the command reports `UNAVAILABLE`. The former fake success (returning `vibrated` without touching hardware) has been removed — the audit trail must only record vibrations that actually happened. The Android implementation uses `VibratorManager` (API 31+) with a legacy `Vibrator` fallback.
 
 ---
 
@@ -971,7 +1044,7 @@ class HelloWorldHandler : CommandHandler {
 
 ## 17. Built-in Plugin Set (First Party)
 
-> All plugins below are **spec-only** (not yet implemented). The first four are the P1 reference set; the rest land in later phases.
+> ✅ **Implementation status:** the first four (hello / system / camera / files) are implemented in `plugins/` with conformance tests and are the marketplace's curated built-ins; the rest remain spec-only.
 >
 > **This table is the single source of truth for the built-in command surface.** All other documents (roadmap, repositories, vision) reference this table rather than maintaining independent command lists. If a command appears elsewhere but not here, it is undocumented and should be added here or removed from the referencing document. The `mcos.plugin.system` plugin owns both the `sys.*` and `sys.device.*` namespaces (device queries are system-API wrappers, kept under the reserved `sys` root rather than a separate `device` root — `device` is not a reserved namespace, see [02 §4.3](./02-command-protocol.md)).
 

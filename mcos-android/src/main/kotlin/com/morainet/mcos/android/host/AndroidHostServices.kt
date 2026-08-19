@@ -47,6 +47,9 @@ class AndroidHostServices(
     override val memory: MemoryFacade = InMemoryFacade()
     override val notifications: NotificationService = AndroidNotificationService(context)
     override val media: MediaService = AndroidMediaService(context)
+    override val deviceInfo: DeviceInfoService = AndroidDeviceInfoService(context)
+    override val clipboard: ClipboardService = AndroidClipboardService(context)
+    override val haptics: HapticsService = AndroidHapticsService(context)
 }
 
 // ── FileService ─────────────────────────────────────────────────────────────
@@ -189,6 +192,16 @@ class AndroidUiService(
     private val bridge: ActivityResultBridge,
 ) : UiService {
 
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    override suspend fun toast(message: String) {
+        // 04-plugin-sdk.md 6.3: toasts dispatch on the main thread. The host
+        // suspends no caller for the toast's lifetime — fire-and-forget post.
+        mainHandler.post {
+            android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
     override suspend fun startActivityForResult(intent: Map<String, String>): Map<String, String>? {
         val action = intent["action"] ?: return null
         return when (action) {
@@ -207,7 +220,14 @@ class AndroidUiService(
         val i = Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
             putExtra(MediaStore.EXTRA_OUTPUT, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            // NO FLAG_ACTIVITY_NEW_TASK here: this launch awaits a result via
+            // the ActivityResult bridge. NEW_TASK moves the camera into its
+            // own task, where the framework cannot deliver the result back —
+            // it fires RESULT_CANCELED at the launcher IMMEDIATELY (while the
+            // camera still opens), which surfaced as "Photo capture was
+            // cancelled by user" even after a successful shot. Fire-and-forget
+            // launches (openUrl/share/startRawAction) may keep NEW_TASK;
+            // result launches must stay in the host activity's task.
         }
         val result = bridge.launch(i)
         if (result?.resultCode == Activity.RESULT_OK && outFile.exists()) {
@@ -352,6 +372,197 @@ class AndroidMediaService(private val context: Context) : MediaService {
         }
         return if (w == bmp.width && h == bmp.height) bmp
         else Bitmap.createScaledBitmap(bmp, w, h, true)
+    }
+}
+
+// ── DeviceInfoService / ClipboardService / HapticsService ───────────────────
+
+/**
+ * Real Android device telemetry. Every value comes from a system API —
+ * nothing is fabricated. Data the OS will not hand out without a grant
+ * (Wi-Fi SSID/RSSI without location permission) degrades to null, and
+ * states that are genuine device states (no location fix) surface as such
+ * rather than as errors.
+ */
+class AndroidDeviceInfoService(private val context: Context) : DeviceInfoService {
+
+    private companion object {
+        // Settings.System.BRIGHTNESS_MODE_OFF/AUTOMATIC are @hide in the
+        // public SDK — mirror the platform values (0 = manual, 1 = automatic).
+        const val BRIGHTNESS_MODE_MANUAL = 0
+        const val BRIGHTNESS_MODE_AUTOMATIC = 1
+    }
+
+    override suspend fun battery(): BatteryInfo {
+        // Sticky broadcast query — registerReceiver(null, …) reads the last
+        // ACTION_BATTERY_CHANGED state without registering a receiver.
+        val intent = context.registerReceiver(
+            null, android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+        )
+        val level = intent?.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1) ?: -1
+        val scale = intent?.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1) ?: -1
+        val percent = if (level >= 0 && scale > 0) level * 100 / scale else 0
+        val status = intent?.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1) ?: -1
+        val charging = status == android.os.BatteryManager.BATTERY_STATUS_CHARGING ||
+            status == android.os.BatteryManager.BATTERY_STATUS_FULL
+        val rawTemp = intent?.getIntExtra(android.os.BatteryManager.EXTRA_TEMPERATURE, Int.MIN_VALUE)
+            ?: Int.MIN_VALUE
+        val tempC = if (rawTemp == Int.MIN_VALUE) null else rawTemp / 10
+        return BatteryInfo(percent, charging, tempC)
+    }
+
+    override suspend fun wifi(): WifiInfo {
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        val caps = cm.activeNetwork?.let { cm.getNetworkCapabilities(it) }
+        val connected = caps?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) == true
+        if (!connected) return WifiInfo(connected = false)
+        // SSID and RSSI require the location permission on Android 9+.
+        // Without it the OS returns "<unknown ssid>" — degrade honestly.
+        if (context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            return WifiInfo(connected = true, ssid = null, strength = null)
+        }
+        return try {
+            @Suppress("DEPRECATION") // WifiManager.connectionInfo is deprecated on 31+,
+            // but is still the only source of SSID/RSSI for the current network.
+            val wm = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as android.net.wifi.WifiManager
+            val info: android.net.wifi.WifiInfo = wm.connectionInfo
+            val ssid = info.ssid?.removeSurrounding("\"")
+                ?.takeIf { it.isNotEmpty() && it != "<unknown ssid>" }
+            WifiInfo(connected = true, ssid = ssid, strength = info.rssi)
+        } catch (_: SecurityException) {
+            WifiInfo(connected = true, ssid = null, strength = null)
+        }
+    }
+
+    override suspend fun screen(): ScreenInfo {
+        val wm = context.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
+        val rotation = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            context.display?.rotation ?: android.view.Surface.ROTATION_0
+        } else {
+            @Suppress("DEPRECATION") wm.defaultDisplay?.rotation ?: android.view.Surface.ROTATION_0
+        }
+        val metrics = context.resources.displayMetrics
+        val brightness = try {
+            android.provider.Settings.System.getInt(
+                context.contentResolver, android.provider.Settings.System.SCREEN_BRIGHTNESS
+            )
+        } catch (_: Exception) {
+            null
+        }
+        return ScreenInfo(
+            widthPx = metrics.widthPixels,
+            heightPx = metrics.heightPixels,
+            densityDpi = metrics.densityDpi,
+            rotation = rotation,
+            brightness = brightness,
+        )
+    }
+
+    override suspend fun volume(): VolumeInfo {
+        val am = context.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+        fun percent(stream: Int): Int? {
+            val max = am.getStreamMaxVolume(stream)
+            return if (max > 0) am.getStreamVolume(stream) * 100 / max else null
+        }
+        return VolumeInfo(
+            musicPercent = percent(android.media.AudioManager.STREAM_MUSIC) ?: 0,
+            ringPercent = percent(android.media.AudioManager.STREAM_RING),
+            alarmPercent = percent(android.media.AudioManager.STREAM_ALARM),
+        )
+    }
+
+    override suspend fun location(): LocationInfo? {
+        // No runtime grant (the demo declares the permission but has no
+        // requestPermissions flow yet) — surface the real blocker instead
+        // of silently reporting "no fix".
+        if (context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            throw com.morainet.mcos.sdk.McosException(
+                "PERMISSION_DENIED",
+                "Location requires the ACCESS_FINE_LOCATION runtime grant — grant it for MCOS in system settings"
+            )
+        }
+        val lm = context.getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager
+        val last = try {
+            lm.getLastKnownLocation(android.location.LocationManager.NETWORK_PROVIDER)
+                ?: lm.getLastKnownLocation(android.location.LocationManager.GPS_PROVIDER)
+        } catch (_: SecurityException) {
+            null
+        } ?: return null // honest no-fix state, not an error
+        return LocationInfo(
+            lat = last.latitude,
+            lng = last.longitude,
+            accuracyM = if (last.hasAccuracy()) last.accuracy else null,
+            timestampMs = if (last.time > 0) last.time else null,
+        )
+    }
+
+    override suspend fun brightness(): BrightnessInfo {
+        val level = android.provider.Settings.System.getInt(
+            context.contentResolver, android.provider.Settings.System.SCREEN_BRIGHTNESS, 0
+        )
+        val auto = android.provider.Settings.System.getInt(
+            context.contentResolver, android.provider.Settings.System.SCREEN_BRIGHTNESS_MODE, 0
+        ) == BRIGHTNESS_MODE_AUTOMATIC
+        return BrightnessInfo(level = level, auto = auto)
+    }
+
+    override suspend fun setBrightness(level: Int) {
+        // WRITE_SETTINGS is a special-access permission: the user must flip
+        // "Modify system settings" for the app. Without it the write would
+        // silently fail — surface the real blocker instead.
+        if (!android.provider.Settings.System.canWrite(context)) {
+            throw com.morainet.mcos.sdk.McosException(
+                "PERMISSION_DENIED",
+                "Setting brightness requires WRITE_SETTINGS — enable 'Modify system settings' for MCOS in system settings"
+            )
+        }
+        android.provider.Settings.System.putInt(
+            context.contentResolver,
+            android.provider.Settings.System.SCREEN_BRIGHTNESS_MODE,
+            BRIGHTNESS_MODE_MANUAL,
+        )
+        android.provider.Settings.System.putInt(
+            context.contentResolver, android.provider.Settings.System.SCREEN_BRIGHTNESS, level
+        )
+    }
+}
+
+/** System clipboard. [get] returns null when empty or OS-restricted (Android 10+ background). */
+class AndroidClipboardService(private val context: Context) : ClipboardService {
+
+    private fun manager(): android.content.ClipboardManager =
+        context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+
+    override suspend fun set(text: String) {
+        manager().setPrimaryClip(android.content.ClipData.newPlainText("mcos", text))
+    }
+
+    override suspend fun get(): String? {
+        val clip = manager().primaryClip ?: return null
+        if (clip.itemCount == 0) return null
+        return clip.getItemAt(0).coerceToText(context)?.toString()
+    }
+}
+
+/** Vibration via VibratorManager (Android 12+) with the legacy Vibrator fallback. */
+class AndroidHapticsService(private val context: Context) : HapticsService {
+
+    override suspend fun vibrate(durationMs: Int) {
+        val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            (context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as android.os.VibratorManager)
+                .defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            context.getSystemService(Context.VIBRATOR_SERVICE) as android.os.Vibrator
+        }
+        // minSdk 26 — VibrationEffect is always available.
+        vibrator.vibrate(
+            android.os.VibrationEffect.createOneShot(durationMs.toLong(), android.os.VibrationEffect.DEFAULT_AMPLITUDE)
+        )
     }
 }
 
