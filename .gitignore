@@ -9,6 +9,13 @@ build/
 *.iml
 *.iws
 
+# AI assistant local config (not for repo)
+.claude/
+.codebuddy/
+.cursor/
+.zcode/
+.github/prompts/
+
 # Android
 local.properties
 *.apk

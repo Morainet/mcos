@@ -57,7 +57,7 @@ flowchart BT
 | | |
 |---|---|
 | 路径 | `mcos-runtime/` |
-| 包名 | `com.morainet.mcos.runtime.*`（`ir`、`parse`、`registry`、`permission`、`scheduler`、`executor` 等） |
+| 包名 | 门面 `com.morainet.mcos.runtime`（`api`、确认协调）；内核子系统在 `mcos-runtime-core` 的 `runtime.core.*`（`ir`、`parse`、`registry`、`memory`、`executor`、`workflow` 等） |
 | 职责 | 解析 DSL → IR；Registry（注册表）、Permission Kernel（权限内核）、Scheduler（调度器）、Workflow Engine（工作流引擎）、Executor（执行器）、Audit（审计）。 |
 | 依赖 | `api(project(":mcos-sdk"))`；serialization-json、coroutines-core |
 | 技术栈 | Kotlin/JVM · JDK 17 · kotlinx.serialization |
@@ -164,7 +164,7 @@ flowchart BT
 
 ## 5. 约定
 
-- **包根：** `com.morainet.mcos.<module>`——Android、runtime、sdk；插件为 `com.morainet.mcos.plugin.<name>`。
+- **包根：** 每个模块独占 `com.morainet.mcos.<module>.*`（sdk、security、llm、marketplace、android、server 等）；运行时内核对为 `com.morainet.mcos.runtime`（门面）与 `com.morainet.mcos.runtime.core.*`（core）；插件为 `com.morainet.mcos.plugin.<name>`。映射由 `PackageBoundariesTest` 强制。
 - **官方插件 ID：** `mcos.plugin.<name>`（示例插件 `example.hello` 除外）。
 - **清单约定：** 每个插件**应当**附带一份符合 [04-plugin-sdk.md](./04-plugin-sdk.md) §4 的 `plugin.json`。
 - **DSL / IR / Workflow 版本：** 见 [02-command-protocol.md](./02-command-protocol.md) §14（`dslVersion` 为 `MAJOR.MINOR`；命令契约为 SemVer）。

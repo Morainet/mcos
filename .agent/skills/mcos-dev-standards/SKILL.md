@@ -39,22 +39,23 @@ mcos-sdk              叶子模块,无内部依赖
      └─ mcos-runtime-core     依赖 sdk、security
          ├─ mcos-marketplace      依赖 sdk、security、core
          ├─ mcos-runtime (facade) 依赖 sdk、security、core、marketplace
-         │    └─ mcos-llm             依赖 sdk、core、runtime(facade 反向引用,无环)
-         │         ※ llm 依赖 facade,但 facade 不依赖 llm
+         ├─ mcos-llm             依赖 sdk、core(经 core.api 的 RuntimeGateway 端口驱动内核,不依赖门面)
          └─ plugins/*                各插件只依赖 sdk
-mcos-android          依赖 facade、llm、plugins
-mcos-server           依赖 facade、llm
+mcos-android          依赖 sdk、security、core、facade、llm、marketplace、plugins
+mcos-server           依赖 core（仅 test）
 ```
 
-**包命名规则:**
-- `com.mcos.sdk` — SDK 契约层
-- `com.mcos.security.*` — 权限内核、限流、出网策略、审计
-- `com.mcos.runtime.*` — core:parse/ir/error/events/registry/plugin/memory/executor/workflow
-- `com.mcos.runtime.api` — 横跨 core(RuntimeTypes)与 facade(McosRuntime)两个模块,JVM 合法
-- `com.mcos.runtime.llm.*` — LLM 网关与编排
-- `com.mcos.runtime.marketplace.*` — 配方商店、遥测
-- `com.mcos.plugin.<name>` — 插件模块
-- `com.mcos.android` — Android 宿主
+**包命名规则(模块一一对齐,由 PackageBoundariesTest 强制):**
+- `com.morainet.mcos.sdk` — SDK 契约层
+- `com.morainet.mcos.security.*` — 安全内核、限流、出网策略、审计、权限、校验（mcos-security）
+- `com.morainet.mcos.runtime.core.*` — core 子系统 parse/ir/error/events/registry/plugin/memory/executor/workflow,及 `core.api`（RuntimeTypes、StubHostServices,mcos-runtime-core）
+- `com.morainet.mcos.runtime` / `com.morainet.mcos.runtime.api` — 仅门面（McosRuntime,mcos-runtime）
+- `com.morainet.mcos.llm.*` — LLM 网关与编排
+- `com.morainet.mcos.marketplace.*` — 配方商店、遥测
+- `com.morainet.mcos.plugin.<name>` — 插件模块
+- `com.morainet.mcos.android` — Android 宿主
+- `com.morainet.mcos.server` — blob/索引服务
+- 跨模块 split-package 禁止;`runtime.` 前缀仅属运行时内核两模块;新模块必须显式注册根包
 
 ## 规则 1: kotlinx.serialization.json 扩展属性导入
 

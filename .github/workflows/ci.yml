@@ -43,7 +43,7 @@ jobs:
       - name: Golden fixture gate (DSL ↔ IR round-trip)
         run: >-
           timeout -k 60s 8m ./gradlew :mcos-runtime-core:test
-          --tests "com.morainet.mcos.runtime.parse.DslParserTest"
+          --tests "com.morainet.mcos.runtime.core.parse.DslParserTest"
           --console=plain --no-daemon
 
   # ── JVM tests, sharded to run in parallel ───────────────────────────────

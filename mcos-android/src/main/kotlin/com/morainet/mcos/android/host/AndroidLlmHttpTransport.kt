@@ -1,8 +1,8 @@
 package com.morainet.mcos.android.host
 
-import com.morainet.mcos.runtime.llm.HttpTransportResponse
-import com.morainet.mcos.runtime.llm.LlmHttpTransport
-import com.morainet.mcos.runtime.llm.LlmTransportException
+import com.morainet.mcos.llm.HttpTransportResponse
+import com.morainet.mcos.llm.LlmHttpTransport
+import com.morainet.mcos.llm.LlmTransportException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.IOException
@@ -13,7 +13,7 @@ import java.net.URL
 /**
  * Android-compatible [LlmHttpTransport] backed by [HttpURLConnection].
  *
- * The JVM default [com.morainet.mcos.runtime.llm.JdkLlmHttpTransport] cannot be used on
+ * The JVM default [com.morainet.mcos.llm.JdkLlmHttpTransport] cannot be used on
  * Android because the `java.net.http` module is not part of the Android
  * runtime. This implementation mirrors its behavior:
  * - timeouts surface as [LlmTransportException] with code `LLM_TIMEOUT`;

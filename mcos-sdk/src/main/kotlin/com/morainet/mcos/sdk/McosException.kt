@@ -12,7 +12,7 @@ import kotlinx.serialization.json.JsonObject
  * Matches [03-runtime.md 9.5], [01-architecture.md 10.3].
  */
 data class McosException(
-    /** MUST be a valid [com.morainet.mcos.runtime.error.McosErrorCode] or plugin-namespaced code. */
+    /** MUST be a valid [com.morainet.mcos.runtime.core.error.McosErrorCode] or plugin-namespaced code. */
     val code: String,
     override val message: String,
     val retryable: Boolean = false,

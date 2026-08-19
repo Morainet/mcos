@@ -57,7 +57,7 @@ Read bottom-up: `mcos-sdk` is the leaf contract layer; everything depends on it.
 | | |
 |---|---|
 | Path | `mcos-runtime/` |
-| Package | `com.morainet.mcos.runtime.*` (`ir`, `parse`, `registry`, `permission`, `scheduler`, `executor`, …) |
+| Package | Facade `com.morainet.mcos.runtime` (`api`, confirmation coordination); kernel subsystems live in `mcos-runtime-core` under `runtime.core.*` (`ir`, `parse`, `registry`, `memory`, `executor`, `workflow`, …) |
 | Role | Parse DSL → IR; Registry, Permission Kernel, Scheduler, Workflow Engine, Executor, Audit. |
 | Depends on | `api(project(":mcos-sdk"))`; serialization-json, coroutines-core |
 | Stack | Kotlin/JVM · JDK 17 · kotlinx.serialization |
@@ -164,7 +164,7 @@ For the eventual Gradle build (to be created in P1). A version catalog (`gradle/
 
 ## 5. Conventions
 
-- **Package roots:** `com.morainet.mcos.<module>` — Android, runtime, sdk; `com.morainet.mcos.plugin.<name>` for plugins.
+- **Package roots:** every module exclusively owns `com.morainet.mcos.<module>.*` (sdk, security, llm, marketplace, android, server, …); the runtime kernel pair uses `com.morainet.mcos.runtime` (facade) and `com.morainet.mcos.runtime.core.*` (core); plugins use `com.morainet.mcos.plugin.<name>`. The mapping is enforced by `PackageBoundariesTest`.
 - **First-party plugin IDs:** `mcos.plugin.<name>` (except the sample `example.hello`).
 - **Manifest convention:** each plugin **should** ship a `plugin.json` matching [04-plugin-sdk.md](./04-plugin-sdk.md) §4.
 - **DSL / IR / Workflow versions:** see [02-command-protocol.md](./02-command-protocol.md) §14 (`dslVersion` is `MAJOR.MINOR`; command contracts are SemVer).

@@ -110,19 +110,22 @@ flowchart TB
 
 ### 3.1 包 → 模块对照（按实际实现）
 
-运行时族已拆分为职责聚焦的 Gradle 模块；无论模块边界如何，包名保持
-`com.morainet.mcos.runtime.*` 不变（见 §3.3）。
+运行时族已拆分为职责聚焦的 Gradle 模块。自 2026-08-17 起每个模块独占
+`com.morainet.mcos.<module>.*` 根命名空间：`runtime.` 前缀仅保留给运行时
+内核（门面 `mcos-runtime` 与 `mcos-runtime-core`），security / llm /
+marketplace 等其余模块各自以模块名为根（见 §3.3）。映射由
+`PackageBoundariesTest` 强制执行。
 
 | 包 | Gradle 模块 | 依赖 |
 |----|------------|------|
 | `com.morainet.mcos.sdk` | `mcos-sdk` | — |
-| `com.morainet.mcos.runtime.security` · `audit` · `validate` · `permission` | `mcos-security` | sdk |
-| `com.morainet.mcos.runtime.api`（RuntimeTypes、StubHostServices）· `error` · `ir` · `events` · `registry` · `plugin` · `memory` · `executor` · `workflow` · `parse` | `mcos-runtime-core` | sdk、security |
-| `com.morainet.mcos.runtime.llm` | `mcos-llm` | sdk、security、runtime-core、runtime（facade） |
-| `com.morainet.mcos.runtime.marketplace` | `mcos-marketplace` | sdk、security、runtime-core |
-| `com.morainet.mcos.runtime.api`（McosRuntime facade、ConfirmationCoordinator、RunManager） | `mcos-runtime` | sdk、security、runtime-core、marketplace |
-| `com.morainet.mcos.android`（含 `host`） | `mcos-android` | runtime（facade）、llm、plugins |
-| — | `mcos-server` | runtime（facade） |
+| `com.morainet.mcos.security`（安全内核）· `security.audit` · `security.validate` · `security.permission` | `mcos-security` | sdk |
+| `com.morainet.mcos.runtime.core`：`core.api`（RuntimeGateway、RuntimeTypes、StubHostServices）及 `core.error` · `core.ir` · `core.events` · `core.registry` · `core.plugin` · `core.memory` · `core.executor` · `core.workflow` · `core.parse` | `mcos-runtime-core` | sdk、security |
+| `com.morainet.mcos.llm` | `mcos-llm` | sdk、runtime-core |
+| `com.morainet.mcos.marketplace` | `mcos-marketplace` | sdk、security、runtime-core |
+| `com.morainet.mcos.runtime`（bare）· `com.morainet.mcos.runtime.api`（McosRuntime facade、ConfirmationCoordinator、RunManager） | `mcos-runtime` | sdk、security、runtime-core、marketplace |
+| `com.morainet.mcos.android`（含 `host`） | `mcos-android` | sdk、security、runtime-core、runtime（facade）、llm、marketplace、plugins |
+| `com.morainet.mcos.server` | `mcos-server` | runtime-core（仅 test） |
 | `com.morainet.mcos.plugin.*` | `plugins:mcos-plugin-*` | sdk |
 
 ### 3.2 模块依赖图
@@ -143,9 +146,7 @@ graph LR
   CORE --> SDK
   CORE --> SEC
   LLM --> SDK
-  LLM --> SEC
   LLM --> CORE
-  LLM --> FACADE
   MKT --> SDK
   MKT --> SEC
   MKT --> CORE
@@ -153,21 +154,26 @@ graph LR
   FACADE --> SEC
   FACADE --> CORE
   FACADE --> MKT
+  AND --> SDK
+  AND --> SEC
+  AND --> CORE
   AND --> FACADE
   AND --> LLM
+  AND --> MKT
   AND --> PLUGINS
-  SRV --> FACADE
+  SRV --> CORE
   PLUGINS --> SDK
 ```
 
 值得注意的边：
 
-- `mcos-llm` 依赖 facade，因为 `ChatOrchestrator` 驱动完整的
-  `McosRuntime`；而 facade 本身**不**依赖 `mcos-llm`，因此模块层面
-  只存在单向依赖、无环。
-- `mcos-android` / `mcos-server` 只依赖 facade（`mcos-android` 另加
-  `mcos-llm`，因为宿主使用 chat 管线）——它们不直接触碰 core、
-  security 或 marketplace。
+- `mcos-llm` 与门面**互不依赖**：`ChatOrchestrator` 经 `runtime.core.api`
+  的 `RuntimeGateway` 端口（`execute()` + `observe()`，门面 `McosRuntime`
+  为规范实现）驱动内核——llm 与门面是内核的两个对等客户端，装配发生在
+  消费侧（如 `McosViewModel`），模块层面单向无环。
+- `mcos-android` 声明了全部直接边（sdk、security、core、facade、llm、
+  marketplace、plugins），不依赖任何 `api` 透传；`mcos-server` 仅在
+  test 中依赖 core。
 
 ### 3.3 模块边界规则
 
@@ -183,10 +189,23 @@ graph LR
   只用于出现在公开签名中的类型（`EventBus.observe` 的 `Flow`、
   校验器的 `JsonObject`、`Executor` 构造器的 `SecurityConfig`）。
 
-**跨模块的 split-package 在 JVM 上合法，但属有意为之。**
-`com.morainet.mcos.runtime.api` 横跨 `mcos-runtime-core`（RuntimeTypes——
-核心管线发布的事件与请求类型）与 `mcos-runtime`（组装管线的
-McosRuntime facade）。仅 api 包允许这样做；其他包不得跨模块分布。
+**跨模块的 split-package 禁止。**
+历史上 `com.morainet.mcos.runtime.api` 曾横跨 `mcos-runtime-core`
+（RuntimeTypes——核心管线发布的事件与请求类型）与 `mcos-runtime`
+（McosRuntime facade），`runtime.memory` 也曾被门面模块的测试目录借用；
+两处均已迁移（2026-08-17）：核心管线类型现位于
+`com.morainet.mcos.runtime.core.api`（仅 `mcos-runtime-core`），
+`runtime.api` 仅保留门面（`mcos-runtime`）。任何包不得跨模块分布——
+由 `mcos-runtime` 的 `PackageBoundariesTest` 防护测试强制执行。
+
+**包名与模块一一对齐。**
+同日完成全量对齐：core 九个子系统包迁入 `runtime.core.*`；
+security 四包改挂 `com.morainet.mcos.security.*`（原 `runtime.security`
+扁平展开为模块根）；`runtime.llm` → `com.morainet.mcos.llm`、
+`runtime.marketplace` → `com.morainet.mcos.marketplace`。`runtime.` 前缀
+自此仅属于运行时内核两模块（门面 + core），其余模块独占
+`com.morainet.mcos.<module>.*`——该映射同样由 `PackageBoundariesTest`
+的 longest-prefix 规则表强制，新模块必须显式注册自己的根包。
 
 ---
 

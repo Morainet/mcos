@@ -3,20 +3,20 @@ package com.morainet.mcos.android
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.morainet.mcos.android.host.AndroidLlmHttpTransport
-import com.morainet.mcos.runtime.api.ConfirmationDecision
-import com.morainet.mcos.runtime.api.ExecuteRequest
 import com.morainet.mcos.runtime.api.McosRuntime
-import com.morainet.mcos.runtime.api.Payload
-import com.morainet.mcos.runtime.api.RuntimeEvent
-import com.morainet.mcos.runtime.api.Source
-import com.morainet.mcos.runtime.llm.ChatOrchestrator
-import com.morainet.mcos.runtime.llm.LlmConfig
-import com.morainet.mcos.runtime.llm.LlmPlanner
-import com.morainet.mcos.runtime.llm.LlmProviderRegistry
-import com.morainet.mcos.runtime.llm.OpenAiLlmProvider
-import com.morainet.mcos.runtime.llm.PromptInjectionDetector
-import com.morainet.mcos.runtime.llm.ProviderHealth
-import com.morainet.mcos.runtime.plugin.LoadResult
+import com.morainet.mcos.runtime.core.api.ConfirmationDecision
+import com.morainet.mcos.runtime.core.api.ExecuteRequest
+import com.morainet.mcos.runtime.core.api.Payload
+import com.morainet.mcos.runtime.core.api.RuntimeEvent
+import com.morainet.mcos.runtime.core.api.Source
+import com.morainet.mcos.llm.ChatOrchestrator
+import com.morainet.mcos.llm.LlmConfig
+import com.morainet.mcos.llm.LlmPlanner
+import com.morainet.mcos.llm.LlmProviderRegistry
+import com.morainet.mcos.llm.OpenAiLlmProvider
+import com.morainet.mcos.llm.PromptInjectionDetector
+import com.morainet.mcos.llm.ProviderHealth
+import com.morainet.mcos.runtime.core.plugin.LoadResult
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -232,6 +232,19 @@ class McosViewModel : ViewModel() {
                 pluginsLoaded = true,
                 commandIds = d.registry.allCommands().map { entry -> entry.id },
             )
+        }
+    }
+
+    /**
+     * Re-read the registry command list. Called after marketplace installs or
+     * uninstalls mutate the registry at runtime (see [MarketplaceViewModel]),
+     * so the command palette reflects newly available commands without a
+     * restart — the registry resolves live, there is no cache to invalidate.
+     */
+    fun refreshCommandList() {
+        val d = deps()
+        _uiState.update {
+            it.copy(commandIds = d.registry.allCommands().map { entry -> entry.id })
         }
     }
 

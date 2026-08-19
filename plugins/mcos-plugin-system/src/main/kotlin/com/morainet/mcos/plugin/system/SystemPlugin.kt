@@ -315,9 +315,14 @@ class SystemPlugin : McosPlugin {
         override suspend fun invoke(ctx: ExecutionContext): CommandResult {
             val args = ctx.args.jsonObject
             val text = args["text"]?.jsonPrimitive?.content
+            val clipboard = services?.clipboard
+                // No fake success: a host without a clipboard capability must
+                // surface UNAVAILABLE (same policy as NotifyHandler P0-F1).
+                ?: throw McosException("UNAVAILABLE", "Clipboard is not available on this host")
 
             return if (text != null) {
                 // Write mode
+                clipboard.set(text)
                 CommandResult.Ok(
                     value = buildJsonObject {
                         put("operation", JsonPrimitive("write"))
@@ -325,11 +330,20 @@ class SystemPlugin : McosPlugin {
                     }
                 )
             } else {
-                // Read mode — no clipboard capability is available on this
-                // host, so surface UNAVAILABLE rather than a fake Ok that
-                // the caller cannot distinguish from a genuinely empty
-                // clipboard.
-                throw McosException("UNAVAILABLE", "Clipboard read is not available on this host")
+                // Read mode — 08-security.md 11.1: clipboard text is untrusted
+                // input (the user may have copied adversarial text), so the
+                // result is tagged for downstream prompt-injection defenses.
+                val current = clipboard.get()
+                    // Empty and unreadable are indistinguishable on most
+                    // hosts — an honest UNAVAILABLE, never a fabricated Ok.
+                    ?: throw McosException("UNAVAILABLE", "Clipboard is empty or unreadable on this host")
+                CommandResult.Ok(
+                    value = buildJsonObject {
+                        put("operation", JsonPrimitive("read"))
+                        put("text", JsonPrimitive(current))
+                        put("untrusted", JsonPrimitive(true))
+                    }
+                )
             }
         }
     }
@@ -394,6 +408,13 @@ class SystemPlugin : McosPlugin {
                 )
             }
 
+            val haptics = services?.haptics
+                // Previously this handler reported a fake "vibrated" Ok
+                // without touching the host — the audit trail believed a
+                // vibration happened. Real capability or UNAVAILABLE.
+                ?: throw McosException("UNAVAILABLE", "Vibration is not available on this host")
+            haptics.vibrate(duration)
+
             return CommandResult.Ok(
                 value = buildJsonObject {
                     put("status", JsonPrimitive("vibrated"))
@@ -405,39 +426,96 @@ class SystemPlugin : McosPlugin {
 
     // ─── Device query handlers ────────────────────────────────────────────
     //
-    // P2-F3: These handlers previously returned hardcoded fake data
-    // (battery=85%, ssid="MCOS-Network", lat=22.5431, etc.) and reported
-    // Ok, which polluted the audit trail with fabricated telemetry. There
-    // is currently no device-info capability on HostServices, so they now
-    // surface a clear UNAVAILABLE error — consistent with NotifyHandler —
-    // until a real capability is wired.
+    // P2-F3 history: these handlers once returned hardcoded fake data
+    // (battery=85%, ssid="MCOS-Network", lat=22.5431, ...) and reported Ok,
+    // polluting the audit trail with fabricated telemetry. They now map the
+    // host's real DeviceInfoService; a host without the capability (plain
+    // JVM, StubHostServices) surfaces UNAVAILABLE — and individual data the
+    // host cannot determine (SSID without the location permission, no
+    // location fix) is reported as null/no_fix, never guessed.
 
-    private fun deviceUnavailable(name: String): Nothing =
-        throw McosException("UNAVAILABLE", "$name is not available on this host")
+    private fun deviceInfoOrUnavailable(): DeviceInfoService =
+        services?.deviceInfo
+            ?: throw McosException("UNAVAILABLE", "Device info is not available on this host")
+
+    private fun JsonPrimitive?.orJsonNull(): JsonElement = this ?: JsonNull
 
     inner class BatteryHandler : CommandHandler {
-        override suspend fun invoke(ctx: ExecutionContext): CommandResult =
-            deviceUnavailable("Battery query")
+        override suspend fun invoke(ctx: ExecutionContext): CommandResult {
+            val b = deviceInfoOrUnavailable().battery()
+            return CommandResult.Ok(
+                value = buildJsonObject {
+                    put("percent", JsonPrimitive(b.percent))
+                    put("charging", JsonPrimitive(b.charging))
+                    put("temperatureC", b.temperatureC?.let { JsonPrimitive(it) }.orJsonNull())
+                }
+            )
+        }
     }
 
     inner class WifiHandler : CommandHandler {
-        override suspend fun invoke(ctx: ExecutionContext): CommandResult =
-            deviceUnavailable("Wi-Fi query")
+        override suspend fun invoke(ctx: ExecutionContext): CommandResult {
+            val w = deviceInfoOrUnavailable().wifi()
+            return CommandResult.Ok(
+                value = buildJsonObject {
+                    put("connected", JsonPrimitive(w.connected))
+                    put("ssid", w.ssid?.let { JsonPrimitive(it) }.orJsonNull())
+                    put("strength", w.strength?.let { JsonPrimitive(it) }.orJsonNull())
+                }
+            )
+        }
     }
 
     inner class ScreenHandler : CommandHandler {
-        override suspend fun invoke(ctx: ExecutionContext): CommandResult =
-            deviceUnavailable("Screen query")
+        override suspend fun invoke(ctx: ExecutionContext): CommandResult {
+            val s = deviceInfoOrUnavailable().screen()
+            return CommandResult.Ok(
+                value = buildJsonObject {
+                    put("widthPx", JsonPrimitive(s.widthPx))
+                    put("heightPx", JsonPrimitive(s.heightPx))
+                    put("densityDpi", JsonPrimitive(s.densityDpi))
+                    put("rotation", JsonPrimitive(s.rotation))
+                    put("brightness", s.brightness?.let { JsonPrimitive(it) }.orJsonNull())
+                }
+            )
+        }
     }
 
     inner class VolumeHandler : CommandHandler {
-        override suspend fun invoke(ctx: ExecutionContext): CommandResult =
-            deviceUnavailable("Volume query")
+        override suspend fun invoke(ctx: ExecutionContext): CommandResult {
+            val v = deviceInfoOrUnavailable().volume()
+            return CommandResult.Ok(
+                value = buildJsonObject {
+                    put("music", JsonPrimitive(v.musicPercent))
+                    put("ring", v.ringPercent?.let { JsonPrimitive(it) }.orJsonNull())
+                    put("alarm", v.alarmPercent?.let { JsonPrimitive(it) }.orJsonNull())
+                }
+            )
+        }
     }
 
     inner class LocationHandler : CommandHandler {
-        override suspend fun invoke(ctx: ExecutionContext): CommandResult =
-            deviceUnavailable("Location query")
+        override suspend fun invoke(ctx: ExecutionContext): CommandResult {
+            val loc = deviceInfoOrUnavailable().location()
+                // "Last known location" with no fix is a legitimate device
+                // state, not an error — report it honestly instead of a
+                // fabricated coordinate.
+                ?: return CommandResult.Ok(
+                    value = buildJsonObject {
+                        put("status", JsonPrimitive("no_fix"))
+                        put("location", JsonNull)
+                    }
+                )
+            return CommandResult.Ok(
+                value = buildJsonObject {
+                    put("status", JsonPrimitive("ok"))
+                    put("lat", JsonPrimitive(loc.lat))
+                    put("lng", JsonPrimitive(loc.lng))
+                    put("accuracyM", loc.accuracyM?.let { JsonPrimitive(it) }.orJsonNull())
+                    put("timestampMs", loc.timestampMs?.let { JsonPrimitive(it) }.orJsonNull())
+                }
+            )
+        }
     }
 
     inner class BrightnessHandler : CommandHandler {
@@ -446,9 +524,8 @@ class SystemPlugin : McosPlugin {
             val level = args["level"]?.jsonPrimitive?.intOrNull
 
             return if (level != null) {
-                // Set mode — validate schema even though the device capability
-                // is unavailable, so callers get a deterministic error before
-                // the UNAVAILABLE surfaces.
+                // Set mode — schema check first so callers get a deterministic
+                // validation error before any capability/host interaction.
                 if (level < 0 || level > 255) {
                     throw McosException(
                         "SCHEMA_VIOLATION",
@@ -456,9 +533,21 @@ class SystemPlugin : McosPlugin {
                         details = buildJsonObject { put("level", JsonPrimitive(level)) }
                     )
                 }
-                deviceUnavailable("Brightness set")
+                deviceInfoOrUnavailable().setBrightness(level)
+                CommandResult.Ok(
+                    value = buildJsonObject {
+                        put("status", JsonPrimitive("set"))
+                        put("level", JsonPrimitive(level))
+                    }
+                )
             } else {
-                deviceUnavailable("Brightness query")
+                val b = deviceInfoOrUnavailable().brightness()
+                CommandResult.Ok(
+                    value = buildJsonObject {
+                        put("level", JsonPrimitive(b.level))
+                        put("auto", JsonPrimitive(b.auto))
+                    }
+                )
             }
         }
     }
