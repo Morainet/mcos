@@ -9,6 +9,10 @@ build/
 *.iml
 *.iws
 
+# AI assistant: local-only files (skills are committed)
+.claude/settings.local.json
+.zcode/plans/
+
 # Android
 local.properties
 *.apk
