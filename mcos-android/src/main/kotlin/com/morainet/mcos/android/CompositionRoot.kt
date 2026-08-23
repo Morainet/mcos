@@ -17,6 +17,7 @@ import com.morainet.mcos.marketplace.InstallRecordStore
 import com.morainet.mcos.marketplace.MarketplaceHttpTransport
 import com.morainet.mcos.marketplace.PluginInstaller
 import com.morainet.mcos.marketplace.RecipeInstaller
+import com.morainet.mcos.marketplace.RecipeSignatureVerifier
 import com.morainet.mcos.runtime.core.plugin.PluginLoader
 import com.morainet.mcos.runtime.core.registry.CommandRegistry
 import com.morainet.mcos.security.ArtifactVerifier
@@ -179,6 +180,10 @@ object CompositionRoot {
         // material is a structurally valid placeholder pending the operator's
         // real key, so blocklist verification is fail-closed until then.
         val blocklistVerifier = BlocklistVerifier(TrustAnchors.marketplaceKey)
+        // Same trust anchor gates recipe compilation (§8.3 step 5): the
+        // envelope must carry a valid marketplace signature or the installer
+        // refuses to compile it.
+        val recipeSignatureVerifier = RecipeSignatureVerifier(TrustAnchors.marketplaceKey)
         val marketplace = MarketplaceDeps(
             transport = marketTransport,
             keyStore = publisherKeys,
@@ -189,7 +194,7 @@ object CompositionRoot {
             pluginFactory = MarketplacePluginFactory(dynamicLoader = DexPluginLoader(activity)),
             blocklistVerifier = blocklistVerifier,
             installProgress = installProgress,
-            recipeInstaller = RecipeInstaller(),
+            recipeInstaller = RecipeInstaller(recipeSignatureVerifier),
         )
 
         // Owned here (not Builder-defaulted) so the built-in plugins'

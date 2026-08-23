@@ -263,4 +263,99 @@ class RecipeInstallerTest {
         val installed = assertIs<RecipeInstallOutcome.Installed>(outcome)
         assertEquals("MyOfficeNet", installed.recipe.workflow["step"]?.jsonObject?.get("target")?.jsonPrimitive?.content)
     }
+
+    // ── signature gate (§14.1 constraint 3 / §8.3 step 5) ────────────
+
+    private fun signed(
+        envelope: RecipeEnvelope,
+        pair: java.security.KeyPair,
+        algorithm: String = "Ed25519",
+    ): RecipeEnvelope {
+        val payload = envelope.canonicalPayload()
+        val signer = java.security.Signature.getInstance(algorithm).apply {
+            initSign(pair.private)
+            update(payload)
+        }
+        return envelope.copy(
+            signature = RecipeEnvelopeSignature(
+                signingKeyId = "key_marketplace_1",
+                algorithm = algorithm,
+                signedAt = "2026-02-01T00:00:00Z",
+                signature = java.util.Base64.getEncoder().encodeToString(signer.sign()),
+            ),
+        )
+    }
+
+    private fun signedKeyPair(): Pair<com.morainet.mcos.security.PublisherKey, java.security.KeyPair> {
+        val pair = java.security.KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
+        val key = com.morainet.mcos.security.PublisherKey(
+            keyId = "key_marketplace_1",
+            publisherId = "pub_marketplace",
+            publicKeyFingerprint = "ff".repeat(32),
+            algorithm = "Ed25519",
+            publicKeyEncoded = java.util.Base64.getEncoder().encodeToString(pair.public.encoded),
+            createdAt = "2026-01-01T00:00:00Z",
+            status = com.morainet.mcos.security.KeyStatus.ACTIVE,
+        )
+        return key to pair
+    }
+
+    @Test
+    fun `I12-submit with verifier passes a valid signature`() {
+        val (key, pair) = signedKeyPair()
+        val installer = RecipeInstaller(RecipeSignatureVerifier(key))
+        val plan = RecipeInstallPlan(missingDependencies = emptyList(), prompts = emptyList())
+        val signedRecipe = signed(
+            recipe(
+                workflow = """{"step":{"command":"photo.compress"}}""",
+                requiredPlugins = emptyList(),
+                placeholders = emptyList(),
+            ),
+            pair,
+        )
+
+        val outcome = installer.submit(signedRecipe, plan, bindings = emptyMap())
+
+        assertIs<RecipeInstallOutcome.Installed>(outcome)
+    }
+
+    @Test
+    fun `I13-submit with verifier rejects an invalid signature`() {
+        val (key, pair) = signedKeyPair()
+        val installer = RecipeInstaller(RecipeSignatureVerifier(key))
+        val plan = RecipeInstallPlan(missingDependencies = emptyList(), prompts = emptyList())
+        val tampered = signed(
+            recipe(
+                workflow = """{"step":{"command":"photo.compress"}}""",
+                requiredPlugins = emptyList(),
+                placeholders = emptyList(),
+            ),
+            pair,
+        ).copy(name = "Evil")
+
+        val outcome = installer.submit(tampered, plan, bindings = emptyMap())
+
+        val rejected = assertIs<RecipeInstallOutcome.SignatureRejected>(outcome)
+        assertEquals("invalid_signature", rejected.reason)
+    }
+
+    @Test
+    fun `I14-submit with verifier fails closed on a missing signature`() {
+        val (key, _) = signedKeyPair()
+        val installer = RecipeInstaller(RecipeSignatureVerifier(key))
+        val plan = RecipeInstallPlan(missingDependencies = emptyList(), prompts = emptyList())
+
+        val outcome = installer.submit(
+            recipe(
+                workflow = """{"step":{"command":"photo.compress"}}""",
+                requiredPlugins = emptyList(),
+                placeholders = emptyList(),
+            ),
+            plan,
+            bindings = emptyMap(),
+        )
+
+        val rejected = assertIs<RecipeInstallOutcome.SignatureRejected>(outcome)
+        assertEquals("missing_signature", rejected.reason)
+    }
 }

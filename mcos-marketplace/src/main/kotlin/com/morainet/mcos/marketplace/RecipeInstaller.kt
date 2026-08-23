@@ -36,6 +36,9 @@ data class RecipeInstallPlan(
  * Outcome of [RecipeInstaller.submit] ([09-marketplace.md §8.3]).
  */
 sealed interface RecipeInstallOutcome {
+    /** The envelope's marketplace signature failed verification; do not compile. */
+    data class SignatureRejected(val reason: String) : RecipeInstallOutcome
+
     /** Dependencies are unsatisfiable; offer a batch install first. */
     data class NeedsDependencies(val missing: List<MissingDependency>) : RecipeInstallOutcome
 
@@ -77,7 +80,17 @@ class RecipeCompileException(message: String) : Exception(message)
  * Registration into the local workflow DB and trigger handling happen
  * upstream; this component is the pure wizard/compile stage.
  */
-class RecipeInstaller {
+class RecipeInstaller(
+    /**
+     * Optional signature gate ([05-workflow.md §14.1] constraint 3,
+     * [09-marketplace.md §8.3] step 5). When set, [submit] verifies the
+     * envelope's marketplace signature before compiling and fails closed on
+     * any missing/invalid signature. Pass the verifier for anything that
+     * originates from a network marketplace; leave null only for trusted
+     * local/test envelopes.
+     */
+    private val signatureVerifier: RecipeSignatureVerifier? = null,
+) {
 
     /**
      * Resolve dependencies and build the placeholder prompt list.
@@ -123,6 +136,14 @@ class RecipeInstaller {
         plan: RecipeInstallPlan,
         bindings: Map<String, String>,
     ): RecipeInstallOutcome {
+        signatureVerifier?.let { verifier ->
+            when (val result = verifier.verify(recipe)) {
+                is RecipeSignatureResult.Rejected ->
+                    return RecipeInstallOutcome.SignatureRejected(result.reason)
+                RecipeSignatureResult.Verified -> Unit
+            }
+        }
+
         if (plan.blockedOnDependencies) return RecipeInstallOutcome.NeedsDependencies(plan.missingDependencies)
 
         val missingRequired = plan.prompts.filter { it.required && bindings[it.key].isNullOrBlank() }

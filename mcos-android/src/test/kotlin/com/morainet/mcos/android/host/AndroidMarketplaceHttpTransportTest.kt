@@ -213,10 +213,13 @@ class AndroidMarketplaceHttpTransportTest {
 
     @Test
     fun connectFailurePropagatesRawForIndexMapping() = runBlocking {
-        // Nothing listens here (server port + 1): a refused connection must
-        // propagate as a raw IOException so MarketplaceIndex can map it to
-        // MARKETPLACE_UNREACHABLE — not be swallowed as a timeout.
-        val deadUrl = "http://127.0.0.1:${server.port + 1}/v1/plugins?page=1"
+        // Grab a free ephemeral port and close the socket so nothing listens
+        // there: a refused connection must propagate as a raw IOException so
+        // MarketplaceIndex can map it to MARKETPLACE_UNREACHABLE — not be
+        // swallowed as a timeout. (Using server.port + 1 is flaky: another
+        // parallel fixture can occupy that port.)
+        val deadPort = java.net.ServerSocket(0).use { it.localPort }
+        val deadUrl = "http://127.0.0.1:$deadPort/v1/plugins?page=1"
         try {
             transport.getJson(deadUrl, connectTimeoutMs = 500, requestTimeoutMs = 500)
             fail("expected an IOException")

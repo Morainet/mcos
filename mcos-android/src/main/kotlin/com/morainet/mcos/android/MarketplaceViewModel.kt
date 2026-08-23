@@ -442,6 +442,10 @@ class MarketplaceViewModel : ViewModel() {
         val active = _uiState.value.recipePlan ?: return
         val d = deps()
         when (val outcome = d.marketplace.recipeInstaller.submit(active.recipe, active.plan, bindings)) {
+            is RecipeInstallOutcome.SignatureRejected ->
+                _uiState.update {
+                    it.copy(error = "Recipe signature rejected: ${outcome.reason} — refusing to compile")
+                }
             is RecipeInstallOutcome.NeedsDependencies ->
                 _uiState.update {
                     it.copy(error = "Recipe needs plugin(s): " + outcome.missing.joinToString { m -> "${m.pluginId}@${m.range}" })
