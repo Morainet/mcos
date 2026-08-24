@@ -1,45 +1,66 @@
 # MCOS 仓库与模块索引
 
-> **状态：** 参考性文档（目标设计）
-> **最后更新：** 2026-08-06
-> **作为规范的依据：** 未来实现阶段必须按本文档创建的模块拓扑。
+> **状态：** 参考性文档（实际结构）
+> **最后更新：** 2026-08-24
+> **作为规范的依据：** 实现所遵循的模块拓扑；边界变更必须同步更新本文档与 [01-architecture.md](./01-architecture.md)。
 
-MCOS 当前是一个**纯设计仓库**——尚无任何构建产物或源码模块。本文档规定了目标模块划分、依赖图与约定，以便进入实现阶段（P1）时，Gradle 多模块布局与规范保持一致。
+MCOS 是一个**已实现**的多模块仓库——下述 Gradle 布局是*实际*结构（P1 首批模块、后续 `mcos-runtime` / `mcos-runtime-core` 拆分出的 `mcos-security` / `mcos-llm` / `mcos-marketplace`，以及 `mcos-server`），而非提案。本文档仍是模块边界、依赖图与命名约定的规范性参考。
 
 各子系统的实现阶段划分，见 [11-implementation-status.md](./11-implementation-status.md)。
 
 ---
 
-## 1. 依赖图（目标）
+## 1. 依赖图（实际）
 
 ```mermaid
 flowchart BT
-    sdk["mcos-sdk<br/>(contracts)"]
-    rt["mcos-runtime<br/>(parser · registry · executor)"]
+    sdk["mcos-sdk<br/>(契约)"]
+    sec["mcos-security<br/>(权限 · 审计 · 出网)"]
+    core["mcos-runtime-core<br/>(parse · registry · executor · workflow · memory)"]
+    llm["mcos-llm<br/>(planner · ChatOrchestrator)"]
+    mkt["mcos-marketplace<br/>(客户端)"]
+    rt["mcos-runtime<br/>(门面: api · 确认协调)"]
     hello["plugins:mcos-plugin-hello"]
     sys["plugins:mcos-plugin-system"]
     cam["plugins:mcos-plugin-camera"]
     files["plugins:mcos-plugin-files"]
-    app["mcos-android<br/>(Compose shell)"]
+    app["mcos-android<br/>(Compose 外壳)"]
+    srv["mcos-server<br/>(自托管同步)"]
 
+    sec --> sdk
+    core --> sdk
+    core --> sec
+    llm --> sdk
+    llm --> core
+    mkt --> sdk
+    mkt --> sec
+    mkt --> core
     rt --> sdk
+    rt --> sec
+    rt --> core
+    rt --> mkt
     hello --> sdk
     sys --> sdk
     cam --> sdk
     files --> sdk
-    app --> rt
     app --> sdk
+    app --> sec
+    app --> core
+    app --> rt
+    app --> llm
+    app --> mkt
     app --> hello
     app --> sys
     app --> cam
     app --> files
+    srv -.->|"仅测试"| core
 ```
 
-从下往上读：`mcos-sdk` 是最底层的契约层，所有模块都依赖它。`mcos-android` 聚合了运行时、SDK 与全部插件。
+从下往上读：`mcos-sdk` 是最底层的契约层，所有模块都依赖它。`mcos-runtime-core`（连同 `mcos-security`）承载内核子系统；`mcos-runtime` 是门面，以 `api` 导出 `sdk`/`security`/`runtime-core`/`marketplace`；`mcos-llm` 刻意**只**依赖 `sdk` + `runtime-core`（绝不依赖门面——Planner 必须可以脱离外壳独立使用，见 [01 §7](./01-architecture.md)）；`mcos-server` 无编译期项目依赖（runtime-core 仅出现在测试中，虚线）；`mcos-android` 聚合门面、SDK、llm、marketplace 与全部插件。
 
 ---
 
-## 2. 模块清单（目标）
+## 2. 模块清单（实际）
 
 ### `mcos-sdk` — 插件契约（叶子层）
 
@@ -52,16 +73,60 @@ flowchart BT
 | 技术栈 | Kotlin/JVM · JDK 17 · kotlinx.serialization |
 | 规范 | [04-plugin-sdk.md](./04-plugin-sdk.md) §5 |
 
-### `mcos-runtime` — Command Bus 内核
+### `mcos-runtime` — 运行时门面
 
 | | |
 |---|---|
 | 路径 | `mcos-runtime/` |
-| 包名 | 门面 `com.morainet.mcos.runtime`（`api`、确认协调）；内核子系统在 `mcos-runtime-core` 的 `runtime.core.*`（`ir`、`parse`、`registry`、`memory`、`executor`、`workflow` 等） |
-| 职责 | 解析 DSL → IR；Registry（注册表）、Permission Kernel（权限内核）、Scheduler（调度器）、Workflow Engine（工作流引擎）、Executor（执行器）、Audit（审计）。 |
-| 依赖 | `api(project(":mcos-sdk"))`；serialization-json、coroutines-core |
+| 包名 | 门面 `com.morainet.mcos.runtime`（`api`：`McosRuntime`、`RunManager`、`ConfirmationCoordinator`）；内核子系统在 `mcos-runtime-core` 的 `runtime.core.*`（`ir`、`parse`、`registry`、`memory`、`executor`、`workflow` 等） |
+| 职责 | 宿主侧入口：把内核组装成可用的 `McosRuntime`，持有 run 生命周期（`RunManager`）与确认协调。以 `api` 导出 `sdk`/`security`/`runtime-core`/`marketplace`，宿主只需依赖这一个模块。另持有 `PackageBoundariesTest` 守卫测试。 |
+| 依赖 | `api(project(":mcos-sdk"))`、`api(project(":mcos-security"))`、`api(project(":mcos-runtime-core"))`、`api(project(":mcos-marketplace"))`；serialization-json、coroutines-core |
 | 技术栈 | Kotlin/JVM · JDK 17 · kotlinx.serialization |
 | 规范 | [02-command-protocol.md](./02-command-protocol.md)、[03-runtime.md](./03-runtime.md) |
+
+### `mcos-security` — 安全内核
+
+| | |
+|---|---|
+| 路径 | `mcos-security/` |
+| 包名 | `com.morainet.mcos.security`（`audit`、`validate`、`permission` 等） |
+| 职责 | 权限内核（`decideConfirmation`）、`AuthStampSigner`（HMAC）、`SchemaValidator`（Draft 2020-12 + MCOS 扩展）、`RateLimiter`（阶段 5.5）、出网策略（`decideEgress`，阶段 6.5）、`FileGrantStore`（授权持久化 + HMAC 防篡改）、`FileAuditLog` + 脱敏遍历器、`CrashQuarantine`、`Canonicalizer`。 |
+| 依赖 | `api(project(":mcos-sdk"))`；serialization-json（公开签名暴露 `JsonObject`） |
+| 技术栈 | Kotlin/JVM · JDK 17 · kotlinx.serialization |
+| 规范 | [08-security.md](./08-security.md) |
+
+### `mcos-runtime-core` — 内核子系统
+
+| | |
+|---|---|
+| 路径 | `mcos-runtime-core/` |
+| 包名 | `com.morainet.mcos.runtime.core`——`core.api`（`RuntimeGateway`、类型）、`core.ir`、`core.parse`（`DslParser`）、`core.registry`、`core.executor`（管线：Resolve → Validate → **5.5 限流** → Authorize → **6.5 出网** → Invoke → Audit）、`core.workflow`、`core.memory`、`core.events`、`core.plugin`、`core.error` |
+| 职责 | Command Bus 内核：DSL→IR 解析、带版本选择的 Registry、Executor 管线、WorkflowEngine（顺序/并行/条件/循环/重试/补偿）、memory 子系统（`MemoryStore`、情景记忆、向量钟同步）。 |
+| 依赖 | `api(project(":mcos-sdk"))`、`api(project(":mcos-security"))`；coroutines-core |
+| 技术栈 | Kotlin/JVM · JDK 17 · kotlinx.serialization |
+| 规范 | [02-command-protocol.md](./02-command-protocol.md)、[03-runtime.md](./03-runtime.md)、[05-workflow.md](./05-workflow.md)、[07-memory.md](./07-memory.md) |
+
+### `mcos-llm` — Planner 技术栈
+
+| | |
+|---|---|
+| 路径 | `mcos-llm/` |
+| 包名 | `com.morainet.mcos.llm` |
+| 职责 | `ChatOrchestrator`（多供应商、健康探测、隐私门、事件超时）、PlanModes、NL→IR 计划评估、触发配方。刻意**不**依赖 `mcos-runtime` 门面——Planner 必须可以脱离外壳独立使用（见 [01 §7](./01-architecture.md)）。 |
+| 依赖 | `api(project(":mcos-sdk"))`、`api(project(":mcos-runtime-core"))` |
+| 技术栈 | Kotlin/JVM · JDK 17 · kotlinx.serialization |
+| 规范 | [06-agent.md](./06-agent.md) |
+
+### `mcos-marketplace` — 市场客户端
+
+| | |
+|---|---|
+| 路径 | `mcos-marketplace/` |
+| 包名 | `com.morainet.mcos.marketplace` |
+| 职责 | 插件市场的客户端侧：索引拉取/解析、签名链验证（`TrustAnchors`，真实运营方密钥为 fail-closed 占位）、包下载并安装进插件注册表。 |
+| 依赖 | `api(project(":mcos-sdk"))`、`api(project(":mcos-security"))`、`api(project(":mcos-runtime-core"))` |
+| 技术栈 | Kotlin/JVM · JDK 17 · kotlinx.serialization |
+| 规范 | [09-marketplace.md](./09-marketplace.md) |
 
 ### `mcos-android` — Compose 客户端外壳
 
@@ -70,7 +135,7 @@ flowchart BT
 | 路径 | `mcos-android/` |
 | 包名 | `com.morainet.mcos.android` |
 | 职责 | Jetpack Compose 客户端：DSL/Chat 输入、计划预览、确认交互、插件商店、设置、审计查看器。 |
-| 依赖 | `:mcos-runtime`、`:mcos-sdk`、各插件；AndroidX（core-ktx、lifecycle、activity-compose）、Compose BOM |
+| 依赖 | `:mcos-sdk`、`:mcos-security`、`:mcos-runtime-core`、`:mcos-runtime`、`:mcos-llm`、`:mcos-marketplace`、四个插件；AndroidX（core-ktx、lifecycle、activity-compose）、Compose BOM |
 | 技术栈 | Kotlin/Android · Compose · compileSdk 35 / minSdk 26 · JDK 17 |
 | 规范 | [01-architecture.md](./01-architecture.md) §6.1、[10-roadmap.md](./10-roadmap.md) §4.1 |
 
@@ -125,7 +190,7 @@ flowchart BT
 | 路径 | `mcos-server/` |
 | 包名 | `com.morainet.mcos.server` |
 | 职责 | 独立自托管同步端点：`SyncBlobTransport` REST 契约（`PUT|GET|DELETE /blobs/{id}`）+ 强制 Bearer token 认证；磁盘持久化存储不透明（已加密）blob，绝不解析内容。 |
-| 依赖 | 无（JDK `com.sun.net.httpserver`）；测试复用 `:mcos-runtime` 做真实 transport 互操作验证 |
+| 依赖 | 无（JDK `com.sun.net.httpserver`）；测试复用 `:mcos-runtime-core` 做真实 transport 互操作验证（拆分后 memory 包位于该模块） |
 | 技术栈 | Kotlin/JVM · JDK 17 · 零第三方运行时依赖 |
 | 规范 | [07-memory.md](./07-memory.md) §11.0 |
 
@@ -142,11 +207,11 @@ flowchart BT
 
 ---
 
-## 4. 推荐的构建坐标
+## 4. 构建坐标（实际）
 
-针对未来（P1）将要创建的 Gradle 构建。建议使用版本目录（`gradle/libs.versions.toml`）。
+Gradle 构建已存在，并通过版本目录（`gradle/libs.versions.toml`）固定以下坐标。
 
-| 坐标 | 建议值 |
+| 坐标 | 实际值 |
 |------------|-----------------|
 | Kotlin | 2.0.21+ |
 | AGP | 8.7.3+ |
