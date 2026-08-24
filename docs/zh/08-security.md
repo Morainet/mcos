@@ -4,12 +4,12 @@
 
 > **状态:** 草案
 > **版本:** 0.1.0
-> **最后更新:** 2026-08-06
+> **最后更新:** 2026-08-24  
 > **依赖:** [01-architecture.md](./01-architecture.md)、[02-command-protocol.md](./02-command-protocol.md)、[03-runtime.md](./03-runtime.md)、[04-plugin-sdk.md](./04-plugin-sdk.md)、[05-workflow.md](./05-workflow.md)、[06-agent.md](./06-agent.md)、[07-memory.md](./07-memory.md)
 
 > **灵感来源:** Android Permission Model · iOS TCC（Transparency, Consent, Control）· OAuth2 scopes · Claude Code tool-use confirmation · ChatGPT plugin security review · OWASP MASVS（Mobile Application Security Verification Standard）
 
-> 🚧 **实现状态:** **权限内核（Permission Kernel）** 是 **P1 交付物**（[11 §3](./11-implementation-status.md)）——它在 MVP 中门控每一个 Stage 6 Authorize 决策。进程隔离、企业策略与市场签名属于 P2+。本文档是 `PermissionScope`、`GrantRecord`、`ConfirmationPrompt`、`TrustLevel` 与 `EnterprisePolicy` 的规范性来源；其他文档按名引用这些类型而不再重新定义。
+> ✅ **实现状态:** 权限内核门控每一个 Stage 6 决策且**授权表已持久化**；企业策略（§13，含 fail-closed 解析 + 文件热加载）与市场签名链（Ed25519 / RSA-PSS-4096 工件、blocklist 与配方验签）均已实现。剩余 🟡：第三方进程隔离（P3，§8）与审计静态加密（§14）。状态见 [11-implementation-status.md](./11-implementation-status.md) §3。
 
 ---
 
@@ -788,6 +788,8 @@ interface SecureStore {
 
 ### 10.0 强制限制
 
+> ✅ **实现状态：** 限流已在执行管线的**阶段 5.5**（[01 §9.2](./01-architecture.md)）强制执行——Executor 在 schema 校验与授权之间调用配置的 `RateLimiter`（`mcos-security`，以 `(pluginId, sideEffectClass)` 为键）；超限的 invoke 在消耗任何授权之前即以 `RATE_LIMITED` + `details.retryAfterMs` 快速失败。`UnlimitedRateLimiter` 是命名的退出选项。§10.1 的参数表是完整的 V1 目标集。
+
 运行时强制执行：
 
 - 每插件每分钟最大调用数
@@ -932,6 +934,8 @@ Planner 收到这些错误时表现为 `Refuse(category = QUOTA)`（[06 §5.5](.
 ## 12. 网络出站策略
 
 > **⚠️ MVP 限制：** 网络出站强制执行（`network.<domain>` 作用域检查、确认界面 URL 展示、企业域名白名单）需要**进程隔离**才能可靠地拦截 `NetService` 调用（[§8.2](#82-binder-identity-checks)）。在 MVP（进程内）中，恶意或被攻破的插件可以完全绕过 `NetService` 并使用自己的 HTTP 客户端。MVP 依赖静态清单分析 + 市场审核（[§4.4](#44-sideeffectclass-honesty-check)）作为兜底。下方的 `decideEgress()` 算法对 V1+ 是规范性的；在 MVP 中，它是对配合 `NetService` 门面的插件尽力而为的检查。
+>
+> ✅ **实现状态：** `decideEgress()` **已实现并强制执行**，位于执行管线的**阶段 6.5**（[01 §9.2](./01-architecture.md)）：invoke 任何 `network` 类命令之前，Executor 会扫描参数树中的全部 URL 字符串，遇 `Deny` 决策即以 `PERMISSION_DENIED`（`details.url`、`details.egressReason`）拒绝。该阶段排在**阶段 6 授权之后**，作用域检查因此从签名已验证的 `AuthStamp` 读取 `grantsUsed`——若放在授权前，将接受伪造的戳（P0-S1）。仍待进程隔离解决的，只是插件自行发起连接时的 `NetService` 层拦截。
 
 ### 12.0 规范性出站决策算法
 
