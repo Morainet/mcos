@@ -1,7 +1,7 @@
 # MCOS Implementation Status
 
 > **Status:** Living document  
-> **Last Updated:** 2026-08-17  
+> **Last Updated:** 2026-08-24  
 > **Audience:** Contributors and evaluators who need to know **what is spec-only vs. what still needs to be built**.
 
 MCOS has shipped the **P1 MVP and most of P2**: the Command Protocol, Runtime, Plugin SDK, and shell are implemented in Kotlin across `mcos-sdk`, `mcos-runtime`, `mcos-android` and four plugins. The tables below mark each subsystem **implemented / partial / not started**, citing the commits that landed the code. Rows that remain spec-only are the remaining work.
@@ -128,7 +128,7 @@ Golden cases under [`docs/fixtures/`](../fixtures/). All eight are exercised by 
 
 ## 5. Global Feature Matrix (P0 → P3)
 
-Aggregated from the "MVP vs V1" phasing tables in [05](./05-workflow.md) §15, [06](./06-agent.md) §17, [07](./07-memory.md) §16, [08](./08-security.md) §17, and [09](./09-marketplace.md) §15. P0 (now) is **spec-complete, code-absent**. Phase terminology: P1 = MVP, P2 = V1, P3 = V2 ([10](./10-roadmap.md) §2.1).
+Aggregated from the "MVP vs V1" phasing tables in [05](./05-workflow.md) §15, [06](./06-agent.md) §17, [07](./07-memory.md) §16, [08](./08-security.md) §17, and [09](./09-marketplace.md) §15. The P0 column is the **historical baseline** (spec-complete, code-absent); as of 2026-08-24, P1 has shipped, most of P2 has landed, and the P3 client side is delivered. Phase terminology: P1 = MVP, P2 = V1, P3 = V2 ([10](./10-roadmap.md) §2.1).
 
 | Subsystem | P0 (spec only) | P1 MVP | P2 | P3 |
 |-----------|----------------|--------|----|----|
