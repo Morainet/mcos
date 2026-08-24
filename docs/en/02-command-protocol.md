@@ -3,7 +3,7 @@
 > **Status:** Draft RFC  
 > **RFC Number:** MCOS-RFC-0001  
 > **Version:** 0.1.0  
-> **Last Updated:** 2026-08-06  
+> **Last Updated:** 2026-08-24  
 > **Normative:** Yes  
 > **Depends on:** [00-vision.md](./00-vision.md), [01-architecture.md](./01-architecture.md)
 
@@ -704,7 +704,7 @@ The pipeline has a sharp transactional seam at **Stage 7 (Execute)**. Every stag
 
 ### 10.2 Failure Envelope
 
-> 🚧 **Implementation status:** the `retryable` and `details` fields are part of this protocol target. No implementation exists yet; a future `CommandResult.Err` must include them.
+> ✅ **Implementation status:** `retryable` and `details` are implemented — `CommandResult.Err(code, message, retryable, details: JsonObject)` lives in `mcos-sdk` and is populated by the Executor's structured error mapping. See [11-implementation-status.md](./11-implementation-status.md) §7.
 
 ```json
 {
