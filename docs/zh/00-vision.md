@@ -4,7 +4,7 @@
 
 > **Status:** Draft  
 > **Version:** 0.1.0  
-> **Last Updated:** 2026-08-06  
+> **Last Updated:** 2026-08-24  
 > **Audience:** 贡献者、合作伙伴，以及任何正在评估 Mobile Command OS 作为基础设施的人
 
 ---
@@ -207,7 +207,7 @@ Apache 式的开放：开放协议、开放 SDK、开放市场 API。
 
 ## 5. 仓库拓扑
 
-> 本仓库目前**仅为设计稿**——尚无任何源代码模块。下述拓扑是**目标**布局；模块按 [10-roadmap.md](./10-roadmap.md) 的阶段逐步引入。
+> ✅ **实现状态：** P1（MVP）与 P2 的大部分已交付——下述拓扑是仓库的**实际**布局（12 个 Gradle 源码模块，含 `mcos-server`），而非目标。阶段历史见 [10-roadmap.md](./10-roadmap.md)；逐子系统状态见 [11-implementation-status.md](./11-implementation-status.md) §3。
 
 ```text
 mcos/
