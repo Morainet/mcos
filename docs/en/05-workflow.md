@@ -2,11 +2,11 @@
 
 > **Status:** Draft  
 > **Version:** 0.1.0  
-> **Last Updated:** 2026-08-06  
+> **Last Updated:** 2026-08-24  
 > **Depends on:** [02-command-protocol.md](./02-command-protocol.md), [03-runtime.md](./03-runtime.md)  
 > **Inspiration:** Temporal · LangGraph · Claude Code tool loops — adapted to mobile constraints
 
-> 🚧 **Implementation status:** the Workflow Engine is **not yet implemented** — it is a P2 deliverable per the [roadmap](./10-roadmap.md). The repository is currently design-only. The IR shapes below are the design contract the engine will interpret; a future `mcos-runtime` will model single-invocation and sequence IR first (see [fixtures](../fixtures/)), which is the trivial-workflow entry point.
+> ✅ **Implementation status:** the Workflow Engine **is implemented** in `mcos-runtime-core` (`workflow/WorkflowEngine`) — sequential / parallel (`cancelOnFailure`) / if / loop / retry / try-with-compensation / confirm, plus the named workflow store and JSON decoding — wired into `McosRuntime`. Status: [11-implementation-status.md](./11-implementation-status.md) §3.
 
 ---
 
