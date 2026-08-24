@@ -2,13 +2,13 @@
 
 > **Status:** Draft  
 > **Version:** 0.1.0  
-> **Last Updated:** 2026-08-06  
+> **Last Updated:** 2026-08-24  
 > **Depends on:** [01-architecture.md](./01-architecture.md), [02-command-protocol.md](./02-command-protocol.md), [03-runtime.md](./03-runtime.md), [04-plugin-sdk.md](./04-plugin-sdk.md), [05-workflow.md](./05-workflow.md), [07-memory.md](./07-memory.md), [08-security.md](./08-security.md)  
 > **Service:** `mcos-server` marketplace module
 
 > **Inspiration:** npm registry · PyPI · Homebrew · Apple App Store review process · Certificate Transparency · VS Code Marketplace · F-Droid
 
-> 🚧 **Implementation status:** The Marketplace is a **P3 deliverable** ([11 §5](./11-implementation-status.md)) — it is the capstone of the Ecosystem phase. P1 ships with built-in plugins only; P2 adds sideload debug; P3 delivers the public index, signing, and recipe store. This document is written now (not deferred) so that P1–P2 designs that must interoperate with the marketplace — signature verification caching ([03 §16.2](./03-runtime.md)), `TrustLevel.MARKETPLACE_VERIFIED` ([08 §7](./08-security.md)), plugin download directory layout ([03 §16.1](./03-runtime.md)) — have a concrete P3 target to align with.
+> 🟡 **Implementation status:** the **client side is delivered** — trust levels, artifact / blocklist / recipe signature verification, the end-to-end install pipeline (update consent, persistence + restart re-verification & rehydration, dynamic `.mcos` loading via DexClassLoader), the recipe store + install wizard, reports & opt-in telemetry, and the Android in-app UI. Remaining: the public index **server** deployment and real operator signing keys (`TrustAnchors` ships a fail-closed placeholder). Status: [11-implementation-status.md](./11-implementation-status.md) §3.
 
 ---
 
