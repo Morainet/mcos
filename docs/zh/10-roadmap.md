@@ -4,12 +4,12 @@
 
 > **状态:** 草案  
 > **版本:** 0.1.0  
-> **最后更新:** 2026-08-06  
+> **最后更新:** 2026-08-24  
 > **依赖:** [00-vision.md](./00-vision.md)、[01-architecture.md](./01-architecture.md)、[02-command-protocol.md](./02-command-protocol.md)、[03-runtime.md](./03-runtime.md)、[04-plugin-sdk.md](./04-plugin-sdk.md)、[05-workflow.md](./05-workflow.md)、[06-agent.md](./06-agent.md)、[07-memory.md](./07-memory.md)、[08-security.md](./08-security.md)、[09-marketplace.md](./09-marketplace.md)、[11-implementation-status.md](./11-implementation-status.md)
 
 > **灵感来源:** Apache 基础设施成熟度模型 · Kubernetes 分阶段交付（alpha → beta → GA）· Rust edition 路线图 · Stripe 年度面向用户路线图 · TypeScript "规范与代码同步演进" 方法
 
-> 🚧 **实现状态:** MCOS 当前处于 **P0 —— 规范完成、代码缺失**。设计文档集（`docs/00`–`11`）是 P0 的交付物；目前尚无运行时/SDK/应用代码。P1 实现从 Gradle 多模块骨架 + 参考实现 DSL 解析器（DslParser）开始。本路线图描述从这里通往一个平台（platform）的路径 —— 各时间跨度（horizon）仅为示意，不构成承诺。
+> ✅ **实现状态:** P1（MVP）已完成、P2 大部分已落地——12 个 Gradle 源码模块、937 个测试、四个内置插件、市场客户端与 `mcos-server`（见 [11-implementation-status.md](./11-implementation-status.md)）。P2 退出标准尚余：多轮 Agent 循环与事件触发配方。下文各时间跨度仍为示意，不构成承诺。
 
 ---
 
@@ -181,9 +181,9 @@ flowchart LR
 - [x] 架构文档集（`docs/00`–`10`）
 - [x] 黄金 DSL 用例目录（`docs/fixtures/01`–`08`，含正例与反例）
 - [x] CONTRIBUTING + LICENSE（Apache-2.0）
-- [ ] Kotlin 多模块骨架 —— **推迟到阶段 1**（曾原型化过一个阶段 0 骨架并将其移除；当前仓库是一个干净的设计专用基线）
+- [x] Kotlin 多模块骨架 —— **P1 已交付**（12 个源码模块，布局与 [REPOSITORIES.md](./REPOSITORIES.md) 一致）
 
-> 阶段 0 设计已完成。第一个阶段 1 交付物是 Gradle 多模块骨架加上参考实现 DSL 解析器 —— 见 [11-implementation-status.md](./11-implementation-status.md) §6。
+> 阶段 0 设计已完成，且阶段 1 已交付骨架、DSL 解析器与完整 MVP 管线 —— 已交付清单见 [11-implementation-status.md](./11-implementation-status.md) §6。
 
 ### 3.1 P0 交付物清单
 
@@ -197,8 +197,8 @@ flowchart LR
 | CONTRIBUTING（双语同步规则） | ✅ 完成 | `CONTRIBUTING.md` |
 | CHANGELOG（扩充历史） | ✅ 完成 | `CHANGELOG.md` |
 | 实现状态矩阵 | ✅ 完成 | [11-implementation-status.md](./11-implementation-status.md) |
-| Kotlin 多模块骨架 | ❌ 推迟到 P1 | — |
-| 参考实现 DSL 解析器 | ❌ 推迟到 P1 | — |
+| Kotlin 多模块骨架 | ✅ P1 已交付 | 12 个模块——[REPOSITORIES.md](./REPOSITORIES.md) |
+| 参考实现 DSL 解析器 | ✅ P1 已交付 | `mcos-runtime-core` `parse/`（DslParser） |
 
 ### 3.2 P0 → P1 过渡门槛
 
@@ -750,11 +750,11 @@ MCOS 维护两棵语言树：
 
 ### 13.0 行动清单
 
-1. 选择 LICENSE（推荐 Apache-2.0）  
-2. 创建与仓库拓扑匹配的 Gradle 多模块骨架  
-3. 实现参考实现 DSL 解析器 + 黄金测试  
-4. 交付 `hello.world` + `camera.capture` 垂直切片  
-5. 每日为一条真实的个人工作流内测（dogfood）CLI  
+1. ✅ 选择 LICENSE（Apache-2.0）—— 已提交为 `LICENSE`
+2. ✅ 创建与仓库拓扑匹配的 Gradle 多模块骨架 —— 12 个模块已落地（见 [REPOSITORIES.md](./REPOSITORIES.md)）
+3. ✅ 实现参考实现 DSL 解析器 + 黄金测试 —— `DslParser` + 8 个黄金用例全绿（[02 §16](./02-command-protocol.md)）
+4. ✅ 交付 `hello.world` + `camera.capture` 垂直切片 —— 四个内置插件在 Android 外壳端到端运行并写审计日志
+5. 🟡 每日为一条真实的个人工作流内测（dogfood）CLI —— Android 演示已覆盖全流程；持续每日内测仍在进行
 
 ### 13.1 验收标准（Acceptance Criteria）
 
