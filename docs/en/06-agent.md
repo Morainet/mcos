@@ -2,12 +2,12 @@
 
 > **Status:** Draft
 > **Version:** 0.1.0
-> **Last Updated:** 2026-08-06
+> **Last Updated:** 2026-08-24
 > **Depends on:** [01-architecture.md](./01-architecture.md), [02-command-protocol.md](./02-command-protocol.md), [03-runtime.md](./03-runtime.md), [05-workflow.md](./05-workflow.md), [07-memory.md](./07-memory.md), [08-security.md](./08-security.md)
 >
 > **Inspiration:** Anthropic Claude Code / ChatGPT tool-use / Cursor Agent / Apple Intelligence App Intents — a provider-agnostic compiler front-end that turns natural-language goals into MCOS command IR, with a multi-turn agent loop that probes before it writes.
 >
-> 🚧 **Implementation status:** The **Planner** (one-shot `goal → IR` compile) is a **P1** deliverable — MVP ships a single cloud provider with freeform-JSON compile, basic catalog retrieval, and the bounded repair loop. The **Agent** (multi-turn Plan→probe→replan→write loop) is **P2**; voice STT and on-device providers are **P3**. See [§17](#17-mvp-vs-v1).
+> ✅/🟡 **Implementation status:** the **Planner** has shipped well past the P1 baseline — multi-provider registry with health probing (§17 V1), fallback chains, the on-device→cloud privacy gate (§13.2), four PlanModes (NATIVE_TOOL_CALL / FREEFORM_JSON / CONSTRAINED incl. GBNF grammar injection / LATENCY_TIERED routing, §13.1) and the NL→IR golden eval suite (§16) are all implemented. Still open: the multi-turn **Agent loop** (Plan→probe→replan, §11 — a P2 exit criterion) is not started; voice STT and a real on-device model runtime remain P3. See [§17](#17-mvp-vs-v1) and [11-implementation-status.md](./11-implementation-status.md) §3.
 
 ---
 
