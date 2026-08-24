@@ -2,11 +2,11 @@
 
 > **Status:** Draft  
 > **Version:** 0.1.0  
-> **Last Updated:** 2026-08-06  
+> **Last Updated:** 2026-08-24  
 > **Package:** `mcos-runtime`  
 > **Depends on:** [01-architecture.md](./01-architecture.md), [02-command-protocol.md](./02-command-protocol.md)
 
-> 🚧 **Implementation status:** this document describes the Runtime **target architecture**. The repository is currently design-only — **no Runtime code exists yet**. The Parser, Registry, Permission Kernel, Scheduler, Workflow Engine, Executor, Event Bus, and Audit below are all **P1+** to implement. See [11-implementation-status.md](./11-implementation-status.md) §3.
+> ✅ **Implementation status:** the Runtime pipeline below **is implemented** — Parser, Registry, Executor, Workflow Engine, Event Bus, Memory and Audit live in `mcos-runtime-core`; the Permission Kernel, egress policy and audit sinks in `mcos-security`; the thin `McosRuntime` facade in `mcos-runtime`. Known 🟡 deltas: the Scheduler is an in-process FIFO queue (no priority lanes yet) and third-party process isolation is not yet enforced (P3, §8 of [08-security.md](./08-security.md)). Per-subsystem status: [11-implementation-status.md](./11-implementation-status.md) §3.
 
 ---
 
