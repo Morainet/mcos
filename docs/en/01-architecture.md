@@ -541,7 +541,11 @@ The Runtime pipeline is `parse → canonicalize → resolve → expand → valid
 
 **Stage 5 — ValidateInput.** JSON Schema Draft 2020-12 + MCOS extensions. Path-qualified messages.
 
+**Stage 5.5 — Rate Limit.** ✅ Implemented (`mcos-security` `RateLimiter`, consulted by the Executor between validation and authorization). Keyed by `(pluginId, sideEffectClass)`; over-limit → `RATE_LIMITED` with `details.retryAfterMs` + `details.kind`. `UnlimitedRateLimiter` is the named opt-out. Full normative parameter set: [08 §10](./08-security.md).
+
 **Stage 6 — Authorize.** Permission Kernel: `required = descriptor.permissions ∪ pluginPermissions ∪ globalPolicy`; `missing = required − grants` → `ConfirmationNeeded` (if askable) or `Denied` (if sticky). On `Granted`, an `AuthStamp` is minted: short-lived, run-scoped, not forgeable by plugins.
+
+**Stage 6.5 — Egress (post-auth).** ✅ Implemented. For `network` side-effect commands, every URL string anywhere in the argument tree is checked via `decideEgress` ([08 §12](./08-security.md)) before invoke. This stage deliberately runs **after** Stage 6 so `grantsUsed` is read from a stamp whose signature and permission coverage have already been verified — a pre-auth check would let a caller forge a stamp with `network.<attacker-domain>` scopes (the P0-S1 finding). Deny → `PERMISSION_DENIED` with `details.url` / `details.egressReason`.
 
 **Stage 7 — Schedule.** Queues: `interactive` (CLI/Chat), `workflow` (P2), `background` (P2), `expedited` (cancels only). Global cap 4; per-plugin 2; `destructive` 1; IoT control serial per device id. Over-cap → `RATE_LIMITED`.
 
