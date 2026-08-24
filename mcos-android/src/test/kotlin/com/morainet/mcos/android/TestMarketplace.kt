@@ -19,6 +19,7 @@ import com.morainet.mcos.marketplace.RecipePlaceholder
 import com.morainet.mcos.marketplace.RecipeSearchResponse
 import com.morainet.mcos.marketplace.SearchResponse
 import com.morainet.mcos.runtime.core.plugin.PluginLoader
+import com.morainet.mcos.runtime.core.events.TypedEventBus
 import com.morainet.mcos.runtime.core.registry.CommandRegistry
 import com.morainet.mcos.security.ArtifactVerifier
 import com.morainet.mcos.security.EnterprisePolicy
@@ -226,9 +227,11 @@ object TestMarketplace {
             downloadDir = Files.createTempDirectory("mcos-android-market-test").toString(),
             onProgress = { installProgress.tryEmit(it) },
         )
+        val eventBus = TypedEventBus()
         val runtime = McosRuntime.Builder()
             .withRegistry(registry)
             .withPluginLoader(loader)
+            .withEventBus(eventBus)
             .build()
         return AppDeps(
             runtime = runtime,
@@ -241,6 +244,7 @@ object TestMarketplace {
             // uses FileAuditLog; the fixture takes the named no-op).
             auditLog = NullAuditLog,
             permissionKernel = permissionKernel,
+            eventBus = eventBus,
             marketplace = MarketplaceDeps(
                 transport = transport,
                 keyStore = keyStore,

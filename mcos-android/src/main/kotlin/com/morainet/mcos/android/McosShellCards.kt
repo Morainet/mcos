@@ -31,6 +31,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -108,6 +109,9 @@ internal fun AiChatCard(
     vm: McosViewModel,
     ui: McosUiState,
 ) {
+    // One send action routed by mode: plain chat (plan once, run once) or the
+    // multi-turn Agent loop (probe → replan → approve → execute, 06 §11).
+    val send: () -> Unit = { if (ui.agentMode) vm.agentTurn() else vm.chat() }
     Card(
         Modifier.fillMaxWidth().padding(bottom = McosSpace.md),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
@@ -120,6 +124,16 @@ internal fun AiChatCard(
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.primary,
+                )
+                Spacer(Modifier.width(McosSpace.md))
+                Text(
+                    "Agent",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (ui.agentMode) MaterialTheme.colorScheme.primary else McosColor.fgDim,
+                )
+                Switch(
+                    checked = ui.agentMode,
+                    onCheckedChange = { vm.onAgentModeChange(it) },
                 )
                 Spacer(Modifier.weight(1f))
                 Text(
@@ -179,7 +193,7 @@ internal fun AiChatCard(
                 placeholder = { Text("Ask in natural language, e.g. take a photo and notify me…") },
                 shape = RoundedCornerShape(McosRadius.sm),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = { vm.chat() }),
+                keyboardActions = KeyboardActions(onDone = { send() }),
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = MaterialTheme.colorScheme.primary,
                     unfocusedBorderColor = McosColor.border,
@@ -193,7 +207,7 @@ internal fun AiChatCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Button(
-                    onClick = { vm.chat() },
+                    onClick = send,
                     enabled = !ui.isExecuting && ui.nlText.isNotBlank() && ui.apiKey.isNotBlank(),
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                 ) {
@@ -204,7 +218,12 @@ internal fun AiChatCard(
                         )
                         Spacer(Modifier.width(McosSpace.sm))
                     }
-                    Text(if (ui.isExecuting) "Thinking…" else "Chat")
+                    Text(
+                        when {
+                            ui.isExecuting -> if (ui.agentMode) "Probing…" else "Thinking…"
+                            else -> if (ui.agentMode) "Agent" else "Chat"
+                        }
+                    )
                 }
                 OutlinedTextField(
                     value = ui.apiKey,
@@ -220,6 +239,34 @@ internal fun AiChatCard(
                         cursorColor = MaterialTheme.colorScheme.primary,
                     ),
                 )
+            }
+            // Agent loop progress (06 §11): probes/replans stream through here
+            // while the turn is open; CANCEL aborts it (user cancel wins).
+            if (ui.agentWorking) {
+                Spacer(Modifier.height(McosSpace.sm))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    CircularProgressIndicator(
+                        Modifier.size(12.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.secondary,
+                    )
+                    Spacer(Modifier.width(McosSpace.sm))
+                    Text(
+                        "agent: probing → replanning…",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = McosColor.fgDim,
+                    )
+                    Spacer(Modifier.weight(1f))
+                    TextButton(
+                        onClick = { vm.cancelAgentTurn() },
+                        contentPadding = PaddingValues(horizontal = McosSpace.md),
+                    ) {
+                        Text("CANCEL", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
             }
         }
     }

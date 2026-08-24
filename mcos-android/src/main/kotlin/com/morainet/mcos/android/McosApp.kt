@@ -165,6 +165,30 @@ fun MCOSApp(deps: AppDeps) {
             )
         }
 
+        // ── Agent plan approval (06-agent.md §11 PlanReady) ─────────────
+        // The multi-turn Agent loop staged a final plan after its probes;
+        // only the user's Allow here executes it (reads already ran during
+        // probing; everything beyond read waits for this decision).
+        ui.pendingAgentPlan?.let { preview ->
+            AlertDialog(
+                onDismissRequest = { vm.resumeAgentTurn(false) },
+                title = { Text("Approve agent plan?") },
+                text = {
+                    Column {
+                        Text("The agent staged this plan:", style = MaterialTheme.typography.bodyMedium)
+                        Spacer(Modifier.height(McosSpace.sm))
+                        Text(
+                            preview,
+                            fontFamily = FontFamily.Monospace,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                },
+                confirmButton = { TextButton(onClick = { vm.resumeAgentTurn(true) }) { Text("Allow") } },
+                dismissButton = { TextButton(onClick = { vm.resumeAgentTurn(false) }) { Text("Deny") } },
+            )
+        }
+
         // ── Marketplace install confirmation ─────────────────────────────
         // Shows the package's requested permissions (risk-tier colored) and
         // command previews before handing off to the install pipeline.

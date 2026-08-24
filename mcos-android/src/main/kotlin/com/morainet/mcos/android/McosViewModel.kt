@@ -9,13 +9,18 @@ import com.morainet.mcos.runtime.core.api.ExecuteRequest
 import com.morainet.mcos.runtime.core.api.Payload
 import com.morainet.mcos.runtime.core.api.RuntimeEvent
 import com.morainet.mcos.runtime.core.api.Source
+import com.morainet.mcos.llm.AgentBridge
+import com.morainet.mcos.llm.AgentTurnResult
 import com.morainet.mcos.llm.ChatOrchestrator
 import com.morainet.mcos.llm.LlmConfig
 import com.morainet.mcos.llm.LlmPlanner
 import com.morainet.mcos.llm.LlmProviderRegistry
+import com.morainet.mcos.llm.McosAgent
 import com.morainet.mcos.llm.OpenAiLlmProvider
 import com.morainet.mcos.llm.PromptInjectionDetector
 import com.morainet.mcos.llm.ProviderHealth
+import com.morainet.mcos.runtime.core.ir.ExecutionIr
+import com.morainet.mcos.runtime.core.ir.IrInvoke
 import com.morainet.mcos.runtime.core.plugin.LoadResult
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -51,6 +56,12 @@ data class McosUiState(
     /** LLM provider health (06 §17 V1 probing). */
     val providerHealth: List<ProviderHealth> = emptyList(),
     val probing: Boolean = false,
+    /** Agent 模式开关（06 §11 多轮循环）：发送键走 probe → replan 循环。 */
+    val agentMode: Boolean = false,
+    /** Agent 循环进行中（探测/重规划），驱动进度指示。 */
+    val agentWorking: Boolean = false,
+    /** Agent 计划待审批（PlanReady 预览文本）— 驱动 Agent 审批对话框。 */
+    val pendingAgentPlan: String? = null,
 )
 
 /**
@@ -379,6 +390,147 @@ class McosViewModel : ViewModel() {
             }
         }
     }
+
+    // ── Agent loop (06-agent.md §11 multi-turn) ────────────────────────
+
+    /**
+     * Single demo-shell conversation id. The Agent loop keeps its
+     * observation log and pending plan per session; one continuous
+     * conversation is the right scope for the shell.
+     */
+    private val agentSessionId = "main"
+
+    /** Built on first agent turn; rebuilt if the API key changes. */
+    private var agentBridge: AgentBridge? = null
+    private var agentApiKey: String? = null
+
+    /**
+     * Test seam: when set, agent turns/resumes run against this bridge
+     * instead of a real [McosAgent] (keeps the JVM unit tests network-free).
+     */
+    internal var agentBridgeOverride: AgentBridge? = null
+
+    fun onAgentModeChange(enabled: Boolean) {
+        _uiState.update { it.copy(agentMode = enabled) }
+    }
+
+    /** Start an Agent turn for the current NL input (probe → replan loop). */
+    fun agentTurn() {
+        val s = _uiState.value
+        if (s.isExecuting || s.nlText.isBlank()) return
+        _uiState.update { it.copy(isExecuting = true, agentWorking = true) }
+        _events.value = emptyList()
+
+        val key = s.apiKey.trim()
+        if (key.isBlank()) {
+            log("[WARN] Set an LLM API key in the AI Chat card first.")
+            _uiState.update { it.copy(isExecuting = false, agentWorking = false) }
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                // Persist the key so it survives restarts.
+                deps().secureStore.put(LLM_API_KEY, key)
+                loadPlugins()
+
+                val bridge = agentBridgeOverride ?: bridgeFor(key)
+                log("[${now()}] Agent turn: “${s.nlText.take(60)}”…")
+                bridge.runTurn(agentSessionId, s.nlText).collect { handleAgentResult(it) }
+            } catch (e: Exception) {
+                log("[ERROR] ${e.javaClass.simpleName}: ${e.message}")
+            } finally {
+                _uiState.update { it.copy(isExecuting = false, agentWorking = false) }
+            }
+        }
+    }
+
+    /**
+     * Resolve the pending [AgentTurnResult.PlanReady] staged by the last
+     * turn: approve executes it through the kernel, deny declines.
+     */
+    fun resumeAgentTurn(approved: Boolean) {
+        if (_uiState.value.pendingAgentPlan == null) return
+        _uiState.update { it.copy(pendingAgentPlan = null, isExecuting = true, agentWorking = true) }
+        val bridge = agentBridgeOverride ?: agentBridge
+        if (bridge == null) {
+            _uiState.update { it.copy(isExecuting = false, agentWorking = false) }
+            return
+        }
+        viewModelScope.launch {
+            try {
+                bridge.resume(agentSessionId, approved).collect { handleAgentResult(it) }
+            } catch (e: Exception) {
+                log("[ERROR] ${e.javaClass.simpleName}: ${e.message}")
+            } finally {
+                _uiState.update { it.copy(isExecuting = false, agentWorking = false) }
+            }
+        }
+    }
+
+    /** User cancel always wins (06 §11.2) — abort the active turn. */
+    fun cancelAgentTurn() {
+        viewModelScope.launch {
+            (agentBridgeOverride ?: agentBridge)?.cancel(agentSessionId)
+        }
+    }
+
+    /** Lazily build (and cache per key) the real [McosAgent]. */
+    private fun bridgeFor(key: String): AgentBridge {
+        val cached = agentBridge
+        if (cached != null && agentApiKey == key) return cached
+        val bridge = McosAgent(
+            planner = LlmPlanner(
+                provider = OpenAiLlmProvider(
+                    config = LlmConfig(apiKey = key),
+                    transport = AndroidLlmHttpTransport(),
+                ),
+                registry = deps().registry,
+            ),
+            runtime = runtime(),
+            registry = deps().registry,
+            injectionDetector = PromptInjectionDetector(),
+            eventBus = deps().eventBus,
+        )
+        agentBridge = bridge
+        agentApiKey = key
+        return bridge
+    }
+
+    /** Surface one streamed Agent state on the console (and dialogs). */
+    private fun handleAgentResult(result: AgentTurnResult) {
+        when (result) {
+            is AgentTurnResult.Probing -> {
+                log("[${now()}] ⌖ probe: ${result.observation.replace("\n", " | ").take(120)}")
+                log("[${now()}] ↻ ${result.nextAction}")
+            }
+            is AgentTurnResult.PlanReady -> {
+                val preview = describeIr(result.ir)
+                _uiState.update { it.copy(pendingAgentPlan = preview) }
+                log(
+                    "[${now()}] Plan ready" +
+                        (if (result.needsConfirmation) " — needs approval" else "") + ":",
+                )
+                log(preview)
+            }
+            is AgentTurnResult.Clarify -> log("[${now()}] ? ${result.question}")
+            is AgentTurnResult.Refuse ->
+                log("[ERROR] Agent refused (${result.category}): ${result.reason}")
+            is AgentTurnResult.Declined -> log("[${now()}] ✗ Declined: ${result.reason}")
+            is AgentTurnResult.Done -> log("[${now()}] ✓ ${result.summary}")
+        }
+    }
+
+    /** Human-readable one-line-per-step preview of a staged plan. */
+    private fun describeIr(ir: ExecutionIr): String = when (ir) {
+        is ExecutionIr.Invoke -> describeInvoke(ir.invoke)
+        is ExecutionIr.Sequence -> ir.sequence.steps.joinToString("\n") { describeInvoke(it) }
+        is ExecutionIr.Workflow -> "workflow: ${ir.body}"
+    }
+
+    private fun describeInvoke(invoke: IrInvoke): String =
+        if (invoke.args.isEmpty()) invoke.id
+        else invoke.id + "(" + invoke.args.entries.joinToString(", ") { (k, v) -> "$k=$v" } + ")"
 
     // ── confirmation dialog (08-security.md §5) ─────────────────────────
 

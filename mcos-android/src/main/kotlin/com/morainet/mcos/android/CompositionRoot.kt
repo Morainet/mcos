@@ -19,6 +19,8 @@ import com.morainet.mcos.marketplace.PluginInstaller
 import com.morainet.mcos.marketplace.RecipeInstaller
 import com.morainet.mcos.marketplace.RecipeSignatureVerifier
 import com.morainet.mcos.runtime.core.plugin.PluginLoader
+import com.morainet.mcos.runtime.core.events.EventBus
+import com.morainet.mcos.runtime.core.events.TypedEventBus
 import com.morainet.mcos.runtime.core.registry.CommandRegistry
 import com.morainet.mcos.security.ArtifactVerifier
 import com.morainet.mcos.security.EnterprisePolicy
@@ -73,6 +75,8 @@ class AppDeps(
     val auditLog: AuditLog,
     /** The kernel holding the file-backed grant table (install-time consent lands here). */
     val permissionKernel: PermissionKernel,
+    /** System EventBus shared by the runtime and the Agent loop (agent.* events, 06 §11). */
+    val eventBus: EventBus,
 )
 
 /**
@@ -222,6 +226,11 @@ object CompositionRoot {
         val plugins = listOf(HelloPlugin(), SystemPlugin(), CameraPlugin(), FilesPlugin())
         plugins.forEach { PluginPermissionBootstrap.grantAll(permissionKernel, it) }
 
+        // One system EventBus shared by the runtime (run events) and the
+        // Agent loop (agent.* lifecycle events, 06 §11) so subscribers see
+        // both streams from a single subscription point.
+        val eventBus = TypedEventBus()
+
         val runtime = McosRuntime.Builder()
             .withRegistry(registry)
             .withPermissionKernel(permissionKernel)
@@ -229,6 +238,7 @@ object CompositionRoot {
             .withEnterprisePolicySource(enterprisePolicy)
             .withPluginLoader(pluginLoader)
             .withPluginInstaller(installer)
+            .withEventBus(eventBus)
             // Wires the default WorkflowEngine's audit sink; the injected
             // executor below carries the same log via its SecurityConfig.
             .withAuditLog(auditLog)
@@ -260,6 +270,7 @@ object CompositionRoot {
             marketplace = marketplace,
             auditLog = auditLog,
             permissionKernel = permissionKernel,
+            eventBus = eventBus,
         )
     }
 
