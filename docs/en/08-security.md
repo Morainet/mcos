@@ -2,12 +2,12 @@
 
 > **Status:** Draft  
 > **Version:** 0.1.0  
-> **Last Updated:** 2026-08-06  
+> **Last Updated:** 2026-08-24  
 > **Depends on:** [01-architecture.md](./01-architecture.md), [02-command-protocol.md](./02-command-protocol.md), [03-runtime.md](./03-runtime.md), [04-plugin-sdk.md](./04-plugin-sdk.md), [05-workflow.md](./05-workflow.md), [06-agent.md](./06-agent.md), [07-memory.md](./07-memory.md)
 
 > **Inspiration:** Android Permission Model · iOS TCC (Transparency, Consent, Control) · OAuth2 scopes · Claude Code tool-use confirmation · ChatGPT plugin security review · OWASP MASVS (Mobile Application Security Verification Standard)
 
-> 🚧 **Implementation status:** The **Permission Kernel** is a **P1 deliverable** ([11 §3](./11-implementation-status.md)) — it gates every Stage 6 Authorize decision in the MVP. Process isolation, enterprise policy, and marketplace signing are P2+. This document is the normative source for `PermissionScope`, `GrantRecord`, `ConfirmationPrompt`, `TrustLevel`, and `EnterprisePolicy`; other documents reference these types by name without redefining them.
+> ✅ **Implementation status:** the Permission Kernel gates every Stage 6 decision **and persists its grant table**; enterprise policy (§13, incl. fail-closed parsing + file hot-reload) and the marketplace signing chain (Ed25519 / RSA-PSS-4096 artifact, blocklist & recipe verification) are implemented. Remaining 🟡: third-party process isolation (P3, §8) and audit at-rest encryption (§14). Status: [11-implementation-status.md](./11-implementation-status.md) §3.
 
 ---
 
@@ -787,6 +787,8 @@ The walk runs once per run, at Stage 10 (Audit), on a **copy** of the canonical 
 
 ### 10.0 Enforced Limits
 
+> ✅ **Implementation status:** rate limiting is enforced at **Stage 5.5** of the execution pipeline ([01 §9.2](./01-architecture.md)) — the Executor consults the configured `RateLimiter` (`mcos-security`, keyed by `(pluginId, sideEffectClass)`) between schema validation and authorization; over-limit invokes fail fast with `RATE_LIMITED` + `details.retryAfterMs` before any grant is consumed. `UnlimitedRateLimiter` is the named opt-out. The parameter table in §10.1 is the full V1 target set.
+
 Runtime enforces:
 
 - Max invokes / minute / plugin  
@@ -931,6 +933,8 @@ To avoid ambiguity across documents:
 ## 12. Network Egress Policy
 
 > **⚠️ MVP limitation:** Network egress enforcement (`network.<domain>` scope checks, confirmation-screen URL display, enterprise domain allowlist) requires **process isolation** to reliably intercept `NetService` calls ([§8.2](#82-binder-identity-checks)). In MVP (in-process), a malicious or compromised plugin could bypass `NetService` entirely and use its own HTTP client. MVP relies on static manifest analysis + marketplace review ([§4.4](#44-sideeffectclass-honesty-check)) as the backstop. The `decideEgress()` algorithm below is normative for V1+; in MVP it is a best-effort check on plugins that cooperate with the `NetService` facade.
+>
+> ✅ **Implementation status:** `decideEgress()` **is implemented and enforced** as **Stage 6.5** of the execution pipeline ([01 §9.2](./01-architecture.md)): before invoking any `network`-class command, the Executor scans every URL string in the argument tree and denies with `PERMISSION_DENIED` (`details.url`, `details.egressReason`) on a `Deny` decision. The stage runs **after** Stage 6 authorization so scope checks read `grantsUsed` from a signature-verified `AuthStamp` — a pre-auth ordering would accept forged stamps (P0-S1). What still awaits process isolation is only the `NetService`-level interception of connections the plugin opens by itself.
 
 ### 12.0 Normative Egress Decision Algorithm
 
