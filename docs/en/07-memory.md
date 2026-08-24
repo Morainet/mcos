@@ -2,12 +2,12 @@
 
 > **Status:** Draft
 > **Version:** 0.1.0
-> **Last Updated:** 2026-08-06
+> **Last Updated:** 2026-08-24
 > **Depends on:** [01-architecture.md](./01-architecture.md), [02-command-protocol.md](./02-command-protocol.md), [03-runtime.md](./03-runtime.md), [05-workflow.md](./05-workflow.md), [06-agent.md](./06-agent.md), [08-security.md](./08-security.md)
 >
 > **Inspiration:** MemGPT/Letta (three-tier memory hierarchy + paging) · Claude Code memory (CLAUDE.md/MEMORY.md pinning + compaction) · ChatGPT memory (cross-chat fact store + retrieval) · Apple Intelligence App Intents (on-device personal context) — adapted to a mobile-first, local-first, token-constrained Command OS where memory is the primary lever for context reuse and token reduction.
 >
-> 🚧 **Implementation status:** Memory is a **P2** deliverable per the [roadmap](./10-roadmap.md) and [implementation status](./11-implementation-status.md). The MVP (P1) ships only a Profile seam (`get`/`put` + basic `resolveRef`) so the Planner can resolve device aliases. The full three-tier model (Core/Recall/Archival), snippet assembly, compression, and the unified semantic index are P2. Cloud sync and on-device MemGPT paging are P3. See [§16](#16-mvp-vs-v1).
+> ✅ **Implementation status:** Memory is implemented **beyond** the P2 scope — `MemoryStore` (TTL / tags / fuzzy `resolveRef` / CREATED-UPDATED-CONFLICT semantics / superseded history), the Archival tier (`EpisodicMemory` + `RunSummarizer` + `EntityMatcher` §8.3), device sync (vector-clock LWW + `SyncPolicy`, §11), E2E-encrypted sync blobs (§11.0) and the standalone `mcos-server` are all delivered. Spec-only: on-device MemGPT paging. Status: [11-implementation-status.md](./11-implementation-status.md) §3.
 
 ---
 
