@@ -3,7 +3,7 @@
 > **语言:** [English](../en/11-implementation-status.md) · 中文（当前）
 
 > **Status:** Living document  
-> **Last Updated:** 2026-08-17  
+> **Last Updated:** 2026-08-24  
 > **Audience:** 需要了解**什么是仅规范、什么仍待构建**的贡献者与评估者。
 
 MCOS 已交付 **P1 MVP 与大部分 P2**：命令协议、运行时、插件 SDK 与外壳已用 Kotlin 实现，分布在 `mcos-sdk`、`mcos-runtime`、`mcos-android` 与四个插件中。下表将每个子系统标记为 **已实现 / 部分 / 未开始**，并引用落地代码的 commit；仍为纯规范的行就是剩余工作。
@@ -129,7 +129,7 @@ mcos/
 
 ## 5. 全局特性矩阵（P0 → P3）
 
-聚合自 [05](./05-workflow.md) §15、[06](./06-agent.md) §17、[07](./07-memory.md) §16、[08](./08-security.md) §17、[09](./09-marketplace.md) §15 中的 "MVP vs V1" 阶段表。P0（现在）是**规范完整、代码缺失**。阶段术语：P1 = MVP、P2 = V1、P3 = V2（[10](./10-roadmap.md) §2.1）。
+聚合自 [05](./05-workflow.md) §15、[06](./06-agent.md) §17、[07](./07-memory.md) §16、[08](./08-security.md) §17、[09](./09-marketplace.md) §15 中的 "MVP vs V1" 阶段表。P0 列为**历史基线**（规范完整、代码未动）；截至 2026-08-24，P1 已交付、P2 大部分落地、P3 客户端侧已交付。阶段术语：P1 = MVP、P2 = V1、P3 = V2（[10](./10-roadmap.md) §2.1）。
 
 | Subsystem | P0（仅规范） | P1 MVP | P2 | P3 |
 |-----------|----------------|--------|----|----|
@@ -149,7 +149,7 @@ mcos/
 | Marketplace | 规范完成 | — | ✅ 信任级别 + 签名验证基础设施（`TrustLevel`/`ArtifactVerifier`/`VerificationCache`/`PluginTrustGate`，[09 §6.2/§6.5](./09-marketplace.md)）；调试侧载（`SIDELOAD_DEBUG`）已落地 | 🟡 客户端侧安装流程已交付（`mcos-marketplace` + Android 应用内搜索/安装/卸载/更新 + 安装记录落盘与重启再水合 + 动态 `.mcos` 加载（`DexClassLoader`）+ `TrustAnchors` 冷启动种子（占位密钥））；公共索引服务端部署与真实运营密钥仍待 |
 | 进程隔离 | 规范完成 | 🟡 尽力而为（进程内） | — | 第三方默认 |
 | 企业策略 | 规范完成 | — | — | ✅ **已实现** 允许/拒绝名单（[08 §13](./08-security.md)）：命令/网络名单 + forceConfirm + 企业 kill switch + fail-closed 解析 + 文件热加载 |
-| Crash-loop 隔离 | 规范完成 | ⬜ **未实现** | ✅ | ✅ |
+| Crash-loop 隔离 | 规范完成 | ✅ | ✅ | ✅ |
 
 ---
 
