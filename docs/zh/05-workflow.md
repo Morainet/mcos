@@ -4,11 +4,11 @@
 
 > **状态:** Draft  
 > **版本:** 0.1.0  
-> **最后更新:** 2026-08-06  
+> **最后更新:** 2026-08-24  
 > **依赖:** [02-command-protocol.md](./02-command-protocol.md), [03-runtime.md](./03-runtime.md)  
 > **灵感来源:** Temporal · LangGraph · Claude Code 工具循环 —— 针对移动端约束做了适配
 
-> 🚧 **实现状态:** 工作流引擎**尚未实现** —— 它是[路线图](./10-roadmap.md)中的 P2 交付物。仓库目前仅处于设计阶段。下文给出的 IR 形态是引擎将要解释的设计契约；未来的 `mcos-runtime` 将首先建模单次调用和序列 IR（参见 [fixtures](../fixtures/)），这是平凡工作流的入口。
+> ✅ **实现状态:** 工作流引擎**已实现**于 `mcos-runtime-core`（`workflow/WorkflowEngine`）——sequential / parallel（`cancelOnFailure`）/ if / loop / retry / try-补偿 / confirm，以及命名工作流存储与 JSON 解码——已接入 `McosRuntime`。状态见 [11-implementation-status.md](./11-implementation-status.md) §3。
 
 ---
 
