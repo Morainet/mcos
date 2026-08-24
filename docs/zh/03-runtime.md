@@ -4,11 +4,11 @@
 
 > **Status:** Draft  
 > **Version:** 0.1.0  
-> **Last Updated:** 2026-08-06  
+> **Last Updated:** 2026-08-24  
 > **Package:** `mcos-runtime`  
 > **Depends on:** [01-architecture.md](./01-architecture.md), [02-command-protocol.md](./02-command-protocol.md)
 
-> 🚧 **实现状态：** 本文档描述的是运行时（Runtime）的**目标架构**。本仓库目前仅为设计阶段 —— **尚无任何运行时代码**。下文所述的 Parser、Registry、Permission Kernel、Scheduler、Workflow Engine、Executor、Event Bus 与 Audit 均属于 **P1+** 待实现项。参见 [11-implementation-status.md](./11-implementation-status.md) §3。
+> ✅ **实现状态：** 下述运行时管线**已实现**——Parser、Registry、Executor、Workflow Engine、Event Bus、Memory 与 Audit 位于 `mcos-runtime-core`；Permission Kernel、egress 策略与审计落盘位于 `mcos-security`；薄门面 `McosRuntime` 位于 `mcos-runtime`。已知 🟡 差距：Scheduler 仍是进程内 FIFO 队列（尚无优先级通道）；第三方进程隔离尚未强制（P3，见 [08-security.md](./08-security.md) §8）。逐子系统状态见 [11-implementation-status.md](./11-implementation-status.md) §3。
 
 ---
 
