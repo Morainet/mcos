@@ -2,12 +2,12 @@
 
 > **状态：** Draft
 > **版本：** 0.1.0
-> **最后更新：** 2026-08-06
+> **最后更新：** 2026-08-24
 > **依赖：** [01-architecture.md](./01-architecture.md), [02-command-protocol.md](./02-command-protocol.md), [03-runtime.md](./03-runtime.md), [05-workflow.md](./05-workflow.md), [06-agent.md](./06-agent.md), [08-security.md](./08-security.md)
 >
 > **灵感来源：** MemGPT/Letta（三层记忆层级 + 分页）· Claude Code memory（CLAUDE.md/MEMORY.md 钉选 + 压缩）· ChatGPT memory（跨会话事实存储 + 检索）· Apple Intelligence App Intents（端侧个人上下文）—— 改造为一个移动优先、本地优先、token 受限的 Command OS，其中记忆是上下文复用与 token 削减的主要杠杆。
 >
-> 🚧 **实现状态：** 记忆是 [roadmap](./10-roadmap.md) 与 [实现状态](./11-implementation-status.md) 中的 **P2** 交付物。MVP（P1）仅发布 Profile 接缝（`get`/`put` + 基础 `resolveRef`），使 Planner 能解析设备别名。完整的三层模型（Core/Recall/Archival）、片段装配、压缩（compaction）与统一语义索引（Semantic Index）为 P2。云端同步与端侧 MemGPT 分页为 P3。参见 [§16](#16-mvp-vs-v1)。
+> ✅ **实现状态：** 记忆系统已实现且**超出** P2 范围——`MemoryStore`（TTL / 标签 / 模糊 `resolveRef` / CREATED-UPDATED-CONFLICT 语义 / superseded 历史）、归档层（`EpisodicMemory` + `RunSummarizer` + `EntityMatcher` §8.3）、设备间同步（向量时钟 LWW + `SyncPolicy`，§11）、端到端加密同步 blob（§11.0）与独立 `mcos-server` 均已交付。仅规范未实现：端侧 MemGPT 分页。状态见 [11-implementation-status.md](./11-implementation-status.md) §3。
 
 ---
 
