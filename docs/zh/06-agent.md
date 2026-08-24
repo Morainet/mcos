@@ -2,12 +2,12 @@
 
 > **状态：** Draft
 > **版本：** 0.1.0
-> **最后更新：** 2026-08-06
+> **最后更新：** 2026-08-24
 > **依赖：** [01-architecture.md](./01-architecture.md), [02-command-protocol.md](./02-command-protocol.md), [03-runtime.md](./03-runtime.md), [05-workflow.md](./05-workflow.md), [07-memory.md](./07-memory.md), [08-security.md](./08-security.md)
 >
 > **灵感来源：** Anthropic Claude Code / ChatGPT 工具调用 / Cursor Agent / Apple Intelligence App Intents —— 一个与提供商无关的编译器前端，将自然语言目标转化为 MCOS 命令 IR，并通过多轮智能体循环在写入前先进行探查。
 >
-> 🚧 **实现状态：** **规划器（Planner）**（一次性 `goal → IR` 编译）是 **P1** 交付物 —— MVP 发布单一云提供商，包含自由格式 JSON 编译、基础命令目录检索和有界修复循环。**智能体（Agent）**（多轮 Plan→probe→replan→write 循环）为 **P2**；语音 STT 和端侧提供商为 **P3**。参见 [§17](#17-mvp-vs-v1)。
+> ✅/🟡 **实现状态：** **规划器（Planner）** 已远超 P1 基线交付——多 provider 注册表与健康探测（§17 V1）、回退链、端侧→云端隐私闸门（§13.2）、四种 PlanMode（NATIVE_TOOL_CALL / FREEFORM_JSON / CONSTRAINED 含 GBNF 语法注入 / LATENCY_TIERED 分层路由，§13.1）以及 NL→IR 黄金评测套件（§16）均已实现。仍待交付：多轮 **Agent 循环**（Plan→probe→replan，§11 —— P2 退出标准）未开始；语音 STT 与真正的端侧模型运行时仍属 P3。参见 [§17](#17-mvp-vs-v1) 与 [11-implementation-status.md](./11-implementation-status.md) §3。
 
 ---
 
