@@ -86,13 +86,18 @@ class Executor(
      * @param args JSON arguments for the command handler.
      * @param auth Optional authorization stamp.
      * @param progress Optional progress emitter for streaming updates.
+     * @param source Audit source label for the Stage-10 record (08 §14):
+     *   the `ExecuteRequest.Source` name (CLI/CHAT/…) or `AGENT_PROBE` for
+     *   read-only Agent probes (06 §11.3). Defaults to "CLI" for backward
+     *   compatibility with existing callers.
      * @return [CommandResult.Ok] on success, [CommandResult.Err] on any failure.
      */
     suspend fun execute(
         commandId: String,
         args: JsonObject = JsonObject(emptyMap()),
         auth: AuthStamp? = null,
-        progress: ProgressEmitter? = null
+        progress: ProgressEmitter? = null,
+        source: String = "CLI"
     ): CommandResult {
         val resolved = registry.resolve(commandId)
         if (resolved !is ResolveResult.Found) {
@@ -112,7 +117,7 @@ class Executor(
                 retryable = false
             )
         }
-        return invokeHandler(resolved.entry, args, auth, progress)
+        return invokeHandler(resolved.entry, args, auth, progress, source)
     }
 
     /**
@@ -122,16 +127,18 @@ class Executor(
      * @param steps Ordered list of invocations.
      * @param auth Optional authorization stamp shared across all steps.
      * @param progress Optional progress emitter.
+     * @param source Audit source label (see [execute]); defaults to "CLI".
      * @return List of results. If any step fails, the list ends with the error result.
      */
     suspend fun executeSequence(
         steps: List<Command>,
         auth: AuthStamp? = null,
-        progress: ProgressEmitter? = null
+        progress: ProgressEmitter? = null,
+        source: String = "CLI"
     ): List<CommandResult> {
         val results = mutableListOf<CommandResult>()
         for (cmd in steps) {
-            val result = execute(cmd.id, cmd.args, auth, progress)
+            val result = execute(cmd.id, cmd.args, auth, progress, source)
             results.add(result)
             if (result is CommandResult.Err) break
         }
@@ -144,7 +151,8 @@ class Executor(
         entry: RegistryEntry,
         args: JsonObject,
         auth: AuthStamp?,
-        progress: ProgressEmitter?
+        progress: ProgressEmitter?,
+        source: String = "CLI"
     ): CommandResult {
         // Stage 5 — Schema validation
         val schema = entry.descriptor.inputSchema
@@ -342,7 +350,7 @@ class Executor(
             RunRecord(
                 runId = runId,
                 timestamp = startTime,
-                source = "CLI",
+                source = source,
                 commandId = entry.descriptor.id,
                 steps = listOf(
                     StepRecord(

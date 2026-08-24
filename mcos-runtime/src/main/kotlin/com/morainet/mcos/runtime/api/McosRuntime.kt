@@ -1,5 +1,6 @@
 package com.morainet.mcos.runtime.api
 
+import com.morainet.mcos.runtime.core.api.AGENT_PROBE_AUDIT_SOURCE
 import com.morainet.mcos.runtime.core.api.ConfirmationDecision
 import com.morainet.mcos.runtime.core.api.ExecuteHandle
 import com.morainet.mcos.runtime.core.api.ExecuteRequest
@@ -50,6 +51,7 @@ import com.morainet.mcos.runtime.core.workflow.WorkflowResult
 import com.morainet.mcos.runtime.core.workflow.WorkflowStep
 import com.morainet.mcos.runtime.core.workflow.WorkflowStore
 import com.morainet.mcos.sdk.CommandResult
+import com.morainet.mcos.sdk.SideEffectClass
 import com.morainet.mcos.sdk.MemoryFacade
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.Flow
@@ -210,7 +212,7 @@ class McosRuntime internal constructor(
             val startTime = System.currentTimeMillis()
             try {
                 when (plan) {
-                    is Plan.Commands -> runCommands(runId, plan.commands, startTime, timestamp, request.payload)
+                    is Plan.Commands -> runCommands(runId, plan.commands, startTime, timestamp, request.payload, request.source.name)
                     is Plan.Workflow -> runWorkflow(runId, plan.step, startTime, timestamp, request.payload)
                     is Plan.ParseFailed -> Unit // unreachable: intercepted above
                 }
@@ -222,6 +224,47 @@ class McosRuntime internal constructor(
         }
 
         return ExecuteHandle(runId, ExecutionStatus.RUNNING)
+    }
+
+    /**
+     * Execute a read-only probe batch for the Agent loop (06-agent.md §11.3,
+     * RuntimeGateway.executeProbe port contract).
+     *
+     * Fail-closed semantics: resolve EVERY step first; if any step's
+     * `sideEffectClass` is not `read` — including unresolvable commands —
+     * the whole batch is rejected without executing anything. Only when the
+     * entire batch is read-only does it run through the normal executor
+     * pipeline (Stages 3→10), audited with source `AGENT_PROBE`. Read-class
+     * commands pass the permission kernel without confirmation
+     * (PermissionKernel: `sideEffectClass < write` never confirms), so probes
+     * are auto-run yet still rate-limited, egress-checked (n/a for reads)
+     * and audited exactly like any other invoke.
+     */
+    override suspend fun executeProbe(steps: List<Command>): List<CommandResult> {
+        // Pre-flight: every step must resolve to a `read`-class command.
+        for (step in steps) {
+            val resolved = registry.resolve(step.id)
+            if (resolved !is RegistryResolveResult.Found) {
+                return listOf(
+                    CommandResult.Err(
+                        code = com.morainet.mcos.runtime.core.error.McosErrorCode.UNKNOWN_COMMAND.name,
+                        message = "Probe rejected: unknown command '${step.id}' (probes must be read-only, 06 §11.3)",
+                        retryable = false
+                    )
+                )
+            }
+            if (resolved.entry.descriptor.sideEffectClass != SideEffectClass.read) {
+                return listOf(
+                    CommandResult.Err(
+                        code = com.morainet.mcos.runtime.core.error.McosErrorCode.PERMISSION_DENIED.name,
+                        message = "Probe rejected: '${step.id}' has sideEffectClass " +
+                            "'${resolved.entry.descriptor.sideEffectClass}' — only read steps auto-run (06 §11.3)",
+                        retryable = false
+                    )
+                )
+            }
+        }
+        return executor.executeSequence(steps, source = AGENT_PROBE_AUDIT_SOURCE)
     }
 
     /**
@@ -428,6 +471,7 @@ class McosRuntime internal constructor(
         startTime: Long,
         timestamp: Long,
         payload: Payload,
+        source: String,
     ) {
         eventBus.publish(runId, RuntimeEvent.RunStarted(runId, commands.firstOrNull()?.id, timestamp))
 
@@ -435,7 +479,7 @@ class McosRuntime internal constructor(
             eventBus.publish(runId, RuntimeEvent.StepStarted(runId, index, cmd.id))
 
             val stepStart = System.currentTimeMillis()
-            val result = executor.execute(cmd.id, cmd.args)
+            val result = executor.execute(cmd.id, cmd.args, source = source)
 
             val stepDuration = System.currentTimeMillis() - stepStart
             when (result) {
@@ -456,7 +500,7 @@ class McosRuntime internal constructor(
                                 // Retry exactly this command with a signed, run-scoped
                                 // AuthStamp so the permission kernel is bypassed for
                                 // the confirmed command only (08-security.md §5.2).
-                                when (val retry = executor.execute(cmd.id, cmd.args, auth = confirmations.mintAuthStamp(runId, cmd))) {
+                                when (val retry = executor.execute(cmd.id, cmd.args, auth = confirmations.mintAuthStamp(runId, cmd), source = source)) {
                                     is CommandResult.Ok -> {
                                         val retryDuration = System.currentTimeMillis() - stepStart
                                         eventBus.publish(
