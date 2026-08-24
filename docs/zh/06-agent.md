@@ -7,7 +7,7 @@
 >
 > **灵感来源：** Anthropic Claude Code / ChatGPT 工具调用 / Cursor Agent / Apple Intelligence App Intents —— 一个与提供商无关的编译器前端，将自然语言目标转化为 MCOS 命令 IR，并通过多轮智能体循环在写入前先进行探查。
 >
-> ✅/🟡 **实现状态：** **规划器（Planner）** 已远超 P1 基线交付——多 provider 注册表与健康探测（§17 V1）、回退链、端侧→云端隐私闸门（§13.2）、四种 PlanMode（NATIVE_TOOL_CALL / FREEFORM_JSON / CONSTRAINED 含 GBNF 语法注入 / LATENCY_TIERED 分层路由，§13.1）以及 NL→IR 黄金评测套件（§16）均已实现。仍待交付：多轮 **Agent 循环**（Plan→probe→replan，§11 —— P2 退出标准）未开始；语音 STT 与真正的端侧模型运行时仍属 P3。参见 [§17](#17-mvp-vs-v1) 与 [11-implementation-status.md](./11-implementation-status.md) §3。
+> ✅/🟡 **实现状态：** **规划器（Planner）** 已远超 P1 基线交付——多 provider 注册表与健康探测（§17 V1）、回退链、端侧→云端隐私闸门（§13.2）、四种 PlanMode（NATIVE_TOOL_CALL / FREEFORM_JSON / CONSTRAINED 含 GBNF 语法注入 / LATENCY_TIERED 分层路由，§13.1）以及 NL→IR 黄金评测套件（§16）均已实现。多轮 **Agent 循环**（§11 —— P2 退出标准）也已交付：`McosAgent` 实现了流式 `AgentBridge` 契约（[§11.4](#114-agentbridge-interface) 按实际实现）—— 经 `RuntimeGateway.executeProbe` 的读前缀探查、观察折叠、每回合上限、§14.1 重规划漂移防护，以及 Android 外壳的允许/拒绝对话框。仍待交付：语音 STT 与真正的端侧模型运行时仍属 P3。参见 [§17](#17-mvp-vs-v1) 与 [11-implementation-status.md](./11-implementation-status.md) §3。
 
 ---
 
@@ -684,6 +684,8 @@ sequenceDiagram
 
 当任何上限被触及时，智能体向 UI 返回 `Refuse(category = QUOTA, reason = "agent_cap_exceeded")` —— 它**不会**静默截断。用户可重新措辞或批准部分计划。
 
+**预算语义（按实际实现）：** 上限以**每回合**为作用域，并在回合内的重规划之间持续消耗——探查预算从不在两次 compile 之间重置，因此"3 次探查分布在 3 轮重规划里"与"单批 3 次探查"同样算作"预算耗尽"。新的 `runTurn` 从全新预算开始。
+
 ### 11.3 只读探查策略
 
 并非所有步骤都能自动运行。智能体**仅**自动执行 `sideEffectClass` 为 `read` 的步骤（依据 [01 §10](./01-architecture.md) `CommandDescriptor.sideEffectClass`）。其他一切等待显式用户确认：
@@ -697,29 +699,42 @@ sequenceDiagram
 
 智能体通过检查注册表视图中每个步骤解析后的 `CommandDescriptor.sideEffectClass` 来判定探查资格。若工作流混合了读和写步骤，智能体仅执行读前缀（直到第一个非读步骤或 `confirm`），然后暂停以重规划或确认。
 
+**按实际实现：** 探查经 `RuntimeGateway.executeProbe(steps)` 端口执行——每一步都支付完整的 Stage 3→10 管线成本并标记审计来源 `AGENT_PROBE`，因此审计轨迹能区分探查与用户发起的运行。内核实现采用整体失败关闭：任一步骤解析为非 `read` 类别或完全无法解析时整批失败，智能体无法借探查路径夹带副作用。
+
 ### 11.4 AgentBridge 接口
 
 ```kotlin
 interface AgentBridge {
-    suspend fun runTurn(sessionId: String, userMessage: String): AgentTurnResult
+    fun runTurn(sessionId: String, userMessage: String): Flow<AgentTurnResult>
+    suspend fun resume(sessionId: String, approved: Boolean): Flow<AgentTurnResult>
     suspend fun cancel(sessionId: String)
 }
 
 sealed class AgentTurnResult {
     data class PlanReady(val ir: ExecutionIr, val needsConfirmation: Boolean) : AgentTurnResult()
     data class Probing(val observation: String, val nextAction: String) : AgentTurnResult()
-    data class Clarify(val clarify: CompileResult.Clarify) : AgentTurnResult()
-    data class Refuse(val refuse: CompileResult.Refuse) : AgentTurnResult()
+    data class Clarify(val question: String) : AgentTurnResult()
+    data class Refuse(val category: String, val reason: String) : AgentTurnResult()
     data class Done(val summary: String) : AgentTurnResult()
+    data class Declined(val reason: String) : AgentTurnResult()
 }
 ```
 
-- `PlanReady` —— 智能体已有编译好的 IR；`needsConfirmation` 标记 UI 是否应在交予运行时前展示预览。
-- `Probing` —— 智能体运行了只读探查并处于循环中；`observation` 是它学到的内容，`nextAction` 是人类可读提示（"Replanning with 47 photos…"）。UI 将此显示为进度指示。
-- `Clarify` / `Refuse` —— 从底层 `Planner.compile` 转发（[03 §14.1](./03-runtime.md)）。
-- `Done` —— 工作流执行成功；`summary` 是面向用户的回顾。
+- `PlanReady` —— 智能体已有编译好的 IR **暂存**，等待用户经 `resume` 允许/拒绝。`needsConfirmation` 当且仅当任一步骤解析后的 `sideEffectClass != read` 时为 `true` —— 恰是 PermissionKernel 会盘问的步骤；纯读计划以 `false` 暂存。
+- `Probing` —— 智能体运行了一批只读探查且循环未闭合；`observation` 是折叠后的 `commandId → <紧凑 JSON>` 行（按 §4.0 提示预算每条截断至 2000 字符），`nextAction` 是人类可读提示（"Replanning with 47 photos…"）。UI 将此显示为进度指示。
+- `Clarify` / `Refuse` —— 从规划器转发为扁平字符串（不再包裹 `CompileResult`）：`Refuse.category` ∈ `QUOTA`（超上限）、`POLICY`（规划器拒绝）、`COMPILE_FAILED`（无 provider 产出计划）、`EXECUTION_FAILED` / `EXECUTION_TIMEOUT`（批准后的运行时错误）。
+- `Declined` —— 一切"用户说不"的终态：计划被拒（`"user_declined"`）、运行被取消，或无暂存计划（`"no_pending_plan"` —— 由此代替抛异常）。
+- `Done` —— 已批准的工作流执行成功；`summary` 是面向用户的回顾。
 
-`AgentBridge` 是 P2 接缝。在 P1（MVP）中，应用直接调用 `PlannerBridge.compile`，不存在 `AgentBridge` —— 每个目标都是一次性的。`AgentBridge` 接口在此定义，以便 P2 实现有契约可依。
+**流式形态（按实际实现）：** `runTurn` 在循环开放期间发射零个或多个 `Probing` 状态，随后**恰好一个**终态。取消收集 Flow（或调用 `cancel`）立即中止回合——用户取消始终优先（§11.2）。
+
+**`resume`（按实际实现）：** 确认步骤是一次独立调用。`resume(approved = true)` 将暂存 IR 以 `Payload.IrJson`（审计标记 `CHAT`）提交给运行时并发射 `Done`，运行失败则发射 `Refuse(EXECUTION_FAILED / EXECUTION_TIMEOUT)`；`resume(approved = false)` 发射 `Declined("user_declined")` 且不触碰运行时。暂存计划的消费是一次性的——第二次 `resume` 得到 `Declined("no_pending_plan")`。
+
+**读前缀算法（按实际实现）：** 解析后 `sideEffectClass` 为 `read` 的前导连续步骤；无法解析的命令终止前缀（视作非读——绝不自动运行）。若一次重规划原样重提刚被探查过的计划，即为**收敛**：循环停止并暂存该计划（纯读目标在此以 `needsConfirmation = false` 终止）。若重规划引入回合内此前计划都不曾出现的 `destructive`/`network` 命令，则强制 `Clarify` —— 即 §14.1 检测规则应用于循环自身的重规划。
+
+**生命周期事件（按实际实现）：** 在系统 EventBus（[03 §11](./03-runtime.md)）上发布 `agent.plan_ready` / `agent.probe` / `agent.replan` / `agent.declined` / `agent.executed` 信封（dot.case 命名，`source = "agent"`）。
+
+参考实现为 `McosAgent`（`mcos-llm`），它完全经 `RuntimeGateway` 端口驱动内核（[01 §3.2](./01-architecture.md) —— llm 与运行时门面是内核的平级客户端）。Android 外壳将其接在 AI Chat 卡片的 Agent 开关之后，`PlanReady` 时弹允许/拒绝对话框，CANCEL 控件映射到 `cancel`（§17）。P1（MVP）中应用直接调用 `PlannerBridge.compile` —— 每个目标都是一次性的；上述接口正是该循环所实现的契约。
 
 ---
 

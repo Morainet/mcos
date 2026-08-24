@@ -7,7 +7,7 @@
 >
 > **Inspiration:** Anthropic Claude Code / ChatGPT tool-use / Cursor Agent / Apple Intelligence App Intents — a provider-agnostic compiler front-end that turns natural-language goals into MCOS command IR, with a multi-turn agent loop that probes before it writes.
 >
-> ✅/🟡 **Implementation status:** the **Planner** has shipped well past the P1 baseline — multi-provider registry with health probing (§17 V1), fallback chains, the on-device→cloud privacy gate (§13.2), four PlanModes (NATIVE_TOOL_CALL / FREEFORM_JSON / CONSTRAINED incl. GBNF grammar injection / LATENCY_TIERED routing, §13.1) and the NL→IR golden eval suite (§16) are all implemented. Still open: the multi-turn **Agent loop** (Plan→probe→replan, §11 — a P2 exit criterion) is not started; voice STT and a real on-device model runtime remain P3. See [§17](#17-mvp-vs-v1) and [11-implementation-status.md](./11-implementation-status.md) §3.
+> ✅/🟡 **Implementation status:** the **Planner** has shipped well past the P1 baseline — multi-provider registry with health probing (§17 V1), fallback chains, the on-device→cloud privacy gate (§13.2), four PlanModes (NATIVE_TOOL_CALL / FREEFORM_JSON / CONSTRAINED incl. GBNF grammar injection / LATENCY_TIERED routing, §13.1) and the NL→IR golden eval suite (§16) are all implemented. The multi-turn **Agent loop** (§11 — a P2 exit criterion) has now shipped too: `McosAgent` implements the streaming `AgentBridge` contract ([§11.4](#114-agentbridge-interface) as-built) — read-prefix probing through `RuntimeGateway.executeProbe`, observation folding, per-turn caps, the §14.1 replan drift guard, and the Android shell's approve/deny dialog. Still open: voice STT and a real on-device model runtime remain P3. See [§17](#17-mvp-vs-v1) and [11-implementation-status.md](./11-implementation-status.md) §3.
 
 ---
 
@@ -684,6 +684,8 @@ The Agent loop is **not** an unbounded ReAct toy. Hard caps prevent runaway loop
 
 When any cap is hit, the Agent returns `Refuse(category = QUOTA, reason = "agent_cap_exceeded")` to the UI — it does **not** silently truncate. The user can rephrase or approve a partial plan.
 
+**Budget semantics (as-built):** caps are scoped **per turn** and consumed across replans within the turn — the probe budget is never reset between compiles, so 3 probes across 3 replans and 3 probes in one batch are both "the budget". A new `runTurn` starts fresh budgets.
+
 ### 11.3 Read-Only Probe Strategy
 
 Not all steps can auto-run. The Agent auto-executes **only** steps whose `sideEffectClass` is `read` (per [01 §10](./01-architecture.md) `CommandDescriptor.sideEffectClass`). Everything else waits for explicit user confirmation:
@@ -697,29 +699,42 @@ Not all steps can auto-run. The Agent auto-executes **only** steps whose `sideEf
 
 The Agent determines probe-eligibility by inspecting each step's resolved `CommandDescriptor.sideEffectClass` from the Registry view. If a workflow mixes read and write steps, the Agent executes only the read prefix (up to the first non-read step or a `confirm`), then pauses to replan or confirm.
 
+**As-built:** probes run through the `RuntimeGateway.executeProbe(steps)` port — each step pays the full Stage 3→10 pipeline cost and is audited with source `AGENT_PROBE`, so the audit trail distinguishes probes from user-initiated runs. The kernel implementation fails the whole batch closed when any step resolves to a non-`read` class or cannot be resolved at all, so the Agent cannot smuggle side effects through the probe path.
+
 ### 11.4 AgentBridge Interface
 
 ```kotlin
 interface AgentBridge {
-    suspend fun runTurn(sessionId: String, userMessage: String): AgentTurnResult
+    fun runTurn(sessionId: String, userMessage: String): Flow<AgentTurnResult>
+    suspend fun resume(sessionId: String, approved: Boolean): Flow<AgentTurnResult>
     suspend fun cancel(sessionId: String)
 }
 
 sealed class AgentTurnResult {
     data class PlanReady(val ir: ExecutionIr, val needsConfirmation: Boolean) : AgentTurnResult()
     data class Probing(val observation: String, val nextAction: String) : AgentTurnResult()
-    data class Clarify(val clarify: CompileResult.Clarify) : AgentTurnResult()
-    data class Refuse(val refuse: CompileResult.Refuse) : AgentTurnResult()
+    data class Clarify(val question: String) : AgentTurnResult()
+    data class Refuse(val category: String, val reason: String) : AgentTurnResult()
     data class Done(val summary: String) : AgentTurnResult()
+    data class Declined(val reason: String) : AgentTurnResult()
 }
 ```
 
-- `PlanReady` — the Agent has a compiled IR ready; `needsConfirmation` flags whether the UI should show a preview before handing to Runtime.
-- `Probing` — the Agent ran a read-only probe and is mid-loop; `observation` is what it learned, `nextAction` is a human-readable hint ("Replanning with 47 photos…"). The UI shows this as a progress indicator.
-- `Clarify` / `Refuse` — forwarded from the underlying `Planner.compile` ([03 §14.1](./03-runtime.md)).
-- `Done` — the workflow executed successfully; `summary` is a user-facing recap.
+- `PlanReady` — the Agent has a compiled IR **staged**, waiting for the user's approve/deny via `resume`. `needsConfirmation` is `true` iff any step's resolved `sideEffectClass != read` — exactly the steps the PermissionKernel would challenge; pure-read plans stage with `false`.
+- `Probing` — the Agent ran a read-only probe batch and is mid-loop; `observation` is the folded `commandId → <compact JSON>` lines (truncated at 2000 chars per the §4.0 prompt budget), `nextAction` a human-readable hint ("Replanning with 47 photos…"). The UI shows this as a progress indicator.
+- `Clarify` / `Refuse` — forwarded from the planner as flat strings (no `CompileResult` wrappers): `Refuse.category` ∈ `QUOTA` (cap exceeded), `POLICY` (planner refusal), `COMPILE_FAILED` (no provider produced a plan), `EXECUTION_FAILED` / `EXECUTION_TIMEOUT` (post-approval runtime errors).
+- `Declined` — every "the user said no" terminal: plan denied (`"user_declined"`), run cancelled, or no plan pending (`"no_pending_plan"` — emitted instead of throwing).
+- `Done` — the approved workflow executed successfully; `summary` is a user-facing recap.
 
-`AgentBridge` is the P2 seam. In P1 (MVP), the App calls `PlannerBridge.compile` directly and there is no `AgentBridge` — every goal is one-shot. The `AgentBridge` interface is defined here so P2 implementation has a contract to build against.
+**Streaming shape (as-built):** `runTurn` emits zero or more `Probing` states while the loop is open, then **exactly one** terminal state. Cancelling collection of the flow (or calling `cancel`) aborts the turn immediately — user cancel always wins (§11.2).
+
+**`resume` (as-built):** the confirm step is a separate call. `resume(approved = true)` submits the staged IR to the runtime as `Payload.IrJson` (audited `CHAT`) and emits `Done`, or `Refuse(EXECUTION_FAILED / EXECUTION_TIMEOUT)` if the run fails; `resume(approved = false)` emits `Declined("user_declined")` without touching the runtime. Consuming the pending plan is one-shot — a second `resume` gets `Declined("no_pending_plan")`.
+
+**Read-prefix algorithm (as-built):** the leading run of steps whose resolved `sideEffectClass` is `read`; an unresolvable command stops the prefix (treated as non-read — never auto-run). A replan that re-proposes exactly the plan whose prefix was just probed is **converged**: the loop stops looping and stages it (pure-read goals terminate here with `needsConfirmation = false`). A replan introducing a `destructive`/`network` command absent from every earlier plan of the turn forces `Clarify` — the §14.1 detection rule applied to the loop's own replans.
+
+**Lifecycle events (as-built):** `agent.plan_ready` / `agent.probe` / `agent.replan` / `agent.declined` / `agent.executed` envelopes (dot.case, `source = "agent"`) on the system EventBus ([03 §11](./03-runtime.md)).
+
+The reference implementation is `McosAgent` (`mcos-llm`), which drives the kernel exclusively through the `RuntimeGateway` port ([01 §3.2](./01-architecture.md) — llm and the runtime facade are sibling clients). The Android shell wires it behind the AI Chat card's Agent switch, with an approve/deny dialog on `PlanReady` and a CANCEL control mapped to `cancel` (§17). In P1 (MVP) the App called `PlannerBridge.compile` directly — every goal was one-shot; the interface above is the contract that loop implements.
 
 ---
 
