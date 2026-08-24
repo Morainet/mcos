@@ -534,7 +534,11 @@ Runtime 管线为 `parse → canonicalize → resolve → expand → validate �
 
 **阶段 5 —— ValidateInput（输入校验）。** JSON Schema Draft 2020-12 + MCOS 扩展。带路径限定的错误消息。
 
+**阶段 5.5 —— Rate Limit（限流）。** ✅ 已实现（`mcos-security` 的 `RateLimiter`，由 Executor 在校验与授权之间调用）。以 `(pluginId, sideEffectClass)` 为键；超限 → `RATE_LIMITED`，携带 `details.retryAfterMs` + `details.kind`。`UnlimitedRateLimiter` 是命名的退出选项。完整规范性参数集见 [08 §10](./08-security.md)。
+
 **阶段 6 —— Authorize（授权）。** 权限内核：`required = descriptor.permissions ∪ pluginPermissions ∪ globalPolicy`；`missing = required − grants` → `ConfirmationNeeded`（可询问时）或 `Denied`（粘性时）。在 `Granted` 时，铸造一个 `AuthStamp`：短生命周期、run 作用域、插件无法伪造。
+
+**阶段 6.5 —— Egress（出网检查，授权后）。** ✅ 已实现。对 `network` 副作用类的命令，invoke 之前对参数树中任意位置的 URL 字符串逐一经 `decideEgress`（[08 §12](./08-security.md)）检查。该阶段刻意排在**阶段 6 之后**，从而只从签名与权限覆盖均已验证过的戳中读取 `grantsUsed`——若放在授权之前，调用方可伪造携带 `network.<attacker-domain>` 作用域的戳通过出网检查（即 P0-S1 发现）。拒绝 → `PERMISSION_DENIED`，携带 `details.url` / `details.egressReason`。
 
 **阶段 7 —— Schedule（调度）。** 队列：`interactive`（CLI/Chat）、`workflow`（P2）、`background`（P2）、`expedited`（仅可被取消）。全局上限 4；每插件 2；`destructive` 1；IoT 控制按设备 id 串行。超上限 → `RATE_LIMITED`。
 
