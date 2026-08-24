@@ -5,7 +5,7 @@
 > **Status:** Draft RFC  
 > **RFC Number:** MCOS-RFC-0001  
 > **Version:** 0.1.0  
-> **Last Updated:** 2026-08-06  
+> **Last Updated:** 2026-08-24  
 > **Normative:** Yes  
 > **Depends on:** [00-vision.md](./00-vision.md), [01-architecture.md](./01-architecture.md)
 
@@ -706,7 +706,7 @@ IR 的 `meta` 对象携带的是**运行时来源信息**，而非业务数据�
 
 ### 10.2 失败信封
 
-> 🚧 **实现状态：** `retryable` 与 `details` 字段是本协议目标的一部分。目前尚无实现；未来的 `CommandResult.Err` 必须包含它们。
+> ✅ **实现状态：** `retryable` 与 `details` 已实现——`CommandResult.Err(code, message, retryable, details: JsonObject)` 位于 `mcos-sdk`，由 Executor 的结构化错误映射填充。见 [11-implementation-status.md](./11-implementation-status.md) §7。
 
 ```json
 {
