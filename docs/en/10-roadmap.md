@@ -2,12 +2,12 @@
 
 > **Status:** Draft  
 > **Version:** 0.1.0  
-> **Last Updated:** 2026-08-06  
+> **Last Updated:** 2026-08-24  
 > **Depends on:** [00-vision.md](./00-vision.md), [01-architecture.md](./01-architecture.md), [02-command-protocol.md](./02-command-protocol.md), [03-runtime.md](./03-runtime.md), [04-plugin-sdk.md](./04-plugin-sdk.md), [05-workflow.md](./05-workflow.md), [06-agent.md](./06-agent.md), [07-memory.md](./07-memory.md), [08-security.md](./08-security.md), [09-marketplace.md](./09-marketplace.md), [11-implementation-status.md](./11-implementation-status.md)
 
 > **Inspiration:** Apache infrastructure maturity model · Kubernetes phased delivery (alpha → beta → GA) · Rust edition roadmap · Stripe annual user-facing roadmap · TypeScript evolving-spec-with-code approach
 
-> 🚧 **Implementation status:** MCOS is currently at **P0 — spec-complete, code-absent**. The design document set (`docs/00`–`11`) is the P0 deliverable; no runtime/SDK/app code exists yet. P1 implementation begins with the Gradle multi-module skeleton + reference DSL parser. This roadmap describes the path from here to a platform — horizons are indicative, not contractual.
+> ✅ **Implementation status:** P1 (MVP) is complete and most of P2 has landed — 12 Gradle source modules, 937 tests, four built-in plugins, the marketplace client and `mcos-server` (see [11-implementation-status.md](./11-implementation-status.md)). Open P2 exit criteria: the multi-turn Agent loop and event-triggered recipes. Horizons below remain indicative, not contractual.
 
 ---
 
@@ -179,9 +179,9 @@ Each phase has a **single primary metric** that serves as its exit gate. The pha
 - [x] Architecture docs set (`docs/00`–`10`)
 - [x] Golden DSL fixtures directory (`docs/fixtures/01`–`08`, positive + negative)
 - [x] CONTRIBUTING + LICENSE (Apache-2.0)
-- [ ] Kotlin multi-module skeleton — **deferred to Phase 1** (a Phase-0 skeleton was prototyped and removed; the repo is now a clean design-only baseline)
+- [x] Kotlin multi-module skeleton — **delivered in P1** (12 source modules matching [REPOSITORIES.md](./REPOSITORIES.md))
 
-> Phase 0 design is complete. The first Phase-1 deliverable is the Gradle multi-module skeleton plus the reference DSL parser — see [11-implementation-status.md](./11-implementation-status.md) §6.
+> Phase 0 design is complete, and Phase 1 has since shipped the skeleton, the DSL parser and the full MVP pipeline — see [11-implementation-status.md](./11-implementation-status.md) §6 for the delivered list.
 
 ### 3.1 P0 Deliverable Inventory
 
@@ -195,8 +195,8 @@ Each phase has a **single primary metric** that serves as its exit gate. The pha
 | CONTRIBUTING (bilingual sync rules) | ✅ Complete | `CONTRIBUTING.md` |
 | CHANGELOG (expansion history) | ✅ Complete | `CHANGELOG.md` |
 | Implementation status matrix | ✅ Complete | [11-implementation-status.md](./11-implementation-status.md) |
-| Kotlin multi-module skeleton | ❌ Deferred to P1 | — |
-| Reference DSL parser | ❌ Deferred to P1 | — |
+| Kotlin multi-module skeleton | ✅ Delivered in P1 | 12 modules — [REPOSITORIES.md](./REPOSITORIES.md) |
+| Reference DSL parser | ✅ Delivered in P1 | `mcos-runtime-core` `parse/` (DslParser) |
 
 ### 3.2 P0 → P1 Transition Gates
 
@@ -748,11 +748,11 @@ Rules (enforced by [CONTRIBUTING.md](../../CONTRIBUTING.md)):
 
 ### 13.0 Action List
 
-1. Choose LICENSE (recommend Apache-2.0)  
-2. Create Gradle multi-module skeleton matching repo topology  
-3. Implement reference DSL parser + golden tests  
-4. Ship `hello.world` + `camera.capture` vertical slice  
-5. Dogfood daily CLI for one real personal workflow  
+1. ✅ Choose LICENSE (Apache-2.0) — committed as `LICENSE`
+2. ✅ Create Gradle multi-module skeleton matching repo topology — 12 modules live (see [REPOSITORIES.md](./REPOSITORIES.md))
+3. ✅ Implement reference DSL parser + golden tests — `DslParser` + 8 golden fixtures green ([02 §16](./02-command-protocol.md))
+4. ✅ Ship `hello.world` + `camera.capture` vertical slice — four built-in plugins run end-to-end on the Android shell with audit logging
+5. 🟡 Dogfood daily CLI for one real personal workflow — the Android demo covers the full flow; sustained daily dogfooding is the ongoing part
 
 ### 13.1 Acceptance Criteria
 
