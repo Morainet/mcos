@@ -234,14 +234,23 @@ class LlmPlanner(
      * via [PlanMode.FREEFORM_JSON] ([LlmProvider.chat] + DSL parsing).
      *
      * @param naturalLanguage The user's request, e.g. "take a photo and share it".
+     * @param extraContext Optional observation context folded into the user
+     *   message by the Agent loop's replan step (06 §11.0 item 2 "observation
+     *   folding"): probe results appended under a `[Probe observations]`
+     *   header so the next compile can condition on them. `null` for
+     *   one-shot planning.
      * @return [LlmPlan] with parsed commands or error details.
      */
-    suspend fun plan(naturalLanguage: String, mode: PlanMode? = null): LlmPlan {
+    suspend fun plan(
+        naturalLanguage: String,
+        mode: PlanMode? = null,
+        extraContext: String? = null,
+    ): LlmPlan {
         val tools = buildToolDescriptors()
         if (mode == PlanMode.LATENCY_TIERED) {
-            return planTiered(naturalLanguage, tools)
+            return planTiered(naturalLanguage, tools, extraContext)
         }
-        return runLlmChain(listOf(provider) + fallbacks, naturalLanguage, tools)
+        return runLlmChain(listOf(provider) + fallbacks, naturalLanguage, tools, extraContext)
     }
 
     /**
@@ -262,7 +271,11 @@ class LlmPlanner(
      * Telemetry: `utteranceClass`, `latencyMs` (06 §15.0) and a `route` label
      * are attached to the returned [LlmPlan].
      */
-    private suspend fun planTiered(naturalLanguage: String, tools: List<ToolDescriptor>): LlmPlan {
+    private suspend fun planTiered(
+        naturalLanguage: String,
+        tools: List<ToolDescriptor>,
+        extraContext: String? = null,
+    ): LlmPlan {
         val startNanos = System.nanoTime()
         val cls = classifier.classify(naturalLanguage, recipes)
 
@@ -319,7 +332,7 @@ class LlmPlanner(
 
         // 3. LLM chain ordered by latency tier.
         val chain = tieredChain(listOf(provider) + fallbacks, cls)
-        val llmPlan = runLlmChain(chain, naturalLanguage, tools)
+        val llmPlan = runLlmChain(chain, naturalLanguage, tools, extraContext)
         return withTelemetry(llmPlan, "llm:${llmPlan.providerId ?: "none"}")
     }
 
@@ -348,10 +361,16 @@ class LlmPlanner(
         chain: List<LlmProvider>,
         naturalLanguage: String,
         tools: List<ToolDescriptor>,
+        extraContext: String? = null,
     ): LlmPlan {
         var lastErr: LlmResponse.Err? = null
         var attemptedIds = mutableListOf<String>()
         var triedOnDevice = false
+
+        // Observation folding (06 §11.0 item 2): replan compiles see the
+        // probe results appended to the goal under a fixed header.
+        val userContent = if (extraContext.isNullOrBlank()) naturalLanguage
+        else "$naturalLanguage\n\n[Probe observations]\n$extraContext"
 
         for (p in chain) {
             // Privacy gate (06 §13.2): once an ON_DEVICE provider has been
@@ -380,12 +399,12 @@ class LlmPlanner(
                 PlanMode.CONSTRAINED ->
                     listOf(
                         ChatMessage("system", buildSystemPrompt(mode)),
-                        ChatMessage("user", naturalLanguage)
+                        ChatMessage("user", userContent)
                     )
                 else ->
                     listOf(
                         ChatMessage("system", buildSystemPrompt()),
-                        ChatMessage("user", naturalLanguage)
+                        ChatMessage("user", userContent)
                     )
             }
             when (mode) {
@@ -703,14 +722,19 @@ class LlmPlanner(
                 rawDsl = raw,
                 thoughts = "IR clarify: ${json["question"]?.jsonPrimitive?.content ?: "no question"}",
                 error = null,
-                providerId = providerId
+                providerId = providerId,
+                clarify = json["question"]?.jsonPrimitive?.content
             )
             "refuse" -> LlmPlan(
                 commands = emptyList(),
                 rawDsl = raw,
                 thoughts = "IR refuse: ${json["reason"]?.jsonPrimitive?.content ?: "no reason"}",
                 error = null,
-                providerId = providerId
+                providerId = providerId,
+                refuse = RefuseInfo(
+                    reason = json["reason"]?.jsonPrimitive?.content ?: "no reason",
+                    category = json["category"]?.jsonPrimitive?.content
+                )
             )
             else -> irParseError(raw, providerId, "unknown IR type: ${type ?: "<missing>"}")
         }

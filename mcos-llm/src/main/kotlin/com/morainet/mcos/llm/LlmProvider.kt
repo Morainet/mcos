@@ -72,10 +72,38 @@ data class LlmPlan(
      * `direct-parser`, `recipe:<id>`, `llm:<providerId>`, or a failure path.
      */
     val route: String? = null,
+
+    /**
+     * Clarifying question when the planner returned a `clarify` IR outcome
+     * (06 §7 / CONSTRAINED grammar). Non-null only for clarify results;
+     * [commands] is empty then. The Agent loop forwards this verbatim as
+     * [com.morainet.mcos.llm.AgentTurnResult.Clarify] (06 §11.4).
+     */
+    val clarify: String? = null,
+
+    /**
+     * Refusal payload when the planner returned a `refuse` IR outcome
+     * (06 §7). Non-null only for refuse results; [commands] is empty then.
+     * Forwarded by the Agent loop as `AgentTurnResult.Refuse` (06 §11.4).
+     */
+    val refuse: RefuseInfo? = null,
 ) {
     /** True if the plan contains executable commands without errors. */
     val isSuccess: Boolean get() = error == null && commands.isNotEmpty()
 }
+
+/**
+ * Structured refusal outcome of a planner compile (06 §7 `refuse` IR).
+ *
+ * @param reason Human-readable refusal reason (the IR `reason` field).
+ * @param category Coarse refusal category when the provider supplies one
+ *   (e.g. `QUOTA`, `CAPABILITY`); the CONSTRAINED grammar only carries
+ *   `reason`, so this stays nullable there.
+ */
+data class RefuseInfo(
+    val reason: String,
+    val category: String? = null,
+)
 
 /**
  * Capabilities an [LlmProvider] may advertise (06 §3.0).
