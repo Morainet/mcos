@@ -4,13 +4,13 @@
 
 > **状态:** 草案
 > **版本:** 0.1.0
-> **最后更新:** 2026-08-06
+> **最后更新:** 2026-08-24  
 > **依赖:** [01-architecture.md](./01-architecture.md)、[02-command-protocol.md](./02-command-protocol.md)、[03-runtime.md](./03-runtime.md)、[04-plugin-sdk.md](./04-plugin-sdk.md)、[05-workflow.md](./05-workflow.md)、[07-memory.md](./07-memory.md)、[08-security.md](./08-security.md)
 > **服务:** `mcos-server` marketplace 模块
 
 > **灵感来源:** npm registry · PyPI · Homebrew · Apple App Store review process · Certificate Transparency · VS Code Marketplace · F-Droid
 
-> 🚧 **实现状态:** 插件市场（Marketplace）是 **P3 交付物**（[11 §5](./11-implementation-status.md)）——它是 Ecosystem 阶段的压轴成果。P1 仅交付内置插件；P2 增加侧载调试安装；P3 交付公共索引、签名与配方商店。本文档现在（而非延后）撰写，是为了让那些必须与市场互操作的 P1–P2 设计——签名校验缓存（[03 §16.2](./03-runtime.md)）、`TrustLevel.MARKETPLACE_VERIFIED`（[08 §7](./08-security.md)）、插件下载目录布局（[03 §16.1](./03-runtime.md)）——能有一个具体的 P3 目标可以对齐。
+> 🟡 **实现状态:** **客户端侧已交付**——信任级别、工件 / blocklist / 配方签名验证、端到端安装管线（更新同意、持久化 + 重启重验与再水合、DexClassLoader 动态加载 `.mcos`）、配方商店 + 安装向导、用户举报与 opt-in 遥测，以及 Android 应用内 UI。剩余：公共索引**服务端**部署与真实运营方签名密钥（`TrustAnchors` 目前是 fail-closed 占位密钥）。状态见 [11-implementation-status.md](./11-implementation-status.md) §3。
 
 ---
 
