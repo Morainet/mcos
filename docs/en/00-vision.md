@@ -2,7 +2,7 @@
 
 > **Status:** Draft  
 > **Version:** 0.1.0  
-> **Last Updated:** 2026-08-06  
+> **Last Updated:** 2026-08-24  
 > **Audience:** Contributors, partners, and anyone evaluating Mobile Command OS as infrastructure
 
 ---
@@ -205,7 +205,7 @@ Local execution and local memory are default; cloud is sync/enhancement.
 
 ## 5. Repository Topology
 
-> The repository is currently **design-only** — no source modules exist yet. The topology below is the **target** layout; modules are introduced phase by phase per [10-roadmap.md](./10-roadmap.md).
+> ✅ **Implementation status:** P1 (MVP) and most of P2 are delivered — the topology below is the **actual** repository layout (12 Gradle source modules incl. `mcos-server`), not a target. Phase-by-phase history: [10-roadmap.md](./10-roadmap.md); per-subsystem status: [11-implementation-status.md](./11-implementation-status.md) §3.
 
 ```text
 mcos/
