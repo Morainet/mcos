@@ -91,7 +91,62 @@ interface HostServices {
      * event can trigger privileged automations (armed recipes, 05 §9.2).
      */
     val events: EventPublisher? get() = null
+
+    /**
+     * Optional per-plugin sandbox storage (04-plugin-sdk.md 6.1). All paths
+     * are relative to the calling plugin's namespaced directory — the
+     * runtime namespaces the view per execution, and implementations reject
+     * any path that would escape the sandbox root. Null on hosts without
+     * local storage; plugins must surface UNAVAILABLE rather than a fake
+     * success. Secrets MUST NOT be stored here (08-security.md 9) — use
+     * [SecureStore].
+     */
+    val sandbox: SandboxFileService? get() = null
 }
+
+/**
+ * Plugin-namespaced sandbox storage (04-plugin-sdk.md 6.1). Every path is
+ * relative to the calling plugin's own sandbox directory; escaping it is a
+ * hard error, not a fallback. The as-built API is byte-based rather than
+ * the spec's streaming flows — the drift is recorded in the spec.
+ */
+interface SandboxFileService {
+    /**
+     * Read a sandbox-relative file.
+     * @return the file's bytes, or null when it does not exist.
+     */
+    suspend fun read(path: String): ByteArray?
+
+    /**
+     * Write bytes to a sandbox-relative path, creating parent directories
+     * as needed. [append] concatenates instead of overwriting.
+     */
+    suspend fun write(path: String, data: ByteArray, append: Boolean = false)
+
+    /**
+     * Stat a sandbox-relative path.
+     * @return the entry, or null when it does not exist.
+     */
+    suspend fun stat(path: String): SandboxEntry?
+
+    /**
+     * Delete a sandbox-relative file or empty directory.
+     * @return true when something was deleted, false when absent.
+     */
+    suspend fun delete(path: String): Boolean
+
+    /** Non-recursive listing of a sandbox-relative directory (empty [dir] = the sandbox root). */
+    suspend fun list(dir: String): List<SandboxEntry>
+
+    /**
+     * Create a unique temporary file inside the sandbox.
+     * @return the temp file's sandbox-relative path.
+     */
+    suspend fun tempFile(prefix: String = "mcos", suffix: String = ".tmp"): String
+}
+
+/** A sandbox entry: [size] is null for directories. */
+data class SandboxEntry(val path: String, val isDir: Boolean, val size: Long?)
 
 /**
  * Publishes an event onto the system event bus (03-runtime.md §11.1).
