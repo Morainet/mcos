@@ -123,6 +123,23 @@ object TestMarketplace {
         put("args", buildJsonObject { put("text", text) })
     }
 
+    /**
+     * A one-command workflow carrying an event trigger envelope (05 §9.2) —
+     * `specFromJson` keeps the trigger, and the wizard arms it on install.
+     */
+    fun triggeredWorkflow(
+        commandId: String = "sys.notify",
+        eventType: String = "wifi.connected",
+    ): JsonObject = buildJsonObject {
+        put("type", "command")
+        put("commandId", commandId)
+        put("args", buildJsonObject { put("text", "static") })
+        put("trigger", buildJsonObject {
+            put("type", "event")
+            put("filter", buildJsonObject { put("type", eventType) })
+        })
+    }
+
     fun recipeEnvelope(
         recipeId: String = "hello.recipe",
         name: String = "Hello Recipe",

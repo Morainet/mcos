@@ -893,6 +893,8 @@ step throws McosException / returns Err
 
 触发器声明 `"resolveMemory": "fire"` 或 `"resolveMemory": "arm"`（默认 `"arm"`）。对很少变化的值（办公室 Wi-Fi SSID），首选 arming 期；对频繁变化的值（电量阈值），首选 fire 期。
 
+> ✅ **As-built（事件触发器已交付）：** `WorkflowJson.specFromJson` 将 `trigger` 信封解析为 `WorkflowSpec(trigger, step)`；`EventTriggerManager.arm()` 在 EventBus 上订阅，`McosRuntime.armTrigger(workflowId, preAuthorized)` / `disarmTrigger` / `armedTriggers()` 对外暴露。落地语义：**`filter.type` 映射为订阅的 `typePrefix`** —— 按 [03 §11.4](./03-runtime.md) 前缀匹配，`"wifi.connected"` 也能匹配 `"wifi.connected.5g"`。**数组型 memory 引用按成员资格匹配**（事件值 ∈ 存储列表 —— 即上面 `wifiSsids` 的用例）。解析时缺失的 `$memory` 路径仅使 filter **不匹配**（审计 `warn`，非错误；[07 §13.1](./07-memory.md)）；`resolveMemory: "arm"` 下缺失路径 arm 一个永不匹配的哨兵值，`"fire"` 下跳过该事件。触发受 `maxBackgroundFiresPerHour`（默认 20，[08 §10.0](./08-security.md)）限流，审计为 `workflow.trigger_fired`；事件载荷成为 `__input`（[§6.2](#62-input)），每个步骤以 source `EVENT` 运行，适用更严的确认矩阵（[08 §4.0](./08-security.md)）。预授权 arm（`armTrigger(..., preAuthorized = true)`，[§10](#10-确认集成confirmation-integration)）为运行铸造一枚覆盖 read/write 步权限的 `AuthStamp` 使其静默执行，而 network/destructive 步仍会弹确认。Android 市场向导在安装时即以预授权方式 arm 事件配方（向导即同意时刻），卸载其依赖的插件时 disarm。`sys.event.emit {type, payload}`（[04 §17](./04-plugin-sdk.md)）是发射演示事件的参考命令。
+
 ### 9.3 调度（Schedule）
 
 ```json
@@ -924,6 +926,8 @@ step throws McosException / returns Err
 | `fire-and-forget-if-window` | 仅当唤醒时仍在同一 cron 窗口内才触发（如对每小时 cron，若仍在同一小时内则触发）。否则跳过。 |
 
 若调度被错过且 `misfirePolicy` 为 `"skip"`，引擎发出 `TRIGGER_MISFIRE` 审计事件（信息性，非错误），让用户看到某个自动化没有运行。调度与 `AlarmManager` / `WorkManager` 集成以满足 Doze 合规（[03 §15.1](./03-runtime.md) 的前台服务规则适用于带 `control`/`destructive` 步骤的触发型工作流）。
+
+> ✅ **As-built（仅解析）：** 调度触发器由 `specFromJson` 解析并校验，但 `EventTriggerManager.arm()` 会拒绝它（`"schedule_triggers_unsupported"`）—— arming 需要 V1 规划的 `AlarmManager`/`WorkManager` 集成。上面的 `TRIGGER_MISFIRE` 策略同样尚未发出。
 
 ### 9.4 语音（Voice）
 

@@ -825,6 +825,8 @@ The `resolveMemory` field controls **when** the Memory path is resolved:
 
 If the Memory path does not exist at resolution time, the filter evaluates to `false` (the trigger does not fire) and a warning is logged to Audit. This is **not** an error — the workflow simply doesn't match until the Memory entry exists.
 
+> ✅ **As-built:** shipped in `EventTriggerManager` exactly as specified — missing path → filter `false` + audit `warn` (`workflow.trigger_memory_missing`), never an error; `"arm"` resolves once at subscription time, `"fire"` re-reads per event. When the stored value is an **array**, the match is by membership (event value ∈ array), per [05 §9.2](./05-workflow.md).
+
 ### 13.2 `__memory.*` `$ref` in Workflow Args
 
 Workflow step args can reference Memory via the `__memory` source token ([05 §6.0](./05-workflow.md)):

@@ -363,6 +363,7 @@ interface HostServices {
     val deviceInfo: DeviceInfoService?        // §6.8
     val clipboard: ClipboardService?          // §6.9
     val haptics: HapticsService?              // §6.10
+    val events: EventPublisher?               // §6.11
 }
 ```
 
@@ -530,6 +531,18 @@ interface HapticsService {
 ```
 
 无震动器的宿主保持 `null` → 命令报 `UNAVAILABLE`。曾经的「假成功」（不触达硬件即返回 `vibrated`）已被移除 —— 审计轨迹必须只记录真实发生的震动。Android 实现走 `VibratorManager`（API 31+）/ 旧版 `Vibrator` 兼容分支。
+
+### 6.11 `EventPublisher` —— EventBus 发布能力（v0.x 增补）
+
+支撑 `sys.event.emit`，让插件可发出领域事件（`wifi.connected`、`user.arrived.home`）供事件触发配方（[05 §9.2](./05-workflow.md)）订阅。
+
+```kotlin
+interface EventPublisher {
+    suspend fun publish(type: String, payload: JsonObject)
+}
+```
+
+Runtime 在存在共享 EventBus（[03 §11](./03-runtime.md)）时自动接线；发布**不是**特权总线旁路 —— 发出的事件信封携带发布上下文，消费方（触发器、Agent 循环）各自套用自己的过滤器。无总线的宿主保持 `null` → `sys.event.emit` 报 `UNAVAILABLE`，绝不假成功。
 
 ---
 
@@ -1053,7 +1066,7 @@ class HelloWorldHandler : CommandHandler {
 | 插件 | 命令（示意） | 目标阶段 |
 |--------|-------------------------|--------------|
 | `example.hello` | `hello.world` | P1（参考） |
-| `mcos.plugin.system` | `sys.notify`, `sys.share`, `sys.clipboard`, `sys.openUrl`, `sys.vibrate`, `sys.device.battery`, `sys.device.wifi`, `sys.device.screen`, `sys.device.volume`, `sys.device.location`, `sys.device.brightness` | P1 |
+| `mcos.plugin.system` | `sys.notify`, `sys.share`, `sys.clipboard`, `sys.openUrl`, `sys.vibrate`, `sys.device.battery`, `sys.device.wifi`, `sys.device.screen`, `sys.device.volume`, `sys.device.location`, `sys.device.brightness`, `sys.event.emit` | P1（+`sys.event.emit` P2） |
 | `mcos.plugin.camera` | `camera.capture`, `camera.scan` | P1 |
 | `mcos.plugin.files` | `file.list`, `file.search`, `photo.search`, `photo.compress` | P1 |
 | `mcos.plugin.iot` | `home.*`, `iot.*` | P2 |

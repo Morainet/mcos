@@ -14,7 +14,11 @@ import com.morainet.mcos.marketplace.RecipeInstallOutcome
 import com.morainet.mcos.marketplace.RecipeInstallPlan
 import com.morainet.mcos.marketplace.UninstallResult
 import com.morainet.mcos.marketplace.UpdateResult
+import com.morainet.mcos.runtime.core.registry.ResolveResult
+import com.morainet.mcos.runtime.core.workflow.Trigger
+import com.morainet.mcos.runtime.core.workflow.TriggerArmResult
 import com.morainet.mcos.runtime.core.workflow.WorkflowJson
+import com.morainet.mcos.runtime.core.workflow.WorkflowStep
 import com.morainet.mcos.sdk.McosPlugin
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -26,6 +30,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 
 /** Secure-store key holding the marketplace index base URL. */
 private const val MARKETPLACE_URL = "marketplace_url"
@@ -332,12 +337,19 @@ class MarketplaceViewModel : ViewModel() {
                 val result = d.marketplace.installer.uninstallPackage(packageId)
                 _uiState.update {
                     when (result) {
-                        UninstallResult.Done -> it.copy(
-                            installResults = it.installResults - packageId,
-                            installStates = it.installStates - packageId,
-                            registryRevision = it.registryRevision + 1,
-                            message = "Uninstalled $packageId",
-                        )
+                        UninstallResult.Done -> {
+                            // An armed trigger whose workflow used the removed
+                            // package's commands would fire and fail on every
+                            // matching event — disarm it with the package.
+                            val disarmed = disarmTriggersMissingCommands(d)
+                            it.copy(
+                                installResults = it.installResults - packageId,
+                                installStates = it.installStates - packageId,
+                                registryRevision = it.registryRevision + 1,
+                                message = "Uninstalled $packageId" +
+                                    if (disarmed.isEmpty()) "" else " (disarmed trigger: ${disarmed.joinToString()})",
+                            )
+                        }
                         is UninstallResult.Failed -> it.copy(
                             error = "Uninstall failed (${result.code}): ${result.reason}"
                         )
@@ -434,9 +446,13 @@ class MarketplaceViewModel : ViewModel() {
 
     /**
      * Validate the wizard bindings and, on success, decode the compiled
-     * workflow and register it under the recipe id so it can be triggered by
-     * name later (§8.3 — registration into the local workflow DB). Not an
-     * install-and-run: activation is a deliberate later step.
+     * workflow (trigger included) and register it under the recipe id so it
+     * can be triggered by name later (§8.3 — registration into the local
+     * workflow DB). Not an install-and-run: activation is a deliberate later
+     * step — except that an *event* trigger is armed immediately (05 §9.2):
+     * the wizard's permissions/inputs pages were the consent moment, so the
+     * recipe arms pre-authorized (05 §10), same reasoning as the
+     * install-dialog grants in [PluginPermissionBootstrap].
      */
     fun submitRecipe(bindings: Map<String, String>) {
         val active = _uiState.value.recipePlan ?: return
@@ -455,11 +471,11 @@ class MarketplaceViewModel : ViewModel() {
                     it.copy(error = "Fill required field(s): " + outcome.prompts.joinToString { p -> p.label ?: p.key })
                 }
             is RecipeInstallOutcome.Installed -> {
-                val step = WorkflowJson.fromJson(outcome.recipe.workflow)
-                if (step == null) {
+                val spec = WorkflowJson.specFromJson(outcome.recipe.workflow)
+                if (spec == null) {
                     _uiState.update { it.copy(error = "Recipe workflow could not be decoded") }
                 } else {
-                    d.runtime.workflowStore().register(outcome.recipe.recipeId, step)
+                    d.runtime.workflowStore().registerSpec(outcome.recipe.recipeId, spec)
                     _uiState.update {
                         it.copy(
                             recipePlan = null,
@@ -467,6 +483,21 @@ class MarketplaceViewModel : ViewModel() {
                             message = "Installed recipe “${outcome.recipe.name}” " +
                                 "(workflow '${outcome.recipe.recipeId}')",
                         )
+                    }
+                    val eventTrigger = spec.trigger as? Trigger.Event
+                    if (eventTrigger != null) {
+                        viewModelScope.launch {
+                            val eventType = eventTrigger.filter["type"]
+                                ?.jsonPrimitive?.contentOrNull ?: "event"
+                            when (val arm = d.runtime.armTrigger(outcome.recipe.recipeId, preAuthorized = true)) {
+                                is TriggerArmResult.Armed -> _uiState.update {
+                                    it.copy(message = "${it.message} — armed on $eventType")
+                                }
+                                is TriggerArmResult.Rejected -> _uiState.update {
+                                    it.copy(error = "Trigger not armed (${arm.reason})")
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -558,6 +589,37 @@ class MarketplaceViewModel : ViewModel() {
     private suspend fun activatePlugin(d: AppDeps, instance: McosPlugin?) {
         instance?.onLoad(d.hostServices)
         instance?.let { PluginPermissionBootstrap.grantAll(d.permissionKernel, it) }
+    }
+
+    /**
+     * Disarm armed triggers whose workflow depends on commands that no longer
+     * resolve in the registry (the uninstalled package provided them), or
+     * whose spec vanished from the store. Returns the disarmed workflow ids.
+     */
+    private fun disarmTriggersMissingCommands(d: AppDeps): List<String> {
+        val disarmed = mutableListOf<String>()
+        d.runtime.armedTriggers().forEach { workflowId ->
+            val spec = d.runtime.workflowStore().spec(workflowId)
+            val missing = spec == null || collectCommandIds(spec.step).any {
+                d.registry.resolve(it) !is ResolveResult.Found
+            }
+            if (missing && d.runtime.disarmTrigger(workflowId)) disarmed += workflowId
+        }
+        return disarmed
+    }
+
+    /** Every command id a step tree can reach (trigger-dependency sweep). */
+    private fun collectCommandIds(step: WorkflowStep): List<String> = when (step) {
+        is WorkflowStep.Command -> listOf(step.commandId)
+        is WorkflowStep.Sequential -> step.steps.flatMap(::collectCommandIds)
+        is WorkflowStep.Parallel -> step.steps.flatMap(::collectCommandIds)
+        is WorkflowStep.If ->
+            collectCommandIds(step.thenStep) +
+                (step.elseStep?.let(::collectCommandIds) ?: emptyList())
+        is WorkflowStep.Loop -> collectCommandIds(step.body)
+        is WorkflowStep.Retry -> collectCommandIds(step.step)
+        is WorkflowStep.Try ->
+            collectCommandIds(step.step) + step.compensation.flatMap(::collectCommandIds)
     }
 
     private fun jsonToPlain(element: JsonElement?): String? = when (element) {

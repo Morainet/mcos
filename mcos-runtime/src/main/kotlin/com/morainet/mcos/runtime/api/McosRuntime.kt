@@ -13,6 +13,7 @@ import com.morainet.mcos.runtime.core.api.RuntimeGateway
 import com.morainet.mcos.runtime.core.api.Source
 import com.morainet.mcos.runtime.core.api.StubHostServices
 import com.morainet.mcos.runtime.core.events.EventBus
+import com.morainet.mcos.runtime.core.events.EventEnvelope
 import com.morainet.mcos.runtime.core.events.TypedEventBus
 import com.morainet.mcos.runtime.core.executor.Command
 import com.morainet.mcos.runtime.core.executor.Executor
@@ -56,6 +57,8 @@ import com.morainet.mcos.runtime.core.workflow.WorkflowStep
 import com.morainet.mcos.runtime.core.workflow.WorkflowStore
 import com.morainet.mcos.sdk.AuthStamp
 import com.morainet.mcos.sdk.CommandResult
+import com.morainet.mcos.sdk.EventPublisher
+import com.morainet.mcos.sdk.HostServices
 import com.morainet.mcos.sdk.SideEffectClass
 import com.morainet.mcos.sdk.MemoryFacade
 import kotlinx.coroutines.*
@@ -1010,7 +1013,28 @@ class McosRuntime internal constructor(
                 enterprisePolicy = enterprisePolicySource,
                 auditLog = auditLog,
             )
-            val exec = executor ?: Executor(reg, StubHostServices(memory), security)
+            val exec = executor ?: Executor(
+                reg,
+                // The default services expose the event-bus publisher so
+                // sys.event.emit (03 §11 demo event source) works out of the
+                // box. Hosts injecting their own Executor attach (or omit)
+                // the capability on their own HostServices.
+                object : HostServices by StubHostServices(memory) {
+                    override val events = object : EventPublisher {
+                        override suspend fun publish(type: String, payload: JsonObject) {
+                            eventBus.publishEvent(
+                                EventEnvelope(
+                                    type = type,
+                                    timestamp = System.currentTimeMillis(),
+                                    payload = payload,
+                                    source = "sys.event.emit",
+                                )
+                            )
+                        }
+                    }
+                },
+                security,
+            )
 
             // The workflow engine defaults to the same executor, so control
             // flow steps and flat commands share one execution pipeline.

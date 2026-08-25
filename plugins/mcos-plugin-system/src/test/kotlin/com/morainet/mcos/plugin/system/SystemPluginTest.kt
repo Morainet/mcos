@@ -3,6 +3,7 @@ package com.morainet.mcos.plugin.system
 import com.morainet.mcos.sdk.*
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.*
+import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.test.*
 
 /**
@@ -38,15 +39,16 @@ class SystemPluginTest {
     }
 
     @Test
-    fun `S2-manifest declares all 12 system commands`() {
+    fun `S2-manifest declares all 13 system commands`() {
         val commands = plugin.manifest.commands.map { it.id }.toSet()
-        assertEquals(12, commands.size)
+        assertEquals(13, commands.size)
         assertTrue(commands.contains("sys.notify"))
         assertTrue(commands.contains("sys.share"))
         assertTrue(commands.contains("sys.clipboard"))
         assertTrue(commands.contains("sys.openUrl"))
         assertTrue(commands.contains("sys.intent.start"))
         assertTrue(commands.contains("sys.vibrate"))
+        assertTrue(commands.contains("sys.event.emit"))
         assertTrue(commands.contains("sys.device.battery"))
         assertTrue(commands.contains("sys.device.wifi"))
         assertTrue(commands.contains("sys.device.screen"))
@@ -69,15 +71,16 @@ class SystemPluginTest {
     // ═══════════════════════════════════════════════════════════════
 
     @Test
-    fun `S4-handlers returns all 12 command handlers`() {
+    fun `S4-handlers returns all 13 command handlers`() {
         val handlers = plugin.handlers()
-        assertEquals(12, handlers.size)
+        assertEquals(13, handlers.size)
         assertTrue(handlers.containsKey("sys.notify"))
         assertTrue(handlers.containsKey("sys.share"))
         assertTrue(handlers.containsKey("sys.clipboard"))
         assertTrue(handlers.containsKey("sys.openUrl"))
         assertTrue(handlers.containsKey("sys.intent.start"))
         assertTrue(handlers.containsKey("sys.vibrate"))
+        assertTrue(handlers.containsKey("sys.event.emit"))
         assertTrue(handlers.containsKey("sys.device.battery"))
         assertTrue(handlers.containsKey("sys.device.wifi"))
         assertTrue(handlers.containsKey("sys.device.screen"))
@@ -90,7 +93,7 @@ class SystemPluginTest {
     fun `S5-each handler is a unique instance`() {
         val handlers = plugin.handlers()
         val instances = handlers.values.toSet()
-        assertEquals(12, instances.size, "each handler should be a distinct instance")
+        assertEquals(13, instances.size, "each handler should be a distinct instance")
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -694,6 +697,65 @@ class SystemPluginTest {
 
     // ─── Helpers ──────────────────────────────────────────────────────────
 
+    // ═══════════════════════════════════════════════════════════════
+    // S47-S49: sys.event.emit (03 §11 demo event source)
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `S47-sys_event_emit publishes type and payload to the bus`() = runBlocking {
+        val (capable, services) = capablePlugin()
+        val handler = capable.handlers()["sys.event.emit"]!!
+        val args = buildJsonObject {
+            put("type", JsonPrimitive("wifi.connected"))
+            put("payload", buildJsonObject { put("ssid", JsonPrimitive("Office")) })
+        }
+
+        val result = handler.invoke(execCtx("sys.event.emit", args))
+
+        assertTrue(result is CommandResult.Ok)
+        val value = (result as CommandResult.Ok).value!!.jsonObject
+        assertEquals("emitted", value["status"]!!.jsonPrimitive.content)
+        assertEquals("wifi.connected", value["type"]!!.jsonPrimitive.content)
+        assertEquals(1, services.fakeEvents.published.size)
+        assertEquals("wifi.connected", services.fakeEvents.published[0].first)
+        assertEquals(
+            "Office",
+            services.fakeEvents.published[0].second["ssid"]!!.jsonPrimitive.content,
+        )
+    }
+
+    @Test
+    fun `S48-sys_event_emit without the events capability surfaces UNAVAILABLE`() = runBlocking {
+        // The base stub keeps events null (like the default HostServices).
+        val handler = plugin.handlers()["sys.event.emit"]!!
+
+        val ex = assertFailsWith<McosException> {
+            handler.invoke(execCtx("sys.event.emit", buildJsonObject { put("type", JsonPrimitive("x.y")) }))
+        }
+        assertEquals("UNAVAILABLE", ex.code)
+    }
+
+    @Test
+    fun `S49-sys_event_emit rejects a missing or blank type`() = runBlocking {
+        val (capable, _) = capablePlugin()
+        val handler = capable.handlers()["sys.event.emit"]!!
+
+        val missing = assertFailsWith<McosException> {
+            handler.invoke(execCtx("sys.event.emit", JsonObject(emptyMap())))
+        }
+        assertEquals("SCHEMA_VIOLATION", missing.code)
+
+        val blank = assertFailsWith<McosException> {
+            handler.invoke(
+                execCtx(
+                    "sys.event.emit",
+                    buildJsonObject { put("type", JsonPrimitive("  ")) },
+                )
+            )
+        }
+        assertEquals("SCHEMA_VIOLATION", blank.code)
+    }
+
     private fun execCtx(commandId: String, args: JsonObject): ExecutionContext {
         return ExecutionContext(
             runId = "test-run-1",
@@ -753,9 +815,18 @@ class CapableSystemHostServices : StubSystemHostServices() {
     val fakeDeviceInfo = FakeDeviceInfoService()
     val fakeClipboard = FakeClipboardService()
     val fakeHaptics = FakeHapticsService()
+    val fakeEvents = FakeEventPublisher()
     override val deviceInfo: DeviceInfoService get() = fakeDeviceInfo
     override val clipboard: ClipboardService get() = fakeClipboard
     override val haptics: HapticsService get() = fakeHaptics
+    override val events: EventPublisher get() = fakeEvents
+}
+
+class FakeEventPublisher : EventPublisher {
+    val published = CopyOnWriteArrayList<Pair<String, JsonObject>>()
+    override suspend fun publish(type: String, payload: JsonObject) {
+        published.add(type to payload)
+    }
 }
 
 class FakeDeviceInfoService : DeviceInfoService {

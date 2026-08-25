@@ -825,6 +825,8 @@ Entry: places.office.address = "北京市朝阳区..."
 
 若记忆路径在解析时不存在，过滤器求值为 `false`（触发器不触发）并记录警告到审计。这**不是**错误 —— workflow 只是在记忆条目存在之前不匹配。
 
+> ✅ **As-built：** 已在 `EventTriggerManager` 中按规范落地 —— 路径缺失 → 过滤器 `false` + 审计 `warn`（`workflow.trigger_memory_missing`），绝非错误；`"arm"` 在订阅时解析一次，`"fire"` 逐事件重读。当存储值为**数组**时按成员资格匹配（事件值 ∈ 数组），见 [05 §9.2](./05-workflow.md)。
+
 ### 13.2 Workflow 参数中的 `__memory.*` `$ref`
 
 Workflow 步骤参数可经由 `__memory` 源 token 引用记忆（[05 §6.0](./05-workflow.md)）：

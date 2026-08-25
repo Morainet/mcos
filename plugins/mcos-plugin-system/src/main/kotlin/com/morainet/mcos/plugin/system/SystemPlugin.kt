@@ -7,7 +7,8 @@ import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * System commands plugin — sys.notify, sys.share, sys.clipboard, sys.openUrl, sys.intent.start, sys.vibrate,
- * plus sys.device.battery, sys.device.wifi, sys.device.screen, sys.device.volume, sys.device.location, sys.device.brightness.
+ * sys.event.emit, plus sys.device.battery, sys.device.wifi, sys.device.screen, sys.device.volume,
+ * sys.device.location, sys.device.brightness.
  * Matches [04-plugin-sdk.md 17].
  */
 class SystemPlugin : McosPlugin {
@@ -157,6 +158,28 @@ class SystemPlugin : McosPlugin {
                 }
             ),
             CommandManifestEntry(
+                id = "sys.event.emit", version = "1.0.0",
+                title = "Emit Event",
+                description = "Publish an event onto the system event bus (03 §11); can trigger armed recipes (05 §9.2)",
+                sideEffectClass = SideEffectClass.write,
+                examples = listOf("""sys.event.emit(type="wifi.connected", payload={ssid: "Office"})"""),
+                inputSchema = buildJsonObject {
+                    put("type", JsonPrimitive("object"))
+                    put("required", buildJsonArray { add(JsonPrimitive("type")) })
+                    put("properties", buildJsonObject {
+                        put("type", buildJsonObject {
+                            put("type", JsonPrimitive("string"))
+                            put("minLength", JsonPrimitive(1))
+                            put("description", JsonPrimitive("Dotted event type, e.g. wifi.connected"))
+                        })
+                        put("payload", buildJsonObject {
+                            put("type", JsonPrimitive("object"))
+                            put("description", JsonPrimitive("Structured event payload delivered to subscribers"))
+                        })
+                    })
+                }
+            ),
+            CommandManifestEntry(
                 id = "sys.device.battery", version = "1.0.0",
                 title = "Battery Info",
                 description = "Query device battery level, charging status, and temperature",
@@ -245,6 +268,7 @@ class SystemPlugin : McosPlugin {
         "sys.openUrl" to OpenUrlHandler(),
         "sys.intent.start" to IntentStartHandler(),
         "sys.vibrate" to VibrateHandler(),
+        "sys.event.emit" to EmitEventHandler(),
         "sys.device.battery" to BatteryHandler(),
         "sys.device.wifi" to WifiHandler(),
         "sys.device.screen" to ScreenHandler(),
@@ -419,6 +443,29 @@ class SystemPlugin : McosPlugin {
                 value = buildJsonObject {
                     put("status", JsonPrimitive("vibrated"))
                     put("durationMs", JsonPrimitive(duration))
+                }
+            )
+        }
+    }
+
+    inner class EmitEventHandler : CommandHandler {
+        override suspend fun invoke(ctx: ExecutionContext): CommandResult {
+            val args = ctx.args.jsonObject
+            val type = args["type"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+                ?: throw McosException("SCHEMA_VIOLATION", "Missing required arg: type")
+            val payload = args["payload"] as? JsonObject ?: JsonObject(emptyMap())
+
+            val events = services?.events
+                // No fake success: a host without the event-bus capability
+                // must surface UNAVAILABLE (P0-F1 policy) — an Ok here would
+                // make the audit trail believe subscribed automations ran.
+                ?: throw McosException("UNAVAILABLE", "Event bus is not available on this host")
+            events.publish(type, payload)
+
+            return CommandResult.Ok(
+                value = buildJsonObject {
+                    put("status", JsonPrimitive("emitted"))
+                    put("type", JsonPrimitive(type))
                 }
             )
         }

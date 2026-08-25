@@ -2,12 +2,12 @@
 
 > **Status:** Draft  
 > **Version:** 0.1.0  
-> **Last Updated:** 2026-08-24  
+> **Last Updated:** 2026-08-25  
 > **Depends on:** [00-vision.md](./00-vision.md), [01-architecture.md](./01-architecture.md), [02-command-protocol.md](./02-command-protocol.md), [03-runtime.md](./03-runtime.md), [04-plugin-sdk.md](./04-plugin-sdk.md), [05-workflow.md](./05-workflow.md), [06-agent.md](./06-agent.md), [07-memory.md](./07-memory.md), [08-security.md](./08-security.md), [09-marketplace.md](./09-marketplace.md), [11-implementation-status.md](./11-implementation-status.md)
 
 > **Inspiration:** Apache infrastructure maturity model · Kubernetes phased delivery (alpha → beta → GA) · Rust edition roadmap · Stripe annual user-facing roadmap · TypeScript evolving-spec-with-code approach
 
-> ✅ **Implementation status:** P1 (MVP) is complete and most of P2 has landed — 12 Gradle source modules, 937 tests, four built-in plugins, the marketplace client and `mcos-server` (see [11-implementation-status.md](./11-implementation-status.md)). Open P2 exit criteria: the multi-turn Agent loop and event-triggered recipes. Horizons below remain indicative, not contractual.
+> ✅ **Implementation status:** P1 (MVP) is complete and **all P2 exit criteria have landed** ([§5.6.1](#561-p2-exit-criteria-checklist)) — 12 Gradle source modules, 1028 tests, four built-in plugins, the marketplace client and `mcos-server` (see [11-implementation-status.md](./11-implementation-status.md)). The last two open criteria — the multi-turn Agent loop and event-triggered recipes — shipped on 2026-08-24/25; remaining P2 rows (IoT / Intent plugin ecosystem) are ecosystem work, not exit criteria. Horizons below remain indicative, not contractual.
 
 ---
 
@@ -452,12 +452,12 @@ Event: SSID=Office → suggest/run vpn.connect (pre-authorized recipe)
 
 #### 5.6.1 P2 Exit Criteria Checklist
 
-- [ ] **NL→goal accuracy** — p85 accuracy ≥ 80% on golden NL test set ([06 §16](./06-agent.md))
-- [ ] **Workflow parallel** — the "movie mode" multi-device parallel scene executes correctly
-- [ ] **Memory resolution** — `导航回公司` resolves "office" from Memory without user re-specifying
-- [ ] **Multi-provider** — ≥ 3 LLM providers interchangeable via Settings
-- [ ] **Agent loop** — multi-turn probe→replan→execute works for ≥ 3-step goals ([06 §11](./06-agent.md))
-- [ ] **Event trigger** — `wifi.connected` event triggers a pre-authorized recipe end-to-end
+- [x] **NL→goal accuracy** — p85 accuracy ≥ 80% on golden NL test set ([06 §16](./06-agent.md)) — NL→IR golden suite green (100% structural accuracy on the shipped fixture set)
+- [x] **Workflow parallel** — the "movie mode" multi-device parallel scene executes correctly — `WorkflowEngineTest` W21 home-movie scenario
+- [x] **Memory resolution** — `导航回公司` resolves "office" from Memory without user re-specifying — `resolveRef` fuzzy + §8.3 named-entity merge
+- [x] **Multi-provider** — ≥ 3 LLM providers interchangeable via Settings — `LlmProviderRegistry` + health/fallback chain
+- [x] **Agent loop** — multi-turn probe→replan→execute works for ≥ 3-step goals ([06 §11](./06-agent.md)) — `McosAgent` (2026-08-24)
+- [x] **Event trigger** — `wifi.connected` event triggers a pre-authorized recipe end-to-end — `EventTriggerManager` + pre-auth stamps + Android arm-on-install (2026-08-25)
 
 ### 5.7 Explicit Non-Goals for V1
 

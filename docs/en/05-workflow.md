@@ -891,6 +891,8 @@ Event triggers subscribe to the EventBus ([03 §11](./03-runtime.md)) with a `fi
 
 The trigger declares `"resolveMemory": "fire"` or `"resolveMemory": "arm"` (default `"arm"`). For values that change rarely (office Wi-Fi SSID), arming time is preferred; for values that change often (battery threshold), fire time.
 
+> ✅ **As-built (event triggers shipped):** `WorkflowJson.specFromJson` parses the `trigger` envelope into `WorkflowSpec(trigger, step)`; `EventTriggerManager.arm()` subscribes on the EventBus and `McosRuntime.armTrigger(workflowId, preAuthorized)` / `disarmTrigger` / `armedTriggers()` expose it. As-built semantics: **`filter.type` maps to the subscription's `typePrefix`** — prefix matching per [03 §11.4](./03-runtime.md), so `"wifi.connected"` also matches `"wifi.connected.5g"`. **An array-valued memory reference matches by membership** (event value ∈ stored list — the `wifiSsids` example above). A `$memory` path that is missing at resolve time makes the filter simply **not match** (audit `warn`, not an error; [07 §13.1](./07-memory.md)); with `resolveMemory: "arm"` the missing path arms a never-matching sentinel, with `"fire"` it skips that event. Fires are rate-limited to `maxBackgroundFiresPerHour` (default 20, [08 §10.0](./08-security.md)) and audited as `workflow.trigger_fired`; the event payload becomes `__input` ([§6.2](#62-input)) and every step runs with source `EVENT` under the stricter confirmation matrix ([08 §4.0](./08-security.md)). Pre-authorized arming (`armTrigger(..., preAuthorized = true)`, [§10](#10-confirmation-integration)) mints a per-run `AuthStamp` covering the read/write steps' permissions so they run silently, while network/destructive steps still challenge. The Android marketplace wizard arms event-trigger recipes pre-authorized at install (the wizard is the consent moment) and disarms them when a plugin they depend on is uninstalled. `sys.event.emit {type, payload}` ([04 §17](./04-plugin-sdk.md)) is the reference command for emitting demo events.
+
 ### 9.3 Schedule
 
 ```json
@@ -922,6 +924,8 @@ The trigger declares `"resolveMemory": "fire"` or `"resolveMemory": "arm"` (defa
 | `fire-and-forget-if-window` | Fire on wake only if still within the same cron window (e.g. for hourly cron, fire if within the same hour). Otherwise skip. |
 
 If a schedule is missed and `misfirePolicy` is `"skip"`, the engine emits a `TRIGGER_MISFIRE` audit event (informational, not an error) so the user can see that an automation didn't run. Schedules integrate with `AlarmManager` / `WorkManager` for Doze compliance ([03 §15.1](./03-runtime.md) foreground-service rules apply to triggered workflows with `control`/`destructive` steps).
+
+> ✅ **As-built (parse-only):** schedule triggers are parsed and validated by `specFromJson`, but `EventTriggerManager.arm()` rejects them (`"schedule_triggers_unsupported"`) — arming needs the `AlarmManager`/`WorkManager` integration planned for V1. The `TRIGGER_MISFIRE` policy above is likewise not yet emitted.
 
 ### 9.4 Voice
 

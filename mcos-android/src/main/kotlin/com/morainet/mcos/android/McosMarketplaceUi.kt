@@ -45,6 +45,9 @@ import com.morainet.mcos.marketplace.InstallResult
 import com.morainet.mcos.marketplace.InstallState
 import com.morainet.mcos.marketplace.PackageMetadata
 import com.morainet.mcos.marketplace.RecipeEnvelope
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 
 // ── Marketplace card (09-marketplace.md §7) ─────────────────────────────────
 
@@ -360,8 +363,28 @@ private fun RecipeResultRow(
                     maxLines = 1,
                 )
             }
+            // Event-trigger preview (05 §9.2): what the recipe arms on at
+            // install time — same extraction the wizard's arm step uses.
+            recipeTriggerPreview(recipe.workflow)?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.tertiary,
+                    maxLines = 1,
+                )
+            }
         }
     }
+}
+
+/** `⚡ triggers on <event type>` for event-trigger workflows, else null. */
+private fun recipeTriggerPreview(workflow: JsonObject): String? {
+    val trigger = workflow["trigger"] as? JsonObject ?: return null
+    if (trigger["type"]?.jsonPrimitive?.contentOrNull != "event") return null
+    val eventType = (trigger["filter"] as? JsonObject)
+        ?.get("type")?.jsonPrimitive?.contentOrNull ?: return null
+    return "⚡ triggers on $eventType"
 }
 
 @Composable

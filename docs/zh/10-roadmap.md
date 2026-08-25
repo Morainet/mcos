@@ -9,7 +9,7 @@
 
 > **灵感来源:** Apache 基础设施成熟度模型 · Kubernetes 分阶段交付（alpha → beta → GA）· Rust edition 路线图 · Stripe 年度面向用户路线图 · TypeScript "规范与代码同步演进" 方法
 
-> ✅ **实现状态:** P1（MVP）已完成、P2 大部分已落地——12 个 Gradle 源码模块、937 个测试、四个内置插件、市场客户端与 `mcos-server`（见 [11-implementation-status.md](./11-implementation-status.md)）。P2 退出标准尚余：多轮 Agent 循环与事件触发配方。下文各时间跨度仍为示意，不构成承诺。
+> ✅ **实现状态:** P1（MVP）已完成、**P2 退出标准全部落地**（[§5.6.1](#561-p2-退出标准检查清单)）——12 个 Gradle 源码模块、1028 个测试、四个内置插件、市场客户端与 `mcos-server`（见 [11-implementation-status.md](./11-implementation-status.md)）。最后两项开放标准 —— 多轮 Agent 循环与事件触发配方 —— 已于 2026-08-24/25 交付；剩余 P2 行（IoT / Intent 插件生态）属生态工作，不是退出标准。下文各时间跨度仍为示意，不构成承诺。
 
 ---
 
@@ -454,12 +454,12 @@ Event: SSID=Office → suggest/run vpn.connect (pre-authorized recipe)
 
 #### 5.6.1 P2 退出标准检查清单
 
-- [ ] **NL→目标 准确率** —— 在黄金 NL 测试集上 p85 准确率 ≥ 80%（[06 §16](./06-agent.md)）
-- [ ] **工作流并行** —— "观影模式" 多设备并行场景正确执行
-- [ ] **记忆解析** —— `导航回公司` 无需用户重新指明即可从记忆中解析出 "office"
-- [ ] **多提供商** —— ≥ 3 个 LLM 提供商可在设置中互换
-- [ ] **Agent 循环** —— 多轮 探查→重规划→执行 对 ≥ 3 步目标可用（[06 §11](./06-agent.md)）
-- [ ] **事件触发** —— `wifi.connected` 事件端到端触发一个预授权配方
+- [x] **NL→目标 准确率** —— 在黄金 NL 测试集上 p85 准确率 ≥ 80%（[06 §16](./06-agent.md)）—— NL→IR 黄金套件全绿（已交付 fixture 集上 100% 结构准确率）
+- [x] **工作流并行** —— "观影模式" 多设备并行场景正确执行 —— `WorkflowEngineTest` W21 home-movie 场景
+- [x] **记忆解析** —— `导航回公司` 无需用户重新指明即可从记忆中解析出 "office" —— `resolveRef` 模糊解析 + §8.3 命名实体合并
+- [x] **多提供商** —— ≥ 3 个 LLM 提供商可在设置中互换 —— `LlmProviderRegistry` + 健康/回退链
+- [x] **Agent 循环** —— 多轮 探查→重规划→执行 对 ≥ 3 步目标可用（[06 §11](./06-agent.md)）—— `McosAgent`（2026-08-24）
+- [x] **事件触发** —— `wifi.connected` 事件端到端触发一个预授权配方 —— `EventTriggerManager` + 预授权 stamp + Android 装配方即布防（2026-08-25）
 
 ### 5.7 V1 的显式非目标
 

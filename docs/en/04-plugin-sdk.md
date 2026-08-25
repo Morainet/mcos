@@ -361,6 +361,7 @@ interface HostServices {
     val deviceInfo: DeviceInfoService?        // §6.8
     val clipboard: ClipboardService?          // §6.9
     val haptics: HapticsService?              // §6.10
+    val events: EventPublisher?               // §6.11
 }
 ```
 
@@ -528,6 +529,18 @@ interface HapticsService {
 ```
 
 Hosts without a vibrator stay `null` → the command reports `UNAVAILABLE`. The former fake success (returning `vibrated` without touching hardware) has been removed — the audit trail must only record vibrations that actually happened. The Android implementation uses `VibratorManager` (API 31+) with a legacy `Vibrator` fallback.
+
+### 6.11 `EventPublisher` — EventBus Publish Access (added in v0.x)
+
+Backs `sys.event.emit` and lets plugins surface domain events (`wifi.connected`, `user.arrived.home`) that event-trigger recipes ([05 §9.2](./05-workflow.md)) subscribe to.
+
+```kotlin
+interface EventPublisher {
+    suspend fun publish(type: String, payload: JsonObject)
+}
+```
+
+The runtime wires this to the shared EventBus ([03 §11](./03-runtime.md)) when one exists; publish is **not** a privileged bus bypass — emitted envelopes carry the publishing context and consumers (triggers, the Agent loop) apply their own filters. A host without a bus stays `null` → `sys.event.emit` reports `UNAVAILABLE`, never fake success.
 
 ---
 
@@ -1051,7 +1064,7 @@ class HelloWorldHandler : CommandHandler {
 | Plugin | Commands (illustrative) | Target phase |
 |--------|-------------------------|--------------|
 | `example.hello` | `hello.world` | P1 (reference) |
-| `mcos.plugin.system` | `sys.notify`, `sys.share`, `sys.clipboard`, `sys.openUrl`, `sys.vibrate`, `sys.device.battery`, `sys.device.wifi`, `sys.device.screen`, `sys.device.volume`, `sys.device.location`, `sys.device.brightness` | P1 |
+| `mcos.plugin.system` | `sys.notify`, `sys.share`, `sys.clipboard`, `sys.openUrl`, `sys.vibrate`, `sys.device.battery`, `sys.device.wifi`, `sys.device.screen`, `sys.device.volume`, `sys.device.location`, `sys.device.brightness`, `sys.event.emit` | P1 (+`sys.event.emit` P2) |
 | `mcos.plugin.camera` | `camera.capture`, `camera.scan` | P1 |
 | `mcos.plugin.files` | `file.list`, `file.search`, `photo.search`, `photo.compress` | P1 |
 | `mcos.plugin.iot` | `home.*`, `iot.*` | P2 |

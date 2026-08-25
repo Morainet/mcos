@@ -134,6 +134,64 @@ class MarketplaceRecipeUpdateTest {
         assertTrue(state.message.orEmpty().contains("greet.recipe"))
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // event-trigger recipes: arm on install, disarm on uninstall (§9.2)
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `A11-installing an event-trigger recipe arms it pre-authorized`() = runBlocking {
+        val recipe = TestMarketplace.recipeEnvelope(
+            recipeId = "wifi.recipe",
+            workflow = TestMarketplace.triggeredWorkflow(eventType = "wifi.connected"),
+        )
+        val deps = TestMarketplace.deps(TestMarketplace.FakeIndexTransport(), TestMarketplace.FakeSecureStore())
+        vm.attach(deps)
+        vm.onBaseUrlChange("http://idx.test")
+
+        vm.prepareRecipe(recipe)
+        withTimeout(5_000) { vm.uiState.first { it.recipePlan != null } }
+        vm.submitRecipe(emptyMap())
+        // Arm happens in a coroutine right after registration.
+        withTimeout(5_000) { vm.uiState.first { it.message.orEmpty().contains("armed on wifi.connected") } }
+
+        assertEquals(listOf("wifi.recipe"), deps.runtime.armedTriggers())
+        assertNull(vm.uiState.value.error)
+        // The registered spec retains the trigger, not just the step tree.
+        assertNotNull(deps.runtime.workflowStore().spec("wifi.recipe")?.trigger)
+    }
+
+    @Test
+    fun `A12-uninstalling the plugin a trigger recipe uses disarms it`() = runBlocking {
+        val pair = TestMarketplace.keyPair()
+        val meta = TestMarketplace.metadata(pair) // example.hello → hello.world
+        val transport = TestMarketplace.FakeIndexTransport(searchBody = TestMarketplace.searchResponseJson(meta))
+        val deps = TestMarketplace.deps(transport, TestMarketplace.FakeSecureStore(), keyPair = pair)
+        vm.attach(deps)
+
+        vm.install(meta)
+        withTimeout(10_000) { vm.uiState.first { it.installResults.isNotEmpty() } }
+
+        val recipe = TestMarketplace.recipeEnvelope(
+            recipeId = "hello.recipe",
+            workflow = TestMarketplace.triggeredWorkflow(commandId = "hello.world", eventType = "agent.started"),
+        )
+        vm.onBaseUrlChange("http://idx.test")
+        vm.prepareRecipe(recipe)
+        withTimeout(5_000) { vm.uiState.first { it.recipePlan != null } }
+        vm.submitRecipe(emptyMap())
+        withTimeout(5_000) { vm.uiState.first { it.message.orEmpty().contains("armed on agent.started") } }
+        assertEquals(listOf("hello.recipe"), deps.runtime.armedTriggers())
+
+        vm.uninstall("example.hello")
+        withTimeout(10_000) { vm.uiState.first { it.message.orEmpty().contains("Uninstalled") } }
+
+        assertTrue("trigger must be disarmed with its plugin", deps.runtime.armedTriggers().isEmpty())
+        assertTrue(
+            "expected disarm hint, got ${vm.uiState.value.message}",
+            vm.uiState.value.message.orEmpty().contains("disarmed"),
+        )
+    }
+
     @Test
     fun recipeMissingDependencyBlocksInstall() = runBlocking {
         val recipe = TestMarketplace.recipeEnvelope(

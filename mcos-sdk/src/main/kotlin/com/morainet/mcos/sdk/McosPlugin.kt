@@ -83,6 +83,27 @@ interface HostServices {
      * plugins must surface UNAVAILABLE rather than a fake success.
      */
     val haptics: HapticsService? get() = null
+
+    /**
+     * Optional system event bus publisher (03-runtime.md §11). Null on hosts
+     * without an event bus; plugins must surface UNAVAILABLE rather than a
+     * fake success. Publishing is a write-class side effect — an emitted
+     * event can trigger privileged automations (armed recipes, 05 §9.2).
+     */
+    val events: EventPublisher? get() = null
+}
+
+/**
+ * Publishes an event onto the system event bus (03-runtime.md §11.1).
+ * The event is delivered to every matching subscriber (at-most-once,
+ * no persistence).
+ */
+interface EventPublisher {
+    /**
+     * @param type dotted event type, e.g. `"wifi.connected"`.
+     * @param payload structured event data.
+     */
+    suspend fun publish(type: String, payload: JsonObject)
 }
 
 /**
