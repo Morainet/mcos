@@ -583,10 +583,11 @@ class McosRuntime internal constructor(
         startTime: Long,
         timestamp: Long,
         payload: Payload,
+        inputs: JsonObject = JsonObject(emptyMap()),
     ) {
         eventBus.publish(runId, RuntimeEvent.RunStarted(runId, null, timestamp))
 
-        val result = workflowEngine.execute(step)
+        val result = workflowEngine.execute(step, inputs = inputs)
 
         result.steps.forEachIndexed { index, stepResult ->
             val commandId = stepResult.commandId ?: "workflow.control"
