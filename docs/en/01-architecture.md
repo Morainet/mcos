@@ -787,7 +787,7 @@ sealed class RuntimeEvent {
 
 ```kotlin
 data class ExecuteRequest(
-    val source: Source,                                  // CLI, CHAT, VOICE, EVENT, API
+    val source: Source,                                  // CLI, CHAT, VOICE, EVENT, SCHEDULE, API (SCHEDULE is runtime-produced only, 05 §9.3)
     val payload: Payload,                                // DslText | IrJson | WorkflowRef
     val dryRun: Boolean = false,
     val confirmationMode: ConfirmationMode = ConfirmationMode.POLICY,

@@ -140,6 +140,25 @@ object TestMarketplace {
         })
     }
 
+    /**
+     * A one-command workflow carrying a schedule trigger envelope (05 §9.3) —
+     * `specFromJson` keeps the trigger, and the wizard arms it on install.
+     */
+    fun scheduledWorkflow(
+        commandId: String = "sys.notify",
+        cron: String = "0 23 * * *",
+        tz: String = "Asia/Shanghai",
+    ): JsonObject = buildJsonObject {
+        put("type", "command")
+        put("commandId", commandId)
+        put("args", buildJsonObject { put("text", "static") })
+        put("trigger", buildJsonObject {
+            put("type", "schedule")
+            put("cron", cron)
+            put("tz", tz)
+        })
+    }
+
     fun recipeEnvelope(
         recipeId: String = "hello.recipe",
         name: String = "Hello Recipe",

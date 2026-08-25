@@ -363,7 +363,7 @@ private fun RecipeResultRow(
                     maxLines = 1,
                 )
             }
-            // Event-trigger preview (05 §9.2): what the recipe arms on at
+            // Trigger preview (05 §9.2/§9.3): what the recipe arms on at
             // install time — same extraction the wizard's arm step uses.
             recipeTriggerPreview(recipe.workflow)?.let {
                 Text(
@@ -378,13 +378,22 @@ private fun RecipeResultRow(
     }
 }
 
-/** `⚡ triggers on <event type>` for event-trigger workflows, else null. */
+/** `⚡ triggers on <event type>` / `⏰ cron '<cron>' (<tz>)`, else null. */
 private fun recipeTriggerPreview(workflow: JsonObject): String? {
     val trigger = workflow["trigger"] as? JsonObject ?: return null
-    if (trigger["type"]?.jsonPrimitive?.contentOrNull != "event") return null
-    val eventType = (trigger["filter"] as? JsonObject)
-        ?.get("type")?.jsonPrimitive?.contentOrNull ?: return null
-    return "⚡ triggers on $eventType"
+    return when (trigger["type"]?.jsonPrimitive?.contentOrNull) {
+        "event" -> {
+            val eventType = (trigger["filter"] as? JsonObject)
+                ?.get("type")?.jsonPrimitive?.contentOrNull ?: return null
+            "⚡ triggers on $eventType"
+        }
+        "schedule" -> {
+            val cron = trigger["cron"]?.jsonPrimitive?.contentOrNull ?: return null
+            val tz = trigger["tz"]?.jsonPrimitive?.contentOrNull ?: return null
+            "⏰ cron '$cron' ($tz)"
+        }
+        else -> null
+    }
 }
 
 @Composable

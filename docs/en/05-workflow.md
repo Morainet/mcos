@@ -911,21 +911,33 @@ The trigger declares `"resolveMemory": "fire"` or `"resolveMemory": "arm"` (defa
 
 | Field | Type | Required | Default | Constraint |
 |-------|------|----------|---------|------------|
-| `cron` | string | yes | — | Standard 5-field cron, user's local tz |
-| `tz` | string | yes | — | IANA timezone (e.g. `Asia/Shanghai`) |
+| `cron` | string | yes | — | 5-field cron (dialect below); always computed in `tz`, never an ambient "local" zone |
+| `tz` | string | yes | — | IANA timezone (e.g. `Asia/Shanghai`) — **the** zone the schedule fires in |
 | `misfirePolicy` | enum | no | `"skip"` | One of: `skip`, `fire-and-forget`, `fire-and-forget-if-window` |
 
-**Misfire policies:**
+**Cron dialect.** The portable vixie-cron subset — identical on every host, no platform-specific extensions:
+
+| Position | Field | Values |
+|----------|-------|--------|
+| 1 | minute | 0–59 |
+| 2 | hour | 0–23 |
+| 3 | day of month | 1–31 |
+| 4 | month | 1–12 or `JAN`–`DEC` |
+| 5 | day of week | 0–7 (0 **and** 7 are Sunday) or `SUN`–`SAT` |
+
+Each field accepts a bare `*`, a number, a name (month/weekday fields), a comma list (`0,30`), a range (`9-17`, names allowed as bounds: `MON-FRI`), and a step suffix (`*/5` = every 5, `10-40/10` = 10,20,30,40, `MON-FRI/2` = Mon/Wed/Fri). Whitespace between fields is flexible. **Not** supported: `L`, `#`, `@` macros, a seconds field. When **both** day-of-month and day-of-week are restricted (neither is a bare `*`), a minute matches when **either** matches (standard cron union: `0 0 13 * FRI` = the 13th **or** any Friday); a bare `*` on one side defers to the other. DST is handled by the zone rules: a fire time that falls in a spring-forward gap simply does not occur that day (the next matching minute wins), and a duplicated fall-back wall time fires once.
+
+**Misfire policies** (a boundary ticked more than 60 s late is a misfire — normal poll jitter is not):
 
 | Policy | Behavior |
 |--------|----------|
-| `skip` (default) | If the scheduled time was missed (Doze, device off), skip it entirely. Next run at the next scheduled time. |
-| `fire-and-forget` | Fire immediately on wake regardless of how late. May cause back-to-back runs if multiple were missed (only the latest fires). |
-| `fire-and-forget-if-window` | Fire on wake only if still within the same cron window (e.g. for hourly cron, fire if within the same hour). Otherwise skip. |
+| `skip` (default) | If the scheduled minute was missed (process asleep, device off), skip it entirely. Next run at the next scheduled time. |
+| `fire-and-forget` | Fire immediately on wake regardless of how late; if multiple boundaries were missed, exactly **one** recovery run fires (only the latest fires). |
+| `fire-and-forget-if-window` | Fire on wake only if still before the **next** scheduled point (e.g. for hourly cron, fire if the next hour hasn't started). Otherwise skip. |
 
-If a schedule is missed and `misfirePolicy` is `"skip"`, the engine emits a `TRIGGER_MISFIRE` audit event (informational, not an error) so the user can see that an automation didn't run. Schedules integrate with `AlarmManager` / `WorkManager` for Doze compliance ([03 §15.1](./03-runtime.md) foreground-service rules apply to triggered workflows with `control`/`destructive` steps).
+If a schedule is missed and `misfirePolicy` is `"skip"` (or `fire-and-forget-if-window` outside its window), the runtime audits a `workflow.trigger_misfire` record — informational, not an error — carrying the trigger id and the missed boundary as `scheduledAt` (ISO-8601, [§7.5](#75-error-codes)) so the user can see that an automation didn't run. The `TRIGGER_MISFIRE` **error code** stays reserved for hosts that surface missed schedules as user-visible errors ([01 §15.2](./01-architecture.md)). Triggered workflows with `control`/`destructive` steps are subject to the foreground-service rules of [03 §15.1](./03-runtime.md); durable host scheduling integrates `AlarmManager` / `WorkManager` for Doze compliance.
 
-> ✅ **As-built (parse-only):** schedule triggers are parsed and validated by `specFromJson`, but `EventTriggerManager.arm()` rejects them (`"schedule_triggers_unsupported"`) — arming needs the `AlarmManager`/`WorkManager` integration planned for V1. The `TRIGGER_MISFIRE` policy above is likewise not yet emitted.
+> ✅ **As-built (schedule triggers shipped):** `ScheduleTriggerManager` arms cron schedules at minute granularity: a driver coroutine polls every ≤10 s (waking just past each minute boundary) and runs a pure `tick(now)` state machine — boundary detection, dedup, misfire dispatch, the same 20-fires/hour rate window as event triggers ([08 §10.0](./08-security.md)) and `workflow.trigger_fired` / `workflow.trigger_misfire` audit records (source `SCHEDULE`). `McosRuntime.armTrigger` routes schedules here (invalid cron → `"schedule_cron_invalid"`, bad tz → `"schedule_timezone_invalid"`, never-satisfiable cron like Feb 31 → `"schedule_cron_unsatisfiable"`); fires launch **directly** — deliberately not via the EventBus, whose subscriptions are at-most-once with no redelivery ([03 §11.4](./03-runtime.md)) and therefore incompatible with misfire recovery. `__input` is always empty ([§6.2](#62-input)); steps run with source `SCHEDULE` under the same stricter background matrix and pre-authorization flow as `EVENT` ([08 §4.0](./08-security.md)). The Android marketplace wizard arms schedule recipes pre-authorized at install exactly like event recipes. **🟡 Honest boundary:** this is a runtime-internal scheduler — it only runs while the process is alive. Durable scheduling (`AlarmManager`/`WorkManager`, Doze compliance, boot recovery) and armed-state persistence across restarts remain V1 host work; armed schedules live exactly as long as the (in-memory) workflow store.
 
 ### 9.4 Voice
 

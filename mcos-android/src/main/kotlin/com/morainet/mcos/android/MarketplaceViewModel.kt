@@ -484,14 +484,23 @@ class MarketplaceViewModel : ViewModel() {
                                 "(workflow '${outcome.recipe.recipeId}')",
                         )
                     }
-                    val eventTrigger = spec.trigger as? Trigger.Event
-                    if (eventTrigger != null) {
+                    val trigger = spec.trigger
+                    // Arm-on-install covers both automatic families
+                    // (05 §9.2/§9.3): event and schedule recipes arm
+                    // pre-authorized. Manual triggers run via explicit
+                    // execute() and are never armed.
+                    if (trigger != null && trigger !is Trigger.Manual) {
                         viewModelScope.launch {
-                            val eventType = eventTrigger.filter["type"]
-                                ?.jsonPrimitive?.contentOrNull ?: "event"
+                            val armedOn = when (trigger) {
+                                is Trigger.Event ->
+                                    trigger.filter["type"]?.jsonPrimitive?.contentOrNull ?: "event"
+                                is Trigger.Schedule ->
+                                    "cron '${trigger.cron}' (${trigger.tz})"
+                                else -> "trigger" // unreachable: Manual filtered above
+                            }
                             when (val arm = d.runtime.armTrigger(outcome.recipe.recipeId, preAuthorized = true)) {
                                 is TriggerArmResult.Armed -> _uiState.update {
-                                    it.copy(message = "${it.message} — armed on $eventType")
+                                    it.copy(message = "${it.message} — armed on $armedOn")
                                 }
                                 is TriggerArmResult.Rejected -> _uiState.update {
                                     it.copy(error = "Trigger not armed (${arm.reason})")

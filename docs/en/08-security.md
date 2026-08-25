@@ -289,11 +289,11 @@ fun decideConfirmation(
             CONFIRM_ONCE                            // ALWAYS, regardless of grantState
     }
 
-    // 4. Background events are stricter — no session caching for destructive.
-    if (source == EVENT && sideEffectClass == DESTRUCTIVE) {
+    // 4. Background trigger runs (event + schedule) are stricter — no session caching for destructive.
+    if ((source == EVENT || source == SCHEDULE) && sideEffectClass == DESTRUCTIVE) {
         return CONFIRM_ONCE                         // pre-auth recipe required ([§4.1](#41-full-policy-matrix))
     }
-    if (source == EVENT && sideEffectClass == NETWORK) {
+    if ((source == EVENT || source == SCHEDULE) && sideEffectClass == NETWORK) {
         return CONFIRM_ONCE                         // background network always re-confirms
     }
 
@@ -316,7 +316,7 @@ fun decideConfirmation(
 1. `DESTRUCTIVE` always returns `CONFIRM_ONCE` — there is no “allow persistent” path (step 3 + step 4).
 2. Enterprise policy is checked **first** and can only tighten (step 1). It cannot turn a `CONFIRM` into an `ALLOW`.
 3. Sticky denial is absolute (step 2) — no policy overrides it; only the user changing Settings can.
-4. Background events (`source == EVENT`) are stricter for `DESTRUCTIVE` and `NETWORK` (step 4) — session grants do not cache.
+4. Background trigger runs (`source == EVENT` or `SCHEDULE`) are stricter for `DESTRUCTIVE` and `NETWORK` (step 4) — session grants do not cache.
 5. User global tightening applies after the base matrix (step 5), so it can upgrade `ALLOW` → `CONFIRM` but not the reverse.
 
 ### 4.1 Full Policy Matrix
@@ -341,7 +341,7 @@ The user may, in Settings, enable global tightening options. Each option can onl
 |---------|--------|
 | “Confirm every write” | `WRITE` / `CONTROL` / `DESTRUCTIVE` → always `CONFIRM_ONCE` regardless of cached grant |
 | “Confirm every network call” | `NETWORK` → always `CONFIRM_ONCE` (shows URL every time) |
-| “Background events require foreground confirm” | `source == EVENT` → always surface as notification with explicit confirm action, no silent execution |
+| “Background events require foreground confirm” | `source == EVENT` or `SCHEDULE` → always surface as notification with explicit confirm action, no silent execution |
 | “Disable session grants” | `CONFIRM_SESSION` demoted to `CONFIRM_ONCE` — every invoke re-prompts |
 
 These settings are stored in `RuntimeConfig` ([03 §19](./03-runtime.md)) and take effect on the next invocation (no restart needed).
@@ -548,11 +548,11 @@ For `riskBadge == DESTRUCTIVE` (V1), the confirmation card requires **typed ackn
 
 ### 6.3 Background Event Confirmation
 
-When `source == EVENT` and `decideConfirmation` returns `CONFIRM_ONCE`, the app may not be in the foreground (no activity to show a dialog). The Runtime follows this escalation:
+When `source` is a background trigger (`EVENT` or `SCHEDULE`) and `decideConfirmation` returns `CONFIRM_ONCE`, the app may not be in the foreground (no activity to show a dialog). The Runtime follows this escalation:
 
 1. **Post a high-priority notification** with the `ConfirmationPrompt.summary` + a “Review” action (PendingIntent opening the confirmation card).
 2. **Wait for user tap** — the command does not execute until the user opens the app and confirms. A timeout (default 5 minutes) auto-denies.
-3. **No silent execution** — even if the recipe is pre-authorized, `DESTRUCTIVE` and `NETWORK` background events always require foreground confirmation. Pre-auth recipes ([05 §10](./05-workflow.md)) only waive the prompt for `READ` and `WRITE` classes.
+3. **No silent execution** — even if the recipe is pre-authorized, `DESTRUCTIVE` and `NETWORK` background trigger runs (event or schedule) always require foreground confirmation. Pre-auth recipes ([05 §10](./05-workflow.md)) only waive the prompt for `READ` and `WRITE` classes.
 
 ### 6.4 Confirmation Timeout
 
@@ -569,7 +569,7 @@ Three distinct confirmation contexts use different default timeouts. This table 
 | Context | Default timeout | Source field / section | Behavior on timeout |
 |---------|----------------|------------------------|---------------------|
 | Foreground prompt (command invocation) | 30 s | `ConfirmationPrompt.timeoutMs` ([§6.0](#60-normative-type)) | DENY (non-sticky); 3× → sticky DENY |
-| Background event (`source == EVENT`) | 5 min | [§6.3](#63-background-event-confirmation) escalation step 2 | DENY (non-sticky) |
+| Background trigger (`source == EVENT` or `SCHEDULE`) | 5 min | [§6.3](#63-background-event-confirmation) escalation step 2 | DENY (non-sticky) |
 | Workflow `confirm` step (mid-flow gate) | 120 s | [05 §5.7](./05-workflow.md) | Run → `Cancelled` |
 
 **Rationale for the split:** foreground prompts are interactive and short — 30 s catches a distracted user without blocking the flow. Background events may need to wait for the user to notice a notification — 5 min balances promptness with giving the user time to reach the phone. Workflow `confirm` steps are mid-flow checkpoints — 120 s is between the two because the user is already engaged in a multi-step flow but may be reading context.
@@ -793,7 +793,7 @@ Runtime enforces:
 
 - Max invokes / minute / plugin  
 - Max destructive / hour  
-- Max background event fires / hour per recipe  
+- Max background fires (event + schedule) / hour per recipe  
 - Exponential backoff on tight loops  
 
 Protects battery and mitigates runaway workflows / buggy planners.
@@ -1331,7 +1331,7 @@ Security tests use the `mcos-sdk-testing` harness ([04 §14.1](./04-plugin-sdk.m
 | `NetworkClass_AlwaysShowUrl` | `NETWORK` + any grant | `ALLOW` if granted, else `CONFIRM_ONCE` |
 | `ControlClass_TrustToggle` | `CONTROL` + `GRANTED` | `ALLOW`; without → `CONFIRM_SESSION` |
 | `DestructiveClass_AlwaysConfirm` | `DESTRUCTIVE` + any grant (even persistent) | `CONFIRM_ONCE` — never `ALLOW` |
-| `BackgroundDestructive_Stricter` | `DESTRUCTIVE` + `EVENT` source | `CONFIRM_ONCE` (no session cache) |
+| `BackgroundDestructive_Stricter` | `DESTRUCTIVE` + background trigger source (`EVENT`/`SCHEDULE`) | `CONFIRM_ONCE` (no session cache) |
 | `StickyDenial_Absolute` | any class + `DENIED` | `DENY` — no policy override |
 | `EnterpriseForceConfirm_Overrides` | `WRITE` + `GRANTED` + enterprise `forceConfirm:[WRITE]` | `CONFIRM_ONCE` |
 | `UserTighten_OverridesAllow` | `WRITE` + `GRANTED` + user "confirm every write" | `CONFIRM_ONCE` |

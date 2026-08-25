@@ -913,21 +913,33 @@ step throws McosException / returns Err
 
 | 字段 | 类型 | 必填 | 默认值 | 约束 |
 |-------|------|----------|---------|------------|
-| `cron` | string | yes | — | 标准 5 字段 cron，用户本地时区 |
-| `tz` | string | yes | — | IANA 时区（如 `Asia/Shanghai`） |
+| `cron` | string | yes | — | 5 字段 cron（方言见下）；一律按 `tz` 计算，绝无歧义的"本地"时区 |
+| `tz` | string | yes | — | IANA 时区（如 `Asia/Shanghai`）—— 即调度生效的**唯一**时区 |
 | `misfirePolicy` | enum | no | `"skip"` | 取一：`skip`、`fire-and-forget`、`fire-and-forget-if-window` |
 
-**misfire 策略：**
+**cron 方言。** 可移植的 vixie-cron 子集 —— 任意宿主上行为一致，无平台特定扩展：
+
+| 位置 | 字段 | 取值 |
+|------|------|------|
+| 1 | 分钟 | 0–59 |
+| 2 | 小时 | 0–23 |
+| 3 | 日 | 1–31 |
+| 4 | 月 | 1–12 或 `JAN`–`DEC` |
+| 5 | 周 | 0–7（0 **和** 7 均为周日）或 `SUN`–`SAT` |
+
+每个字段接受裸 `*`、数字、名称（月/周字段）、逗号列表（`0,30`）、区间（`9-17`，边界可用名称：`MON-FRI`）与步进后缀（`*/5` = 每 5，`10-40/10` = 10,20,30,40，`MON-FRI/2` = 周一/三/五）。字段间空白灵活。**不**支持：`L`、`#`、`@` 宏、秒字段。当**日与周同时受限**（都不是裸 `*`）时，任一匹配即命中（标准 cron 并集：`0 0 13 * FRI` = 13 号**或**任意周五）；一侧为裸 `*` 时由另一侧独立决定。DST 由时区规则处理：落入春季前跳空洞的触发时刻当天不存在（由下一个匹配分钟接替），秋季回拨重复的墙上时间只触发一次。
+
+**misfire 策略**（迟于调度分钟 60 秒以上才算 misfire —— 正常轮询抖动不算）：
 
 | 策略 | 行为 |
 |--------|----------|
-| `skip`（默认） | 若错过了调度时间（Doze、设备关机），则完全跳过。下一次运行在下一个调度时间。 |
-| `fire-and-forget` | 唤醒时立即触发，无论迟到多久。若错过了多次可能造成背靠背的运行（仅最新一次触发）。 |
-| `fire-and-forget-if-window` | 仅当唤醒时仍在同一 cron 窗口内才触发（如对每小时 cron，若仍在同一小时内则触发）。否则跳过。 |
+| `skip`（默认） | 若错过了调度分钟（进程休眠、设备关机），则完全跳过。下一次运行在下一个调度时间。 |
+| `fire-and-forget` | 唤醒时立即触发，无论迟到多久；错过多次边界时**恰好**补跑一次（仅最新一次触发）。 |
+| `fire-and-forget-if-window` | 仅当唤醒时仍早于**下一**个调度点才触发（如对每小时 cron，若下一小时尚未开始）。否则跳过。 |
 
-若调度被错过且 `misfirePolicy` 为 `"skip"`，引擎发出 `TRIGGER_MISFIRE` 审计事件（信息性，非错误），让用户看到某个自动化没有运行。调度与 `AlarmManager` / `WorkManager` 集成以满足 Doze 合规（[03 §15.1](./03-runtime.md) 的前台服务规则适用于带 `control`/`destructive` 步骤的触发型工作流）。
+若调度被错过且 `misfirePolicy` 为 `"skip"`（或 `fire-and-forget-if-window` 超出其窗口），运行时审计一条 `workflow.trigger_misfire` 记录 —— 信息性、非错误 —— 携带 trigger id 与错过边界 `scheduledAt`（ISO-8601，[§7.5](#75-工作流错误代码)），让用户看到某个自动化没有运行。`TRIGGER_MISFIRE` **错误码**继续保留，供把错过调度作为用户可见错误的宿主使用（[01 §15.2](./01-architecture.md)）。带 `control`/`destructive` 步骤的触发型工作流适用 [03 §15.1](./03-runtime.md) 的前台服务规则；持久宿主调度通过 `AlarmManager` / `WorkManager` 集成以满足 Doze 合规。
 
-> ✅ **As-built（仅解析）：** 调度触发器由 `specFromJson` 解析并校验，但 `EventTriggerManager.arm()` 会拒绝它（`"schedule_triggers_unsupported"`）—— arming 需要 V1 规划的 `AlarmManager`/`WorkManager` 集成。上面的 `TRIGGER_MISFIRE` 策略同样尚未发出。
+> ✅ **As-built（调度触发器已交付）：** `ScheduleTriggerManager` 以分钟精度 arm cron 调度：一个驱动协程每 ≤10 秒轮询（恰在每个分钟界之后唤醒）并运行纯函数 `tick(now)` 状态机 —— 边界检测、去重、misfire 分派、与事件触发器相同的每小时 20 次限流窗口（[08 §10.0](./08-security.md)）以及 `workflow.trigger_fired` / `workflow.trigger_misfire` 审计记录（source `SCHEDULE`）。`McosRuntime.armTrigger` 将调度路由到这里（非法 cron → `"schedule_cron_invalid"`，坏时区 → `"schedule_timezone_invalid"`，永不满足的 cron 如 2 月 31 日 → `"schedule_cron_unsatisfiable"`）；触发**直接**启动 —— 刻意不经 EventBus，其订阅是 at-most-once 无重投（[03 §11.4](./03-runtime.md)），与 misfire 恢复不兼容。`__input` 恒为空（[§6.2](#62-input)）；步骤以 source `SCHEDULE` 运行，与 `EVENT` 同样适用更严的后台矩阵与预授权流程（[08 §4.0](./08-security.md)）。Android 市场向导在安装时即以预授权方式 arm 调度配方，与事件配方一致。**🟡 诚实边界：** 这是运行时内部调度器 —— 仅在进程存活期间运行。持久调度（`AlarmManager`/`WorkManager`、Doze 合规、开机恢复）与跨重启的 armed 状态持久化仍是 V1 宿主工作；armed 调度与（内存态的）workflow store 同生命周期。
 
 ### 9.4 语音（Voice）
 

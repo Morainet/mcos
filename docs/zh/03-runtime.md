@@ -534,6 +534,8 @@ data class McosException(
 | 时间（Time） | `time.schedule` |
 | 插件自定义（Plugin custom） | 命名空间归属于插件 ID |
 
+> `time.schedule` **为宿主保留**：桥接持久调度器（`AlarmManager`/`WorkManager`）的宿主可以把它当作普通事件发出。运行时自身的调度触发器（[05 §9.3](./05-workflow.md)）则**刻意**不经总线 —— [§11.4](#114-投递语义) 的投递是 at-most-once 无重投，与 misfire 恢复不兼容；它们直接启动工作流。
+
 ### 11.4 投递语义
 
 | 属性 | 规则 |

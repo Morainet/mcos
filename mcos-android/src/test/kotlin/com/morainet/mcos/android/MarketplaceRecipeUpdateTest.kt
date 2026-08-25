@@ -192,6 +192,61 @@ class MarketplaceRecipeUpdateTest {
         )
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // schedule-trigger recipes: arm on install, invalid cron errors
+    // (§9.3)
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `A13-installing a schedule-trigger recipe arms it pre-authorized`() = runBlocking {
+        val recipe = TestMarketplace.recipeEnvelope(
+            recipeId = "nightly.recipe",
+            workflow = TestMarketplace.scheduledWorkflow(cron = "0 23 * * *", tz = "Asia/Shanghai"),
+        )
+        val deps = TestMarketplace.deps(TestMarketplace.FakeIndexTransport(), TestMarketplace.FakeSecureStore())
+        vm.attach(deps)
+        vm.onBaseUrlChange("http://idx.test")
+
+        vm.prepareRecipe(recipe)
+        withTimeout(5_000) { vm.uiState.first { it.recipePlan != null } }
+        vm.submitRecipe(emptyMap())
+        // Arm happens in a coroutine right after registration; the message
+        // names the cron and timezone the schedule will fire in.
+        withTimeout(5_000) {
+            vm.uiState.first { it.message.orEmpty().contains("armed on cron '0 23 * * *' (Asia/Shanghai)") }
+        }
+
+        assertEquals(listOf("nightly.recipe"), deps.runtime.armedTriggers())
+        assertNull(vm.uiState.value.error)
+        assertNotNull(deps.runtime.workflowStore().spec("nightly.recipe")?.trigger)
+    }
+
+    @Test
+    fun `A14-installing a schedule recipe with an invalid cron surfaces an arm error`() = runBlocking {
+        val recipe = TestMarketplace.recipeEnvelope(
+            recipeId = "broken.recipe",
+            // Parses as a spec (cron is just a string there) — the arm call
+            // is what rejects it, so the wizard must surface the reason.
+            workflow = TestMarketplace.scheduledWorkflow(cron = "not a cron"),
+        )
+        val deps = TestMarketplace.deps(TestMarketplace.FakeIndexTransport(), TestMarketplace.FakeSecureStore())
+        vm.attach(deps)
+        vm.onBaseUrlChange("http://idx.test")
+
+        vm.prepareRecipe(recipe)
+        withTimeout(5_000) { vm.uiState.first { it.recipePlan != null } }
+        vm.submitRecipe(emptyMap())
+        withTimeout(5_000) { vm.uiState.first { it.error.orEmpty().contains("Trigger not armed") } }
+
+        assertTrue(
+            "expected the stable reason code, got ${vm.uiState.value.error}",
+            vm.uiState.value.error.orEmpty().contains("schedule_cron_invalid"),
+        )
+        assertTrue(deps.runtime.armedTriggers().isEmpty())
+        // The recipe itself still installed — only the trigger is dead.
+        assertNotNull(deps.runtime.workflowStore().get("broken.recipe"))
+    }
+
     @Test
     fun recipeMissingDependencyBlocksInstall() = runBlocking {
         val recipe = TestMarketplace.recipeEnvelope(

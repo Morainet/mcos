@@ -532,6 +532,8 @@ Workflows and plugins can subscribe with filters:
 | Time | `time.schedule` |
 | Plugin custom | namespaced under plugin id |
 
+> `time.schedule` is **reserved for hosts**: a host bridging a durable scheduler (`AlarmManager`/`WorkManager`) may emit it as a normal event. The runtime's own schedule triggers ([05 §9.3](./05-workflow.md)) deliberately do **not** ride the bus — [§11.4](#114-delivery-semantics) delivery is at-most-once with no redelivery, incompatible with misfire recovery; they launch their workflow directly.
+
 ### 11.4 Delivery Semantics
 
 | Property | Rule |

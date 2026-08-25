@@ -10,6 +10,20 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### Schedule triggers (2026-08-25)
+
+The trigger trilogy completes: **`Trigger.Schedule` arms and fires** — a cron boundary launches the pre-authorized workflow with source `SCHEDULE` (05 §9.3).
+
+- **`workflow/CronExpression`** — self-written, dependency-free vixie-cron subset: 5 fields; `*`/numbers/`,`-lists/`-`-ranges/`/`-steps (incl. `a-b/n`); JAN-DEC/SUN-SAT names; dow 0 and 7 both Sunday; dom/dow **union** when both restricted; no `L`/`#`/`@`/seconds. `nextFire(afterEpochMs, zone)` = strictly-after minute scan in the trigger's own `ZoneId` (DST via java.time: gap minutes never match, fall-back duplicates fire once), 4-year horizon (Feb 29 reachable); null = unsatisfiable (`0 0 31 2 *`).
+- **`workflow/ScheduleTriggerManager`** — the firing logic is a pure `suspend tick(now)` state machine (boundary detection, per-boundary dedup, misfire dispatch, the shared 20/h sliding window, audit, direct launch); a driver coroutine wakes just past each minute boundary (poll ≤ 10 s). Tests drive `tick()` with an injected clock — fully deterministic.
+- **Misfire (05 §9.3)** — ≤ 60 s late counts as on time; beyond that: `skip` audits `workflow.trigger_misfire` (informational, carries `scheduledAt` ISO-8601; the `TRIGGER_MISFIRE` error code stays reserved for hosts), `fire-and-forget` fires exactly one coalesced recovery run, `fire-and-forget-if-window` fires only before the successor boundary.
+- **Facade routing** — `armTrigger` routes by trigger type with cross-family disarm hygiene; invalid cron / bad tz / unsatisfiable → `schedule_cron_invalid` / `schedule_timezone_invalid` / `schedule_cron_unsatisfiable`; `disarmTrigger` checks both families, `armedTriggers()` unions, `shutdown()` disarms schedules first (cancelling the driver). Fires launch **directly, not via the EventBus** — 03 §11.4 at-most-once delivery is incompatible with misfire recovery (`time.schedule` stays reserved for hosts).
+- **`Source.SCHEDULE` (08 §4.0)** — runtime-produced only; `PermissionKernel.BACKGROUND_SOURCES = {EVENT, SCHEDULE}`: network/destructive always re-confirm under SCHEDULE even granted + auto-approved, reads/consented writes unchanged (pre-authorized recipes stay silent); the background 5-min confirmation timeout applies (§6.4.1).
+- **Android** — the wizard arms schedule recipes `preAuthorized = true` at install (same consent reasoning as event recipes) with an "armed on cron '\<cron\>' (\<tz\>)" hint + `⏰` row preview; an invalid cron surfaces "Trigger not armed (…)" while the recipe itself stays installed.
+- **🟡 Honest boundary** — runtime-internal, minute precision, process lifetime: durable AlarmManager/WorkManager scheduling (Doze, reboot recovery) and armed-state persistence remain V1 host work.
+- **Tests**: +39 — `CronExpressionTest` CR1-CR18 · `ScheduleTriggerManagerTest` TS1-TS14 · `PermissionKernelTest` P31-P32 · `McosRuntimeTriggerTest` TE11-TE13 (incl. one real every-minute E2E ≤ 75 s) · Android A13-A14. Total **1067** (1120 executions incl. Android debug+release), 0 failures.
+- **Docs**: `05-workflow` zh/en — §9.3 as-built rewrite (cron dialect table, misfire semantics, direct-launch decision, 🟡 boundary, tz-wording fix); `03-runtime` zh/en — `time.schedule` reserved-for-hosts note; `08-security` zh/en — §4.0/§6.3/§6.4.1/matrix/§10.0 wording covers SCHEDULE; `01-architecture` zh/en — §11.6 source-enum comment; `11-implementation-status` zh/en — item 28, item-27 truth fix, baseline 1028 → 1067 (re-measured); `10-roadmap` zh/en — banner count.
+
 ### Event-triggered recipes (2026-08-25)
 
 The last P2 exit criterion: **a `wifi.connected` event fires a pre-authorized recipe end-to-end** (05 §9, 10 §5.6.1).

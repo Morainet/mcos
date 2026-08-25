@@ -242,7 +242,7 @@ enum class ConfirmAction {
  * Normative confirmation decision. Inputs:
  * @param sideEffectClass  from CommandDescriptor ([01 §10.1](./01-architecture.md))
  * @param grantState       current GrantRecord.state for this subject
- * @param source           CLI | CHAT | VOICE | EVENT | API ([01 §11.6](./01-architecture.md))
+ * @param source           CLI | CHAT | VOICE | EVENT | SCHEDULE | API（SCHEDULE 仅由运行时自产，[01 §11.6](./01-architecture.md)、05 §9.3）
  * @param isFirstUse       true if command not seen in episodic memory ([07 §8](./07-memory.md)).
  *                       **MVP fail-safe：** 情景记忆是 P2 交付（[11 §5](./11-implementation-status.md)）；
  *                       不可用时，调用方必须传 `true`（保守策略——对非 read 命令强制首次确认，见 step 6）。
@@ -290,11 +290,11 @@ fun decideConfirmation(
             CONFIRM_ONCE                            // ALWAYS, regardless of grantState
     }
 
-    // 4. Background events are stricter — no session caching for destructive.
-    if (source == EVENT && sideEffectClass == DESTRUCTIVE) {
+    // 4. 后台触发运行（事件 + 调度）更严格 —— destructive 不缓存会话授权。
+    if ((source == EVENT || source == SCHEDULE) && sideEffectClass == DESTRUCTIVE) {
         return CONFIRM_ONCE                         // pre-auth recipe required ([§4.1](#41-full-policy-matrix))
     }
-    if (source == EVENT && sideEffectClass == NETWORK) {
+    if ((source == EVENT || source == SCHEDULE) && sideEffectClass == NETWORK) {
         return CONFIRM_ONCE                         // background network always re-confirms
     }
 
@@ -317,7 +317,7 @@ fun decideConfirmation(
 1. `DESTRUCTIVE` 始终返回 `CONFIRM_ONCE`——不存在“允许持久化”路径（步骤 3 + 步骤 4）。
 2. 企业策略 **最先** 检查，且只能收紧（步骤 1）。它不能将 `CONFIRM` 变为 `ALLOW`。
 3. 粘性拒绝是绝对的（步骤 2）——任何策略都无法覆盖；只有用户在设置中更改才能重置。
-4. 后台事件（`source == EVENT`）对 `DESTRUCTIVE` 和 `NETWORK` 更严格（步骤 4）——会话授权不被缓存。
+4. 后台触发运行（`source == EVENT` 或 `SCHEDULE`）对 `DESTRUCTIVE` 和 `NETWORK` 更严格（步骤 4）——会话授权不被缓存。
 5. 用户全局收紧在基础矩阵之后应用（步骤 5），因此它可将 `ALLOW` 升级为 `CONFIRM`，但不能反向。
 
 ### 4.1 完整策略矩阵
@@ -342,7 +342,7 @@ fun decideConfirmation(
 |---------|--------|
 | “每次写入都确认” | `WRITE` / `CONTROL` / `DESTRUCTIVE` → 始终 `CONFIRM_ONCE`，无视缓存授权 |
 | “每次网络调用都确认” | `NETWORK` → 始终 `CONFIRM_ONCE`（每次显示 URL） |
-| “后台事件需前台确认” | `source == EVENT` → 始终以通知形式呈现并附显式确认操作，无静默执行 |
+| “后台事件需前台确认” | `source == EVENT` 或 `SCHEDULE` → 始终以通知形式呈现并附显式确认操作，无静默执行 |
 | “禁用会话授权” | `CONFIRM_SESSION` 降级为 `CONFIRM_ONCE`——每次调用都重新提示 |
 
 这些设置存储在 `RuntimeConfig`（[03 §19](./03-runtime.md)）中，在下一次调用时生效（无需重启）。
@@ -549,7 +549,7 @@ riskBadge = when (sideEffectClass) {
 
 ### 6.3 后台事件确认
 
-当 `source == EVENT` 且 `decideConfirmation` 返回 `CONFIRM_ONCE` 时，应用可能不在前台（无 Activity 可显示对话框）。运行时遵循以下升级路径：
+当 `source` 为后台触发（`EVENT` 或 `SCHEDULE`）且 `decideConfirmation` 返回 `CONFIRM_ONCE` 时，应用可能不在前台（无 Activity 可显示对话框）。运行时遵循以下升级路径：
 
 1. **发布高优先级通知**，包含 `ConfirmationPrompt.summary` + 一个“查看”操作（PendingIntent 打开确认卡片）。
 2. **等待用户点击**——在用户打开应用并确认之前，命令不执行。超时（默认 5 分钟）自动拒绝。
@@ -570,7 +570,7 @@ riskBadge = when (sideEffectClass) {
 | 场景 | 默认超时 | 来源字段/小节 | 超时行为 |
 |------|---------|-------------|---------|
 | 前台提示（命令调用） | 30 s | `ConfirmationPrompt.timeoutMs`（[§6.0](#60-normative-type)） | DENY（非粘性）；3× → 粘性 DENY |
-| 后台事件（`source == EVENT`） | 5 分钟 | [§6.3](#63-background-event-confirmation) 升级步骤 2 | DENY（非粘性） |
+| 后台触发（`source == EVENT` 或 `SCHEDULE`） | 5 分钟 | [§6.3](#63-background-event-confirmation) 升级步骤 2 | DENY（非粘性） |
 | 工作流 `confirm` 步骤（流中途闸门） | 120 s | [05 §5.7](./05-workflow.md) | Run → `Cancelled` |
 
 **分类理由：** 前台提示是交互式的且较短——30 秒能捕捉到分心的用户而不阻塞流程。后台事件可能需要等用户注意到通知——5 分钟在及时性和给用户时间拿手机之间取得平衡。工作流 `confirm` 步骤是流中途检查点——120 秒介于两者之间，因为用户已参与到多步流程中但可能在阅读上下文。
@@ -794,7 +794,7 @@ interface SecureStore {
 
 - 每插件每分钟最大调用数
 - 每小时最大破坏性操作数
-- 每配方每小时最大后台事件触发数
+- 每配方每小时最大后台触发数（事件 + 调度）
 - 紧密循环的指数退避
 
 以保护电池并缓解失控工作流 / 有缺陷的 Planner。
@@ -1332,7 +1332,7 @@ data class SdkConstraint(
 | `NetworkClass_AlwaysShowUrl` | `NETWORK` + 任意授权 | 已授权则 `ALLOW`，否则 `CONFIRM_ONCE` |
 | `ControlClass_TrustToggle` | `CONTROL` + `GRANTED` | `ALLOW`；无则 `CONFIRM_SESSION` |
 | `DestructiveClass_AlwaysConfirm` | `DESTRUCTIVE` + 任意授权（甚至持久化） | `CONFIRM_ONCE`——绝不 `ALLOW` |
-| `BackgroundDestructive_Stricter` | `DESTRUCTIVE` + `EVENT` 来源 | `CONFIRM_ONCE`（无会话缓存） |
+| `BackgroundDestructive_Stricter` | `DESTRUCTIVE` + 后台触发来源（`EVENT`/`SCHEDULE`） | `CONFIRM_ONCE`（无会话缓存） |
 | `StickyDenial_Absolute` | 任意类别 + `DENIED` | `DENY`——无策略覆盖 |
 | `EnterpriseForceConfirm_Overrides` | `WRITE` + `GRANTED` + 企业 `forceConfirm:[WRITE]` | `CONFIRM_ONCE` |
 | `UserTighten_OverridesAllow` | `WRITE` + `GRANTED` + 用户“每次写入都确认” | `CONFIRM_ONCE` |
