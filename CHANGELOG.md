@@ -10,6 +10,20 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### Sandboxed file storage (2026-08-25)
+
+04 §6.1's oldest waiting consumer lands: **every plugin gets a namespaced, escape-proof directory**, and `mcos.plugin.files` reads/writes it — schedule/event recipes can finally persist real data.
+
+- **SDK** — `HostServices.sandbox: SandboxFileService?` optional capability (§6.7–6.11 pattern: default-JVM hosts stay null, `file.*` reports `UNAVAILABLE`, never fake success) with a lean byte API (`read → ByteArray?` / `write(path, data, append)` / `stat` / `delete` / non-recursive `list` / `tempFile`) + `SandboxEntry(path, isDir, size)`. Reference implementation `DirectorySandbox(root)` — pure `java.nio`, shared verbatim by JVM hosts and Android (`filesDir/plugin-sandbox`), so its JVM suite covers the exact Android code path.
+- **Two-layer path defense** — syntax layer: blank/`.`/`..` segments, backslashes, NUL → `SCHEMA_VIOLATION "sandbox_path_invalid"`; physical layer: lexical root containment + strict no-symlink walk of every existing component → `PERMISSION_DENIED "sandbox_escape"`.
+- **Executor** — `secretResolvingServices(pluginId)` is namespacing-aware: `NamespacedSandbox` roots paths at `<root>/<pluginId>/`, re-expresses stat/list results plugin-relative, and reserves `tempFile` names inside the namespace; the wrapper also gained the previously missing (latent) `events` delegation.
+- **FilesPlugin 4→8 commands** — `file.write {path, text, append?}` (write class; 1 MiB cap in schema **and** handler → `file_too_large`), `file.read {path}` (read class; absent → `files.not_found`, oversize → `files.too_large`), `file.stat {path}` (`Ok {path, exists, isDir, size?}`), `file.delete {path}` (write class — sandbox-local, not destructive; idempotent). Handlers use `ctx.services.sandbox` (the namespaced Stage-4 view), never the `onLoad`-captured host-wide facade.
+- **E2E** — `McosRuntimeFilesTest`: a DSL `file.write` through the full facade lands at `<root>/mcos.plugin.files/logs/e2e.txt` on disk and is audited; a second plugin reading the same plugin-relative path sees null (isolation); a runtime without a sandbox fails honestly; `file.delete` removes the physical file.
+- **Android** — `AndroidHostServices.sandbox = DirectorySandbox(filesDir/plugin-sandbox)`: one line, no new permission (app-private storage).
+- **🟡 Honest boundary** — command face is text-only (binary via plugin code on the SDK interface); §6.1's "system picker grants access outside the sandbox" flow is V1 host work; no per-plugin quota beyond the 1 MiB-per-write cap. Secrets never live in the sandbox — `SecureStore` only (08 §9).
+- **Tests**: +28 — `DirectorySandboxTest` DS1-DS12 · `ExecutorTest` E32 · `FilesPluginTest` F15-F25 · `McosRuntimeFilesTest` FE1-FE4. Total **1095** (1148 executions incl. Android debug+release), 0 failures.
+- **Docs**: `04-plugin-sdk` zh/en — §6.1 as-built rewrite (media-facade/sandbox split, lean byte API vs streaming drift, path defense, command semantics, secrets ban, 🟡 picker boundary) + §6 snippet/§17 table (+4 commands); `08-security` zh/en — §8.3 facade list split + §9 sandbox-is-not-a-secret-store note; `11-implementation-status` zh/en — item 29, item-26 gap marked landed, baseline 1067 → 1095 (re-measured); `10-roadmap` zh/en — banner count.
+
 ### Schedule triggers (2026-08-25)
 
 The trigger trilogy completes: **`Trigger.Schedule` arms and fires** — a cron boundary launches the pre-authorized workflow with source `SCHEDULE` (05 §9.3).

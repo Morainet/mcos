@@ -9,7 +9,7 @@
 
 > **灵感来源:** Apache 基础设施成熟度模型 · Kubernetes 分阶段交付（alpha → beta → GA）· Rust edition 路线图 · Stripe 年度面向用户路线图 · TypeScript "规范与代码同步演进" 方法
 
-> ✅ **实现状态:** P1（MVP）已完成、**P2 退出标准全部落地**（[§5.6.1](#561-p2-退出标准检查清单)）——12 个 Gradle 源码模块、1067 个测试、四个内置插件、市场客户端与 `mcos-server`（见 [11-implementation-status.md](./11-implementation-status.md)）。最后两项开放标准 —— 多轮 Agent 循环与事件触发配方 —— 已于 2026-08-24/25 交付；剩余 P2 行（IoT / Intent 插件生态）属生态工作，不是退出标准。下文各时间跨度仍为示意，不构成承诺。
+> ✅ **实现状态:** P1（MVP）已完成、**P2 退出标准全部落地**（[§5.6.1](#561-p2-退出标准检查清单)）——12 个 Gradle 源码模块、1095 个测试、四个内置插件、市场客户端与 `mcos-server`（见 [11-implementation-status.md](./11-implementation-status.md)）。最后两项开放标准 —— 多轮 Agent 循环与事件触发配方 —— 已于 2026-08-24/25 交付；剩余 P2 行（IoT / Intent 插件生态）属生态工作，不是退出标准。下文各时间跨度仍为示意，不构成承诺。
 
 ---
 

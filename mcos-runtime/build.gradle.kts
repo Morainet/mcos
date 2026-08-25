@@ -16,4 +16,8 @@ dependencies {
     api(libs.kotlinx.serialization.json)
 
     testImplementation(libs.kotlin.test)
+    // FE tests exercise the REAL FilesPlugin sandbox commands through the
+    // full runtime stack (test-only; production hosts wire it themselves,
+    // e.g. mcos-android).
+    testImplementation(project(":plugins:mcos-plugin-files"))
 }

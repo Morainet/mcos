@@ -339,7 +339,7 @@ The IR `meta` field ([02 §8.2](./02-command-protocol.md)) — `source`, `confid
 
 ## 6. HostServices (Plugin-Facing Facade)
 
-> ✅ **Implementation status:** `HostServices` and every §6.1–6.6 interface live in `mcos-sdk` (JVM stubs + real Android implementations in `mcos-android`). v0.x deltas: services are `val` properties (the spec sketch shows `fun`) and some signatures are leaner (`NetService.request(method, url, body, headers)`, `Clock.nowMs()`) — full-signature alignment is tracked as a 🟡 gap in [11-implementation-status.md](./11-implementation-status.md). §6.7–6.10 optional capabilities were added in v0.x.
+> ✅ **Implementation status:** `HostServices` and every §6.1–6.6 interface live in `mcos-sdk` (JVM stubs + real Android implementations in `mcos-android`). v0.x deltas: services are `val` properties (the spec sketch shows `fun`) and some signatures are leaner (`NetService.request(method, url, body, headers)`, `Clock.nowMs()`) — full-signature alignment is tracked as a 🟡 gap in [11-implementation-status.md](./11-implementation-status.md). §6.7–6.10 optional capabilities were added in v0.x, and §6.1's scoped storage shipped in v0.x as the optional `sandbox` capability (see §6.1's as-built note).
 
 Plugins should depend on **facades**, not the entire Android framework.
 
@@ -362,29 +362,41 @@ interface HostServices {
     val clipboard: ClipboardService?          // §6.9
     val haptics: HapticsService?              // §6.10
     val events: EventPublisher?               // §6.11
+    val sandbox: SandboxFileService?          // §6.1 scoped storage (optional, v0.x)
 }
 ```
 
 Each service interface is specified in §6.1–6.6 below. MVP pragmatism: the Camera plugin may need CameraX directly. Guideline: **new code prefers facades**; document exceptions in plugin README.
 
-### 6.1 `FileService` — Scoped Storage
+### 6.1 `FileService` / `SandboxFileService` — Media Access & Scoped Storage
 
-All paths are relative to the plugin's **namespaced sandbox** — a plugin cannot read or write outside its own directory unless the user explicitly grants access via a system picker.
+As built (v0.x), this section covers **two surfaces**:
+
+- **`HostServices.files: FileService`** — the **media-store facade**: read-only queries over the device media library (`list(uri)`, `searchPhotos(mimeType, afterMs, beforeMs, limit)`), consumed by `file.list` / `file.search` / `photo.search` / `photo.compress`. It is *not* a general file API.
+- **`HostServices.sandbox: SandboxFileService?`** — the **scoped storage** this section originally specified, shipped as an optional capability (the §6.7–6.11 pattern: interface default null — a host without storage simply does not override, and the sandbox commands surface `UNAVAILABLE`, never fake success). All paths are plugin-relative and resolve inside the plugin's **namespaced sandbox**; a plugin cannot read or write outside its own directory. The reference implementation is `DirectorySandbox(root)` — pure `java.nio`, so its JVM test suite covers the exact code the Android host runs (`filesDir/plugin-sandbox`).
 
 ```kotlin
-interface FileService {
-    suspend fun openInput(path: String): InputFlow      // read, relative to sandbox
-    suspend fun openOutput(path: String): OutputFlow     // write/overwrite
-    suspend fun list(dir: String): List<Entry>           // non-recursive
-    suspend fun stat(path: String): Entry?               // null if absent
-    suspend fun delete(path: String): Boolean
-    suspend fun tempFile(prefix: String = "mcos", suffix: String = ".tmp"): String  // returns sandbox-relative path
+interface SandboxFileService {
+    suspend fun read(path: String): ByteArray?                     // null if absent
+    suspend fun write(path: String, data: ByteArray, append: Boolean = false)
+    suspend fun stat(path: String): SandboxEntry?                  // null if absent
+    suspend fun delete(path: String): Boolean                      // false if absent; empty dirs only
+    suspend fun list(dir: String): List<SandboxEntry>              // non-recursive
+    suspend fun tempFile(prefix: String = "mcos", suffix: String = ".tmp"): String  // sandbox-relative
 }
 
-data class Entry(val path: String, val isDir: Boolean, val size: Long?)
+data class SandboxEntry(val path: String, val isDir: Boolean, val size: Long?)
 ```
 
-Artifacts returned from handlers SHOULD use `tempFile(...)` or a stable sandbox path, then return the URI — never inline bytes in `CommandResult.Ok` (see §7.3).
+**Namespacing** — the Executor's Stage-4 facade hands every command a per-plugin view: paths resolve under `<root>/<pluginId>/`, and one plugin can never see another's files. Handlers MUST use `ctx.services.sandbox` (the namespaced view), never an `onLoad`-captured host-wide facade.
+
+**Path defense (two layers)** — syntax layer: blank/`.`/`..` segments, backslashes, NUL → `SCHEMA_VIOLATION` with `details.reason = "sandbox_path_invalid"`. Physical layer: lexical root containment plus a strict no-symlink walk of every existing component → `PERMISSION_DENIED` with `details.reason = "sandbox_escape"`.
+
+**Command surface** — `mcos.plugin.files` exposes the sandbox as four commands (§17): `file.write {path, text, append?}` (write class; 1 MiB per write — over → `SCHEMA_VIOLATION "file_too_large"`), `file.read {path}` (read class; absent → `files.not_found`; oversize → `files.too_large`), `file.stat {path}` (read class; `Ok {path, exists, isDir, size?}`), `file.delete {path}` (write class — sandbox-local deletion is not device-level irreversible, so it is not `destructive`; idempotent `Ok {deleted}`). The command face is **text-only**; binary data stays in plugin code calling the SDK interface above.
+
+Artifacts returned from handlers SHOULD use `tempFile(...)` or a stable sandbox path, then return the URI — never inline bytes in `CommandResult.Ok` (see §7.3). **Secrets MUST never live in the sandbox** — it is plaintext app-private storage; use `SecureStore` (§6.4, [08 §9](./08-security.md)).
+
+> 🟡 **v0.x deltas (honest):** the byte API above is leaner than the original streaming sketch (`openInput`/`openOutput` → `InputFlow`/`OutputFlow` — same drift family as `NetService`/`Clock`, tracked in [11-implementation-status.md](./11-implementation-status.md)); the "user grants access outside the sandbox via a system picker" flow is V1 host work; per-plugin storage quotas beyond the 1 MiB-per-write cap are not implemented.
 
 ### 6.2 `NetService` — Policy-Aware HTTP
 
@@ -1066,7 +1078,7 @@ class HelloWorldHandler : CommandHandler {
 | `example.hello` | `hello.world` | P1 (reference) |
 | `mcos.plugin.system` | `sys.notify`, `sys.share`, `sys.clipboard`, `sys.openUrl`, `sys.vibrate`, `sys.device.battery`, `sys.device.wifi`, `sys.device.screen`, `sys.device.volume`, `sys.device.location`, `sys.device.brightness`, `sys.event.emit` | P1 (+`sys.event.emit` P2) |
 | `mcos.plugin.camera` | `camera.capture`, `camera.scan` | P1 |
-| `mcos.plugin.files` | `file.list`, `file.search`, `photo.search`, `photo.compress` | P1 |
+| `mcos.plugin.files` | `file.list`, `file.search`, `photo.search`, `photo.compress`, `file.write`, `file.read`, `file.stat`, `file.delete` | P1 |
 | `mcos.plugin.iot` | `home.*`, `iot.*` | P2 |
 | `mcos.plugin.mcp` | dynamic `mcp.*` | P2 spike / P3 production |
 

@@ -685,7 +685,8 @@ flowchart TB
 
 不可信插件永远不会收到原始的 `android.content.Context`。`HostServices` 接口（[04 §6](./04-plugin-sdk.md)）是一个 **狭窄的门面**，仅暴露：
 
-- `FileService`——受限 URI，无文件系统根访问
+- `FileService`——受限的媒体库 URI，无文件系统根访问
+- `SandboxFileService`——按插件命名空间的目录 + 双层路径防御（[04 §6.1](./04-plugin-sdk.md)）；`..`/绝对路径/符号链接均无法逃逸
 - `NetService`——域名受限，AuthStamp 验证
 - `UiService`——仅 toast/通知，无任意 Activity 启动
 - `SecureStore`——按插件命名空间隔离，无跨插件访问
@@ -720,6 +721,8 @@ flowchart TB
 | 用户密码 | 绝不进入 Memory；绝不进入审计 | MCOS 不存储——插件使用 OAuth/SecureStore |
 
 审计脱敏 `x-mcos-secret` 字段。日志绝不打印 Authorization 头。
+
+插件沙箱（[04 §6.1](./04-plugin-sdk.md) 的 `SandboxFileService`）**不是**密钥存储 —— 它是应用私有目录内的明文存储；任何密钥都应放进 `SecureStore`。
 
 ### 9.1 `SecureStore` 接口
 

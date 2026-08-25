@@ -50,6 +50,16 @@ class AndroidHostServices(
     override val deviceInfo: DeviceInfoService = AndroidDeviceInfoService(context)
     override val clipboard: ClipboardService = AndroidClipboardService(context)
     override val haptics: HapticsService = AndroidHapticsService(context)
+
+    /**
+     * Sandboxed per-plugin file storage (04 §6.1): one root inside the app's
+     * private files dir; the Executor's Stage-4 facade namespaces every
+     * plugin under `<root>/<pluginId>/`. [DirectorySandbox] is pure java.nio,
+     * so its JVM test suite covers this exact implementation. No new
+     * permission — app-private storage. Secrets never live here (08 §9).
+     */
+    override val sandbox: SandboxFileService =
+        DirectorySandbox(File(context.filesDir, "plugin-sandbox").toPath())
 }
 
 // ── FileService ─────────────────────────────────────────────────────────────

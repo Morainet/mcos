@@ -341,7 +341,7 @@ IR 的 `meta` 字段（[02 §8.2](./02-command-protocol.md)）—— `source`、
 
 ## 6. HostServices（面向插件的门面）
 
-> ✅ **Implementation status:** `HostServices` 与 §6.1–6.6 全部接口已在 `mcos-sdk` 落地（JVM 桩 + `mcos-android` 真实现）。v0.x 已知差异：实现用 `val` 属性（规范示意 `fun`），部分签名更精简（`NetService.request(method, url, body, headers)`、`Clock.nowMs()`）——全量签名对齐是 [11-implementation-status.md](./11-implementation-status.md) 记录的 🟡 缺口。§6.7–6.10 的可选能力为 v0.x 增补。
+> ✅ **Implementation status:** `HostServices` 与 §6.1–6.6 全部接口已在 `mcos-sdk` 落地（JVM 桩 + `mcos-android` 真实现）。v0.x 已知差异：实现用 `val` 属性（规范示意 `fun`），部分签名更精简（`NetService.request(method, url, body, headers)`、`Clock.nowMs()`）——全量签名对齐是 [11-implementation-status.md](./11-implementation-status.md) 记录的 🟡 缺口。§6.7–6.10 的可选能力为 v0.x 增补；§6.1 的作用域存储也已于 v0.x 以可选能力 `sandbox` 交付（见 §6.1 的 as-built 说明）。
 
 插件应当依赖**门面（facades）**，而非整个 Android 框架。
 
@@ -364,29 +364,41 @@ interface HostServices {
     val clipboard: ClipboardService?          // §6.9
     val haptics: HapticsService?              // §6.10
     val events: EventPublisher?               // §6.11
+    val sandbox: SandboxFileService?          // §6.1 作用域存储（可选，v0.x）
 }
 ```
 
 各服务接口在 §6.1–6.6 中规定。MVP 务实考虑：相机插件可能需要直接使用 CameraX。准则：**新代码优先使用门面**；如有例外，在插件 README 中说明。
 
-### 6.1 `FileService` —— 作用域存储
+### 6.1 `FileService` / `SandboxFileService` —— 媒体访问与作用域存储
 
-所有路径相对于插件的**命名空间沙箱** —— 除非用户通过系统选择器明确授权，插件无法读写自身目录之外的内容。
+As-built（v0.x），本节覆盖**两个表面**：
+
+- **`HostServices.files: FileService`** —— **媒体库门面**：对设备媒体库的只读查询（`list(uri)`、`searchPhotos(mimeType, afterMs, beforeMs, limit)`），由 `file.list` / `file.search` / `photo.search` / `photo.compress` 消费。它**不是**通用文件 API。
+- **`HostServices.sandbox: SandboxFileService?`** —— 本节最初规定的**作用域存储**，以可选能力交付（§6.7–6.11 模式：接口默认 null —— 无存储能力的宿主不覆写即保持 null，沙箱命令如实上报 `UNAVAILABLE`，绝不假成功）。所有路径均为插件相对路径，解析落在插件的**命名空间沙箱**内；插件无法读写自身目录之外的内容。参考实现为 `DirectorySandbox(root)` —— 纯 `java.nio`，其 JVM 测试套件覆盖的正是 Android 宿主运行的同一份代码（`filesDir/plugin-sandbox`）。
 
 ```kotlin
-interface FileService {
-    suspend fun openInput(path: String): InputFlow      // read, relative to sandbox
-    suspend fun openOutput(path: String): OutputFlow     // write/overwrite
-    suspend fun list(dir: String): List<Entry>           // non-recursive
-    suspend fun stat(path: String): Entry?               // null if absent
-    suspend fun delete(path: String): Boolean
-    suspend fun tempFile(prefix: String = "mcos", suffix: String = ".tmp"): String  // returns sandbox-relative path
+interface SandboxFileService {
+    suspend fun read(path: String): ByteArray?                     // 不存在返回 null
+    suspend fun write(path: String, data: ByteArray, append: Boolean = false)
+    suspend fun stat(path: String): SandboxEntry?                  // 不存在返回 null
+    suspend fun delete(path: String): Boolean                      // 不存在返回 false；仅限空目录
+    suspend fun list(dir: String): List<SandboxEntry>              // 非递归
+    suspend fun tempFile(prefix: String = "mcos", suffix: String = ".tmp"): String  // 沙箱相对路径
 }
 
-data class Entry(val path: String, val isDir: Boolean, val size: Long?)
+data class SandboxEntry(val path: String, val isDir: Boolean, val size: Long?)
 ```
 
-处理器返回的产出物应使用 `tempFile(...)` 或稳定的沙箱路径，然后返回 URI —— 切勿在 `CommandResult.Ok` 中内联字节（见 §7.3）。
+**命名空间化** —— Executor 的 Stage-4 门面交给每条命令一个按插件隔离的视图：路径解析在 `<root>/<pluginId>/` 之下，一个插件永远看不到另一个插件的文件。处理器必须使用 `ctx.services.sandbox`（命名空间视图），绝不使用 `onLoad` 捕获的宿主全局门面。
+
+**路径防御（双层）** —— 语法层：空白/`.`/`..` 段、反斜杠、NUL → `SCHEMA_VIOLATION`，`details.reason = "sandbox_path_invalid"`。物理层：词法层根包含检查 + 对每个已存在组件的严格无符号链接走查 → `PERMISSION_DENIED`，`details.reason = "sandbox_escape"`。
+
+**命令面** —— `mcos.plugin.files` 将沙箱暴露为四条命令（§17）：`file.write {path, text, append?}`（write 级；单次写入上限 1 MiB —— 超出 → `SCHEMA_VIOLATION "file_too_large"`）、`file.read {path}`（read 级；不存在 → `files.not_found`；超限 → `files.too_large`）、`file.stat {path}`（read 级；`Ok {path, exists, isDir, size?}`）、`file.delete {path}`（write 级 —— 沙箱内删除不属于设备级不可逆操作，因此不是 `destructive`；幂等 `Ok {deleted}`）。命令面**仅限文本**；二进制数据走插件代码直接调用上述 SDK 接口。
+
+处理器返回的产出物应使用 `tempFile(...)` 或稳定的沙箱路径，然后返回 URI —— 切勿在 `CommandResult.Ok` 中内联字节（见 §7.3）。**密钥绝不落入沙箱** —— 它是明文的应用私有存储；请使用 `SecureStore`（§6.4、[08 §9](./08-security.md)）。
+
+> 🟡 **v0.x 差异（诚实记录）：** 上述字节 API 比最初的流式示意（`openInput`/`openOutput` → `InputFlow`/`OutputFlow`）更精简 —— 与 `NetService`/`Clock` 属同一 drift 家族，由 [11-implementation-status.md](./11-implementation-status.md) 跟踪；"用户通过系统选择器授予沙箱外访问"的流程属 V1 宿主工作；超出单次写入 1 MiB 上限的按插件配额尚未实现。
 
 ### 6.2 `NetService` —— 策略感知的 HTTP
 
@@ -1068,7 +1080,7 @@ class HelloWorldHandler : CommandHandler {
 | `example.hello` | `hello.world` | P1（参考） |
 | `mcos.plugin.system` | `sys.notify`, `sys.share`, `sys.clipboard`, `sys.openUrl`, `sys.vibrate`, `sys.device.battery`, `sys.device.wifi`, `sys.device.screen`, `sys.device.volume`, `sys.device.location`, `sys.device.brightness`, `sys.event.emit` | P1（+`sys.event.emit` P2） |
 | `mcos.plugin.camera` | `camera.capture`, `camera.scan` | P1 |
-| `mcos.plugin.files` | `file.list`, `file.search`, `photo.search`, `photo.compress` | P1 |
+| `mcos.plugin.files` | `file.list`, `file.search`, `photo.search`, `photo.compress`, `file.write`, `file.read`, `file.stat`, `file.delete` | P1 |
 | `mcos.plugin.iot` | `home.*`, `iot.*` | P2 |
 | `mcos.plugin.mcp` | 动态 `mcp.*` | P2 spike / P3 production |
 

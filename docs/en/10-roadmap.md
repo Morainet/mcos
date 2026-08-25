@@ -7,7 +7,7 @@
 
 > **Inspiration:** Apache infrastructure maturity model · Kubernetes phased delivery (alpha → beta → GA) · Rust edition roadmap · Stripe annual user-facing roadmap · TypeScript evolving-spec-with-code approach
 
-> ✅ **Implementation status:** P1 (MVP) is complete and **all P2 exit criteria have landed** ([§5.6.1](#561-p2-exit-criteria-checklist)) — 12 Gradle source modules, 1067 tests, four built-in plugins, the marketplace client and `mcos-server` (see [11-implementation-status.md](./11-implementation-status.md)). The last two open criteria — the multi-turn Agent loop and event-triggered recipes — shipped on 2026-08-24/25; remaining P2 rows (IoT / Intent plugin ecosystem) are ecosystem work, not exit criteria. Horizons below remain indicative, not contractual.
+> ✅ **Implementation status:** P1 (MVP) is complete and **all P2 exit criteria have landed** ([§5.6.1](#561-p2-exit-criteria-checklist)) — 12 Gradle source modules, 1095 tests, four built-in plugins, the marketplace client and `mcos-server` (see [11-implementation-status.md](./11-implementation-status.md)). The last two open criteria — the multi-turn Agent loop and event-triggered recipes — shipped on 2026-08-24/25; remaining P2 rows (IoT / Intent plugin ecosystem) are ecosystem work, not exit criteria. Horizons below remain indicative, not contractual.
 
 ---
 

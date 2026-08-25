@@ -684,7 +684,8 @@ Every Binder call from a plugin service to the main-process `HostServices` is ch
 
 Untrusted plugins never receive a raw `android.content.Context`. The `HostServices` interface ([04 §6](./04-plugin-sdk.md)) is a **narrow facade** that exposes only:
 
-- `FileService` — scoped URIs, no filesystem root access
+- `FileService` — scoped media-store URIs, no filesystem root access
+- `SandboxFileService` — per-plugin namespaced directory with two-layer path defense ([04 §6.1](./04-plugin-sdk.md)); no escape via `..`/absolute paths/symlinks
 - `NetService` — domain-scoped, AuthStamp-verified
 - `UiService` — toast/notification only, no arbitrary activity launch
 - `SecureStore` — per-plugin namespaced, no cross-plugin access
@@ -719,6 +720,8 @@ This module is explicitly out of MVP and V1 scope ([§16](#16-what-we-explicitly
 | User passwords | Never in Memory; never in audit | Not stored by MCOS — plugins use OAuth/SecureStore |
 
 Audit redacts `x-mcos-secret` fields. Logs never print Authorization headers.
+
+The plugin sandbox ([04 §6.1](./04-plugin-sdk.md) `SandboxFileService`) is **not** a secret store — it is plaintext app-private storage inside the app's own files dir; anything secret belongs in `SecureStore`.
 
 ### 9.1 `SecureStore` Interface
 
