@@ -14,6 +14,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * In-memory key-value store with semantic indexing and TTL support.
@@ -39,35 +40,40 @@ class MemoryStore(
 ) : MemoryFacade {
 
     /**
-     * Guards all shared state ([entries], [semanticIndex], [superseded]).
+     * Concurrency model for the shared maps ([entries], [semanticIndex],
+     * [superseded]).
      *
-     * Two locks, by caller kind:
-     *  - [suspendLock] (`kotlinx.coroutines.sync.Mutex`) protects every
-     *    `suspend fun`. Unlike a JVM monitor, a coroutine Mutex suspends the
-     *    caller instead of pinning its dispatcher thread, and it cooperates
-     *    with structured cancellation — a cancelled coroutine waiting on the
-     *    mutex is resumed with `CancellationException` rather than blocking
-     *    forever. This fixes the P0-C1 hazard where `suspend fun` + a plain
-     *    `synchronized` monitor was both thread-pinning and cancellation-blind.
-     *  - [snapshotLock] (plain `Any` monitor) guards the three *non-suspend*
-     *    snapshot accessors ([tags], [history], [export]). These are pure
-     *    synchronous reads, so a JVM monitor is correct and incurs no
-     *    cancellation concern.
+     *  - [suspendLock] (`kotlinx.coroutines.sync.Mutex`) serializes every
+     *    `suspend fun`, giving the write path read-modify-write atomicity
+     *    (e.g. [put] reads the existing entry, then writes). A coroutine Mutex
+     *    suspends the caller instead of pinning its dispatcher thread and
+     *    cooperates with structured cancellation — fixing the P0-C1 hazard
+     *    where `suspend fun` + a plain `synchronized` monitor was both
+     *    thread-pinning and cancellation-blind.
+     *  - The maps are [ConcurrentHashMap]s so the *non-suspend* snapshot
+     *    accessors ([tags], [history], [export]) can read them safely without
+     *    the Mutex (which they cannot acquire — `Mutex.lock` is `suspend`).
+     *    A JVM monitor would NOT have helped: it is a different lock from the
+     *    Mutex, so it never excluded the suspend writers and a snapshot read
+     *    racing a `put` could throw `ConcurrentModificationException`. Each
+     *    snapshot reader touches a single map, and entries are immutable
+     *    (replaced wholesale), so a weakly-consistent iterator yields a
+     *    crash-free, self-consistent view — exactly what a serialization
+     *    snapshot needs.
      *
      * Critical sections are short and never suspend to the network/disk while
-     * holding either lock.
+     * holding the Mutex.
      */
     private val suspendLock = Mutex()
-    private val snapshotLock = Any()
 
     /** Stored entries indexed by path */
-    private val entries = mutableMapOf<String, MemoryEntry>()
+    private val entries = ConcurrentHashMap<String, MemoryEntry>()
 
     /** Semantic index: tag -> set of paths */
-    private val semanticIndex = mutableMapOf<String, MutableSet<String>>()
+    private val semanticIndex = ConcurrentHashMap<String, MutableSet<String>>()
 
     /** Soft-deleted (superseded) values: "path@ISO-timestamp" -> entry */
-    private val superseded = mutableMapOf<String, MemoryEntry>()
+    private val superseded = ConcurrentHashMap<String, MemoryEntry>()
 
     // ─── Write API (runtime use) ────────────────────────────────────────
 
@@ -289,9 +295,7 @@ class MemoryStore(
     /**
      * Get all semantic tags currently in use.
      */
-    fun tags(): Set<String> = synchronized(snapshotLock) {
-        semanticIndex.keys.toSet()
-    }
+    fun tags(): Set<String> = semanticIndex.keys.toSet()
 
     /**
      * Count of non-expired entries.
@@ -314,12 +318,11 @@ class MemoryStore(
      * Soft-deleted (superseded) versions of [path], oldest first. Each pair is
      * the history key (e.g. "people.tom.phone@2026-07-01T...") and the entry.
      */
-    fun history(path: String): List<Pair<String, MemoryEntry>> = synchronized(snapshotLock) {
+    fun history(path: String): List<Pair<String, MemoryEntry>> =
         superseded.entries
             .filter { it.key.startsWith("$path@") }
             .sortedBy { it.key }
             .map { it.key to it.value }
-    }
 
     /**
      * Evict all expired entries.
@@ -338,9 +341,9 @@ class MemoryStore(
     /**
      * Export all entries as a JSON object for serialization/sync.
      */
-    fun export(): JsonObject = synchronized(snapshotLock) {
+    fun export(): JsonObject {
         val now = currentTimeMs()
-        buildJsonObject {
+        return buildJsonObject {
             for ((path, entry) in entries) {
                 if (!entry.isExpired(now)) {
                     put(path, buildJsonObject {

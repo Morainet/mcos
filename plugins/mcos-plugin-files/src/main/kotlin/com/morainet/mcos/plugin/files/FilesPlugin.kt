@@ -363,8 +363,7 @@ class FilesPlugin : McosPlugin {
             if (!pattern.contains('*') && !pattern.contains('?')) {
                 return name.contains(pattern, ignoreCase = true)
             }
-            val regex = Regex.glob(pattern)
-            return regex.matches(name)
+            return globMatches(name, pattern)
         }
     }
 
@@ -500,8 +499,23 @@ class FilesPlugin : McosPlugin {
 
             val sandbox = ctx.services.sandbox
                 ?: throw McosException("UNAVAILABLE", "Sandbox storage is not available on this host")
+            // Reject oversized files from their stat BEFORE loading them into
+            // memory — reading first would defeat the cap and risk an OOM on a
+            // multi-megabyte file (the command limit is a surface bound, not a
+            // post-hoc check).
+            val entry = sandbox.stat(path)
+                ?: throw McosException("files.not_found", "No sandbox file at path: $path")
+            entry.size?.let { size ->
+                if (size > MAX_FILE_BYTES) {
+                    throw McosException(
+                        code = "files.too_large",
+                        message = "File exceeds the ${MAX_FILE_BYTES / 1024} KiB command limit: $path",
+                    )
+                }
+            }
             val bytes = sandbox.read(path)
                 ?: throw McosException("files.not_found", "No sandbox file at path: $path")
+            // Belt-and-braces for hosts whose stat does not report a size.
             if (bytes.size > MAX_FILE_BYTES) {
                 throw McosException(
                     code = "files.too_large",
@@ -562,33 +576,38 @@ class FilesPlugin : McosPlugin {
     companion object {
         /** Command-surface cap for sandbox text payloads (input AND output). */
         const val MAX_FILE_BYTES: Int = 1024 * 1024
+
         /**
-         * Glob → regex conversion.
+         * Anchored glob match for `*` (any run) and `?` (exactly one char).
          *
-         * Builds the regex char-by-char: every regex metacharacter is escaped
-         * (so a literal `.` in the glob matches a `.`), while the two glob
-         * wildcards keep their special meaning:
-         *  - `*` → `.*`  (any run of characters)
-         *  - `?` → `.`   (exactly one character)
-         *
-         * We can NOT use `Regex.escape(pattern)` here: it wraps the whole
-         * literal run in `\Q...\E`, after which a `.replace("\\*", ".*")` can
-         * no longer find the escaped `*` — silently breaking glob matching.
+         * Iterative two-pointer algorithm with a single backtrack point for
+         * the last `*` — O(name·pattern) worst case with no recursion. This
+         * deliberately replaces the previous glob→regex translation: patterns
+         * like `a*a*a*…b` compile to `a.*a.*a.*…b`, which sends the JVM regex
+         * engine into catastrophic backtracking (ReDoS) on non-matching input.
+         * A direct matcher has no such pathological case.
          */
-        private fun Regex.Companion.glob(pattern: String): Regex {
-            val sb = StringBuilder("^")
-            for (c in pattern) {
-                sb.append(when (c) {
-                    '*' -> ".*"
-                    '?' -> "."
-                    // Regex metacharacters that must be escaped to match literally.
-                    '.', '\\', '+', '(', ')', '[', ']', '{', '}', '^', '$', '|',
-                    '-', '/' -> "\\$c"
-                    else -> c.toString()
-                })
+        internal fun globMatches(name: String, pattern: String): Boolean {
+            var n = 0
+            var p = 0
+            var starIdx = -1
+            var matchIdx = 0
+            while (n < name.length) {
+                when {
+                    p < pattern.length && (pattern[p] == '?' || pattern[p] == name[n]) -> {
+                        n++; p++
+                    }
+                    p < pattern.length && pattern[p] == '*' -> {
+                        starIdx = p; matchIdx = n; p++
+                    }
+                    starIdx != -1 -> {
+                        p = starIdx + 1; matchIdx++; n = matchIdx
+                    }
+                    else -> return false
+                }
             }
-            sb.append('$')
-            return Regex(sb.toString())
+            while (p < pattern.length && pattern[p] == '*') p++
+            return p == pattern.length
         }
     }
 }

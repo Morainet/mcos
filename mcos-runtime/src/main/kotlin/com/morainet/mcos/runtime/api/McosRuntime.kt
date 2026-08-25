@@ -560,17 +560,26 @@ class McosRuntime internal constructor(
         return PreAuthorization(stamp, covered)
     }
 
-    /** Every command id in the workflow tree, depth-first (may repeat). */
-    private fun collectCommandIds(step: WorkflowStep): List<String> = when (step) {
-        is WorkflowStep.Command -> listOf(step.commandId)
-        is WorkflowStep.Sequential -> step.steps.flatMap { collectCommandIds(it) }
-        is WorkflowStep.Parallel -> step.steps.flatMap { collectCommandIds(it) }
+    /**
+     * Depth-first flatten of every [WorkflowStep.Command] leaf in the tree,
+     * projecting each through [leaf]. The single traversal backs both the
+     * command-id and command-args collectors (they differ only in the leaf
+     * projection), so the control-flow recursion lives in exactly one place.
+     */
+    private fun <T> flatMapCommands(step: WorkflowStep, leaf: (WorkflowStep.Command) -> T): List<T> = when (step) {
+        is WorkflowStep.Command -> listOf(leaf(step))
+        is WorkflowStep.Sequential -> step.steps.flatMap { flatMapCommands(it, leaf) }
+        is WorkflowStep.Parallel -> step.steps.flatMap { flatMapCommands(it, leaf) }
         is WorkflowStep.If ->
-            collectCommandIds(step.thenStep) + (step.elseStep?.let { collectCommandIds(it) } ?: emptyList())
-        is WorkflowStep.Loop -> collectCommandIds(step.body)
-        is WorkflowStep.Retry -> collectCommandIds(step.step)
-        is WorkflowStep.Try -> collectCommandIds(step.step) + step.compensation.flatMap { collectCommandIds(it) }
+            flatMapCommands(step.thenStep, leaf) + (step.elseStep?.let { flatMapCommands(it, leaf) } ?: emptyList())
+        is WorkflowStep.Loop -> flatMapCommands(step.body, leaf)
+        is WorkflowStep.Retry -> flatMapCommands(step.step, leaf)
+        is WorkflowStep.Try -> flatMapCommands(step.step, leaf) + step.compensation.flatMap { flatMapCommands(it, leaf) }
     }
+
+    /** Every command id in the workflow tree, depth-first (may repeat). */
+    private fun collectCommandIds(step: WorkflowStep): List<String> =
+        flatMapCommands(step) { it.commandId }
 
     /**
      * Confirmation hook for trigger-fired runs (08 §5): surface the step's
@@ -902,18 +911,8 @@ class McosRuntime internal constructor(
      * Collect every command's argument map from a workflow definition,
      * depth-first, for entity extraction.
      */
-    private fun collectCommandArgs(step: WorkflowStep): List<JsonObject> {
-        return when (step) {
-            is WorkflowStep.Command -> listOf(step.args)
-            is WorkflowStep.Sequential -> step.steps.flatMap { collectCommandArgs(it) }
-            is WorkflowStep.Parallel -> step.steps.flatMap { collectCommandArgs(it) }
-            is WorkflowStep.If ->
-                collectCommandArgs(step.thenStep) + (step.elseStep?.let { collectCommandArgs(it) } ?: emptyList())
-            is WorkflowStep.Loop -> collectCommandArgs(step.body)
-            is WorkflowStep.Retry -> collectCommandArgs(step.step)
-            is WorkflowStep.Try -> collectCommandArgs(step.step) + step.compensation.flatMap { collectCommandArgs(it) }
-        }
-    }
+    private fun collectCommandArgs(step: WorkflowStep): List<JsonObject> =
+        flatMapCommands(step) { it.args }
 
     /**
      * Estimate how many commands a workflow may execute (upper bound for
