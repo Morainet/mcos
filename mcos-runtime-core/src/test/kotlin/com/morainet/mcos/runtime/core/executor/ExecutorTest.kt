@@ -943,6 +943,62 @@ class ExecutorTest {
         Unit
     }
 
+    @Test
+    fun `E32-executed commands see a per-plugin namespaced sandbox`() = runBlocking {
+        // 04 §6.1: the Stage-4 facade roots every sandbox path at the
+        // executing plugin's namespace — one plugin cannot address another's
+        // files. tempFile round-trips plugin-relative. A host without the
+        // capability stays null (no fabricated sandbox).
+        val recording = RecordingSandbox()
+        val executorSandbox = Executor(registry, SandboxedHostServices(recording), SecurityConfig.permissive())
+
+        var seenSandbox: SandboxFileService? = null
+        var tempReturned: String? = null
+        val plugin = createPlugin("test.sandbox32", "1.0.0", mapOf(
+            "cmd.touch" to object : CommandHandler {
+                override suspend fun invoke(ctx: ExecutionContext): CommandResult {
+                    seenSandbox = ctx.services.sandbox
+                    ctx.services.sandbox!!.write("probe.txt", byteArrayOf(1))
+                    ctx.services.sandbox!!.stat("probe.txt")
+                    tempReturned = ctx.services.sandbox!!.tempFile("pfx", ".tmp")
+                    return CommandResult.Ok(JsonPrimitive("ok"))
+                }
+            }
+        ))
+        registry.register(plugin)
+
+        val result = executorSandbox.execute("cmd.touch")
+        assertIs<CommandResult.Ok>(result)
+        assertNotNull(seenSandbox, "sandbox must survive the secret-resolving facade")
+        // probe write first; the tempFile reservation below adds one more.
+        assertEquals("test.sandbox32/probe.txt", recording.writePaths.first())
+        assertEquals(listOf("test.sandbox32/probe.txt"), recording.statPaths)
+        val temp = tempReturned!!
+        assertFalse(temp.contains('/'), "temp path must be plugin-relative: $temp")
+        assertTrue(
+            recording.writePaths.any { it == "test.sandbox32/$temp" },
+            "tempFile must be reserved inside the plugin namespace: ${recording.writePaths}",
+        )
+
+        // A host without the sandbox capability must surface null, not a
+        // sandbox pointing at the shared root.
+        var seenBare = "never-set"
+        val pluginBare = createPlugin("test.bare32", "1.0.0", mapOf(
+            "cmd.bare" to object : CommandHandler {
+                override suspend fun invoke(ctx: ExecutionContext): CommandResult {
+                    seenBare = ctx.services.sandbox?.let { "present" } ?: "null"
+                    return CommandResult.Ok(JsonPrimitive("ok"))
+                }
+            }
+        ))
+        registry.register(pluginBare)
+
+        val bare = Executor(registry, services, SecurityConfig.permissive()).execute("cmd.bare")
+        assertIs<CommandResult.Ok>(bare)
+        assertEquals("null", seenBare)
+        Unit
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // Helpers
     // ═══════════════════════════════════════════════════════════════
@@ -1176,5 +1232,28 @@ class ExecutorTest {
         override val haptics = object : HapticsService {
             override suspend fun vibrate(durationMs: Int) {}
         }
+    }
+
+    /** [StubHostServices] plus a recording sandbox capability (E32). */
+    class SandboxedHostServices(private val sandboxDelegate: SandboxFileService) : StubHostServices() {
+        override val sandbox: SandboxFileService get() = sandboxDelegate
+    }
+
+    /** Records every path it is asked to touch (E32 real-call assertions). */
+    class RecordingSandbox : SandboxFileService {
+        val writePaths = mutableListOf<String>()
+        val statPaths = mutableListOf<String>()
+
+        override suspend fun read(path: String): ByteArray? = null
+        override suspend fun write(path: String, data: ByteArray, append: Boolean) {
+            writePaths += path
+        }
+        override suspend fun stat(path: String): SandboxEntry? {
+            statPaths += path
+            return SandboxEntry(path = path, isDir = false, size = 0L)
+        }
+        override suspend fun delete(path: String): Boolean = false
+        override suspend fun list(dir: String): List<SandboxEntry> = emptyList()
+        override suspend fun tempFile(prefix: String, suffix: String): String = "${prefix}x$suffix"
     }
 }

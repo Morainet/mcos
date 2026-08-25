@@ -170,6 +170,97 @@ class FilesPlugin : McosPlugin {
                         })
                     })
                 }
+            ),
+            // ─── Sandbox storage (04-plugin-sdk.md 6.1) ────────────────────
+            // Plugin-namespaced reads/writes; hosts without the sandbox
+            // capability surface UNAVAILABLE, never fake success.
+            CommandManifestEntry(
+                id = "file.write", version = "1.0.0",
+                title = "Write Sandbox File",
+                description = "Write text to a file in the plugin's sandbox (append optional)",
+                sideEffectClass = SideEffectClass.write,
+                timeoutMs = 15000,
+                examples = listOf("""file.write(path="logs/today.txt", text="battery 82%")"""),
+                inputSchema = buildJsonObject {
+                    put("type", JsonPrimitive("object"))
+                    put("required", buildJsonArray {
+                        add(JsonPrimitive("path"))
+                        add(JsonPrimitive("text"))
+                    })
+                    put("properties", buildJsonObject {
+                        put("path", buildJsonObject {
+                            put("type", JsonPrimitive("string"))
+                            put("minLength", JsonPrimitive(1))
+                            put("description", JsonPrimitive("Sandbox-relative path (auto-creates parent dirs)"))
+                        })
+                        put("text", buildJsonObject {
+                            put("type", JsonPrimitive("string"))
+                            put("maxLength", JsonPrimitive(MAX_FILE_BYTES))
+                            put("description", JsonPrimitive("UTF-8 text to write (1 MiB limit)"))
+                        })
+                        put("append", buildJsonObject {
+                            put("type", JsonPrimitive("boolean"))
+                            put("description", JsonPrimitive("Append instead of overwrite (default: false)"))
+                        })
+                    })
+                }
+            ),
+            CommandManifestEntry(
+                id = "file.read", version = "1.0.0",
+                title = "Read Sandbox File",
+                description = "Read a text file from the plugin's sandbox",
+                sideEffectClass = SideEffectClass.read,
+                timeoutMs = 15000,
+                examples = listOf("""file.read(path="logs/today.txt")"""),
+                inputSchema = buildJsonObject {
+                    put("type", JsonPrimitive("object"))
+                    put("required", buildJsonArray { add(JsonPrimitive("path")) })
+                    put("properties", buildJsonObject {
+                        put("path", buildJsonObject {
+                            put("type", JsonPrimitive("string"))
+                            put("minLength", JsonPrimitive(1))
+                            put("description", JsonPrimitive("Sandbox-relative path"))
+                        })
+                    })
+                }
+            ),
+            CommandManifestEntry(
+                id = "file.stat", version = "1.0.0",
+                title = "Stat Sandbox File",
+                description = "Check a sandbox path's existence, type and size",
+                sideEffectClass = SideEffectClass.read,
+                timeoutMs = 15000,
+                examples = listOf("""file.stat(path="logs/today.txt")"""),
+                inputSchema = buildJsonObject {
+                    put("type", JsonPrimitive("object"))
+                    put("required", buildJsonArray { add(JsonPrimitive("path")) })
+                    put("properties", buildJsonObject {
+                        put("path", buildJsonObject {
+                            put("type", JsonPrimitive("string"))
+                            put("minLength", JsonPrimitive(1))
+                            put("description", JsonPrimitive("Sandbox-relative path"))
+                        })
+                    })
+                }
+            ),
+            CommandManifestEntry(
+                id = "file.delete", version = "1.0.0",
+                title = "Delete Sandbox File",
+                description = "Delete a file (or empty directory) from the plugin's sandbox",
+                sideEffectClass = SideEffectClass.write,
+                timeoutMs = 15000,
+                examples = listOf("""file.delete(path="logs/today.txt")"""),
+                inputSchema = buildJsonObject {
+                    put("type", JsonPrimitive("object"))
+                    put("required", buildJsonArray { add(JsonPrimitive("path")) })
+                    put("properties", buildJsonObject {
+                        put("path", buildJsonObject {
+                            put("type", JsonPrimitive("string"))
+                            put("minLength", JsonPrimitive(1))
+                            put("description", JsonPrimitive("Sandbox-relative path"))
+                        })
+                    })
+                }
             )
         ),
         namespaces = listOf("file", "photo")
@@ -189,7 +280,11 @@ class FilesPlugin : McosPlugin {
         "file.list" to FileListHandler(),
         "file.search" to FileSearchHandler(),
         "photo.search" to PhotoSearchHandler(),
-        "photo.compress" to PhotoCompressHandler()
+        "photo.compress" to PhotoCompressHandler(),
+        "file.write" to FileWriteHandler(),
+        "file.read" to FileReadHandler(),
+        "file.stat" to FileStatHandler(),
+        "file.delete" to FileDeleteHandler()
     )
 
     // ─── Handlers ────────────────────────────────────────────────────────
@@ -355,7 +450,118 @@ class FilesPlugin : McosPlugin {
         }
     }
 
+    // ─── Sandbox storage handlers (04-plugin-sdk.md 6.1) ──────────────────
+    //
+    // These deliberately read the sandbox from ctx.services — the Executor's
+    // Stage-4 facade — and NOT from the onLoad-captured `services` field the
+    // media handlers use: the sandbox is namespaced per executing plugin
+    // (NamespacedSandbox in the Executor), which only the per-execution view
+    // carries. The onLoad field would hand every plugin the same host-wide
+    // root and defeat the isolation.
+
+    inner class FileWriteHandler : CommandHandler {
+        override suspend fun invoke(ctx: ExecutionContext): CommandResult {
+            val args = ctx.args.jsonObject
+            val path = args["path"]?.jsonPrimitive?.content
+                ?: throw McosException("SCHEMA_VIOLATION", "Missing required arg: path")
+            val text = args["text"]?.jsonPrimitive?.contentOrNull
+                ?: throw McosException("SCHEMA_VIOLATION", "Missing required arg: text")
+            val append = args["append"]?.jsonPrimitive?.booleanOrNull ?: false
+
+            val bytes = text.encodeToByteArray()
+            // Belt-and-braces next to the schema maxLength: direct handler
+            // invocations (tests, SDK hosts) skip schema validation.
+            if (bytes.size > MAX_FILE_BYTES) {
+                throw McosException(
+                    code = "SCHEMA_VIOLATION",
+                    message = "file.write payload exceeds the ${MAX_FILE_BYTES / 1024} KiB command limit",
+                    details = JsonObject(mapOf("reason" to JsonPrimitive("file_too_large"))),
+                )
+            }
+            val sandbox = ctx.services.sandbox
+                ?: throw McosException("UNAVAILABLE", "Sandbox storage is not available on this host")
+            sandbox.write(path, bytes, append)
+
+            return CommandResult.Ok(
+                value = buildJsonObject {
+                    put("path", JsonPrimitive(path))
+                    put("size", JsonPrimitive(sandbox.stat(path)?.size ?: bytes.size.toLong()))
+                    put("append", JsonPrimitive(append))
+                }
+            )
+        }
+    }
+
+    inner class FileReadHandler : CommandHandler {
+        override suspend fun invoke(ctx: ExecutionContext): CommandResult {
+            val args = ctx.args.jsonObject
+            val path = args["path"]?.jsonPrimitive?.content
+                ?: throw McosException("SCHEMA_VIOLATION", "Missing required arg: path")
+
+            val sandbox = ctx.services.sandbox
+                ?: throw McosException("UNAVAILABLE", "Sandbox storage is not available on this host")
+            val bytes = sandbox.read(path)
+                ?: throw McosException("files.not_found", "No sandbox file at path: $path")
+            if (bytes.size > MAX_FILE_BYTES) {
+                throw McosException(
+                    code = "files.too_large",
+                    message = "File exceeds the ${MAX_FILE_BYTES / 1024} KiB command limit: $path",
+                )
+            }
+
+            return CommandResult.Ok(
+                value = buildJsonObject {
+                    put("path", JsonPrimitive(path))
+                    put("size", JsonPrimitive(bytes.size.toLong()))
+                    put("text", JsonPrimitive(bytes.decodeToString()))
+                }
+            )
+        }
+    }
+
+    inner class FileStatHandler : CommandHandler {
+        override suspend fun invoke(ctx: ExecutionContext): CommandResult {
+            val args = ctx.args.jsonObject
+            val path = args["path"]?.jsonPrimitive?.content
+                ?: throw McosException("SCHEMA_VIOLATION", "Missing required arg: path")
+
+            val sandbox = ctx.services.sandbox
+                ?: throw McosException("UNAVAILABLE", "Sandbox storage is not available on this host")
+            val entry = sandbox.stat(path)
+
+            return CommandResult.Ok(
+                value = buildJsonObject {
+                    put("path", JsonPrimitive(path))
+                    put("exists", JsonPrimitive(entry != null))
+                    put("isDir", JsonPrimitive(entry?.isDir ?: false))
+                    entry?.size?.let { put("size", JsonPrimitive(it)) }
+                }
+            )
+        }
+    }
+
+    inner class FileDeleteHandler : CommandHandler {
+        override suspend fun invoke(ctx: ExecutionContext): CommandResult {
+            val args = ctx.args.jsonObject
+            val path = args["path"]?.jsonPrimitive?.content
+                ?: throw McosException("SCHEMA_VIOLATION", "Missing required arg: path")
+
+            val sandbox = ctx.services.sandbox
+                ?: throw McosException("UNAVAILABLE", "Sandbox storage is not available on this host")
+            val deleted = sandbox.delete(path)
+
+            return CommandResult.Ok(
+                value = buildJsonObject {
+                    put("path", JsonPrimitive(path))
+                    put("deleted", JsonPrimitive(deleted))
+                }
+            )
+        }
+    }
+
     companion object {
+        /** Command-surface cap for sandbox text payloads (input AND output). */
+        const val MAX_FILE_BYTES: Int = 1024 * 1024
         /**
          * Glob → regex conversion.
          *

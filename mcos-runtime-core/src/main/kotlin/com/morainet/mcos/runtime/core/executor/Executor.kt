@@ -296,7 +296,8 @@ class Executor(
             // Stage 4 (Expand) — `{{secret.*}}` templates (08-security.md §9.2)
             // are resolved by the per-plugin NetService decorator; args keep
             // the template form and values never enter the audit trail.
-            services = secretResolvingServices()
+            // The sandbox is namespaced per executing plugin (04 §6.1).
+            services = secretResolvingServices(entry.descriptor.pluginId)
         )
 
         var result: CommandResult
@@ -398,11 +399,13 @@ class Executor(
     /**
      * Per-plugin [HostServices] facade whose [NetService] resolves
      * `{{secret.<key>}}` templates (08-security.md §9.2) from the plugin's
-     * scoped [SecureStore] before the request leaves the runtime. All other
-     * services are delegated unchanged, and the resolved value is never
-     * written back into ExecutionContext.args.
+     * scoped [SecureStore] before the request leaves the runtime, and whose
+     * [SandboxFileService] is namespaced to the executing plugin
+     * (04-plugin-sdk.md 6.1 — one plugin cannot address another's files).
+     * All other services are delegated unchanged, and the resolved value is
+     * never written back into ExecutionContext.args.
      */
-    private fun secretResolvingServices(): HostServices {
+    private fun secretResolvingServices(pluginId: String): HostServices {
         val original = hostServices
         return object : HostServices {
             override val files: FileService get() = original.files
@@ -420,6 +423,61 @@ class Executor(
             override val deviceInfo: DeviceInfoService? get() = original.deviceInfo
             override val clipboard: ClipboardService? get() = original.clipboard
             override val haptics: HapticsService? get() = original.haptics
+            override val events: EventPublisher? get() = original.events
+            // The sandbox view is per-plugin: every path the handler uses is
+            // resolved inside the plugin's own namespace directory.
+            override val sandbox: SandboxFileService? =
+                original.sandbox?.let { NamespacedSandbox(it, pluginId) }
+        }
+    }
+
+    /**
+     * [SandboxFileService] decorator that roots every path at
+     * `<pluginId>/…` (04-plugin-sdk.md 6.1). Paths returned by
+     * [stat]/[list]/[tempFile] are re-expressed plugin-relative so they
+     * round-trip through this same view.
+     */
+    private class NamespacedSandbox(
+        private val delegate: SandboxFileService,
+        private val pluginId: String,
+    ) : SandboxFileService {
+        init {
+            // The plugin id becomes a path segment — it must be a safe one.
+            pluginId.split('/').forEach { segment ->
+                require(
+                    segment.isNotBlank() && segment != "." && segment != ".." &&
+                        !segment.contains('\\') && !segment.contains('\u0000'),
+                ) { "pluginId must be a safe single path segment: $pluginId" }
+            }
+        }
+
+        private fun scoped(path: String): String = "$pluginId/$path"
+
+        override suspend fun read(path: String): ByteArray? = delegate.read(scoped(path))
+
+        override suspend fun write(path: String, data: ByteArray, append: Boolean) =
+            delegate.write(scoped(path), data, append)
+
+        override suspend fun stat(path: String): SandboxEntry? =
+            delegate.stat(scoped(path))?.copy(path = path)
+
+        override suspend fun delete(path: String): Boolean = delegate.delete(scoped(path))
+
+        override suspend fun list(dir: String): List<SandboxEntry> {
+            // An empty dir lists this plugin's namespace root, not the
+            // host-wide sandbox root.
+            val scopedDir = if (dir.isBlank()) pluginId else scoped(dir)
+            val prefix = "$pluginId/"
+            return delegate.list(scopedDir).map { it.copy(path = it.path.removePrefix(prefix)) }
+        }
+
+        override suspend fun tempFile(prefix: String, suffix: String): String {
+            // The delegate's tempFile would land at the sandbox root,
+            // invisible to this plugin's view — reserve a unique name
+            // inside the namespace instead.
+            val name = "${prefix.ifEmpty { "mcos" }}-${UUID.randomUUID()}$suffix"
+            delegate.write(scoped(name), ByteArray(0))
+            return name
         }
     }
 

@@ -40,13 +40,17 @@ class FilesPluginTest {
     }
 
     @Test
-    fun `F2-manifest declares 4 file commands`() {
+    fun `F2-manifest declares 8 file commands`() {
         val commands = plugin.manifest.commands.map { it.id }.toSet()
-        assertEquals(4, commands.size)
+        assertEquals(8, commands.size)
         assertTrue(commands.contains("file.list"))
         assertTrue(commands.contains("file.search"))
         assertTrue(commands.contains("photo.search"))
         assertTrue(commands.contains("photo.compress"))
+        assertTrue(commands.contains("file.write"))
+        assertTrue(commands.contains("file.read"))
+        assertTrue(commands.contains("file.stat"))
+        assertTrue(commands.contains("file.delete"))
     }
 
     @Test
@@ -60,13 +64,17 @@ class FilesPluginTest {
     // ═══════════════════════════════════════════════════════════════
 
     @Test
-    fun `F4-handlers returns all 4 command handlers`() {
+    fun `F4-handlers returns all 8 command handlers`() {
         val handlers = plugin.handlers()
-        assertEquals(4, handlers.size)
+        assertEquals(8, handlers.size)
         assertTrue(handlers.containsKey("file.list"))
         assertTrue(handlers.containsKey("file.search"))
         assertTrue(handlers.containsKey("photo.search"))
         assertTrue(handlers.containsKey("photo.compress"))
+        assertTrue(handlers.containsKey("file.write"))
+        assertTrue(handlers.containsKey("file.read"))
+        assertTrue(handlers.containsKey("file.stat"))
+        assertTrue(handlers.containsKey("file.delete"))
     }
 
     @Test
@@ -245,15 +253,268 @@ class FilesPluginTest {
         assertEquals(expectedAfter, explicit.afterMs)
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // F15-F25: sandbox storage commands (04-plugin-sdk.md 6.1)
+    //
+    // The handlers read the sandbox from ctx.services (the Executor's
+    // per-plugin namespaced view) — the onLoad stub has NO sandbox, so a
+    // successful write here proves the ctx path is the one taken.
+    // ═══════════════════════════════════════════════════════════════
+
+    private fun sandboxCtx(commandId: String, args: JsonObject, sandbox: SandboxFileService): ExecutionContext =
+        execCtx(commandId, args, SandboxedStubServices(sandbox))
+
+    @Test
+    fun `F15-file_write writes utf-8 text through the sandbox`() = runBlocking {
+        val sandbox = RecordingSandbox()
+        val result = plugin.handlers()["file.write"]!!.invoke(
+            sandboxCtx("file.write", buildJsonObject {
+                put("path", JsonPrimitive("logs/today.txt"))
+                put("text", JsonPrimitive("battery 82%"))
+            }, sandbox)
+        )
+
+        assertTrue(result is CommandResult.Ok, result.toString())
+        assertEquals(1, sandbox.writes.size)
+        val (path, bytes, append) = sandbox.writes[0]
+        assertEquals("logs/today.txt", path)
+        assertEquals("battery 82%", bytes.decodeToString())
+        assertEquals(false, append)
+        val value = (result as CommandResult.Ok).value.jsonObject
+        assertEquals("logs/today.txt", value["path"]!!.jsonPrimitive.content)
+        assertEquals(11L, value["size"]!!.jsonPrimitive.long)
+    }
+
+    @Test
+    fun `F16-file_write forwards the append flag and reports grown size`() = runBlocking {
+        val sandbox = RecordingSandbox()
+        sandbox.files["log.txt"] = "old\n".toByteArray()
+        val result = plugin.handlers()["file.write"]!!.invoke(
+            sandboxCtx("file.write", buildJsonObject {
+                put("path", JsonPrimitive("log.txt"))
+                put("text", JsonPrimitive("new\n"))
+                put("append", JsonPrimitive(true))
+            }, sandbox)
+        )
+
+        assertTrue(result is CommandResult.Ok)
+        assertEquals(true, sandbox.writes[0].third)
+        assertEquals("old\nnew\n", sandbox.files["log.txt"]!!.decodeToString())
+        assertEquals(8L, (result as CommandResult.Ok).value.jsonObject["size"]!!.jsonPrimitive.long)
+    }
+
+    @Test
+    fun `F17-sandbox commands are UNAVAILABLE without the capability`() = runBlocking {
+        // ctx carries the plain onLoad stub — no sandbox override anywhere.
+        listOf(
+            "file.write" to buildJsonObject { put("path", JsonPrimitive("a")); put("text", JsonPrimitive("x")) },
+            "file.read" to buildJsonObject { put("path", JsonPrimitive("a")) },
+            "file.stat" to buildJsonObject { put("path", JsonPrimitive("a")) },
+            "file.delete" to buildJsonObject { put("path", JsonPrimitive("a")) },
+        ).forEach { (commandId, args) ->
+            val e = assertFailsWith<McosException> {
+                plugin.handlers()[commandId]!!.invoke(execCtx(commandId, args))
+            }
+            assertEquals("UNAVAILABLE", e.code, commandId)
+        }
+    }
+
+    @Test
+    fun `F18-file_write over the 1 MiB limit is SCHEMA_VIOLATION file_too_large`() = runBlocking {
+        val sandbox = RecordingSandbox()
+        val oversized = "x".repeat(FilesPlugin.MAX_FILE_BYTES + 1)
+        val e = assertFailsWith<McosException> {
+            plugin.handlers()["file.write"]!!.invoke(
+                sandboxCtx("file.write", buildJsonObject {
+                    put("path", JsonPrimitive("big.txt"))
+                    put("text", JsonPrimitive(oversized))
+                }, sandbox)
+            )
+        }
+        assertEquals("SCHEMA_VIOLATION", e.code)
+        assertEquals("file_too_large", e.details["reason"]?.jsonPrimitive?.content)
+        assertTrue(sandbox.writes.isEmpty(), "nothing may reach the sandbox")
+    }
+
+    @Test
+    fun `F19-file_read returns path size text`() = runBlocking {
+        val sandbox = RecordingSandbox()
+        sandbox.files["note.txt"] = "hello sandbox".toByteArray()
+        val result = plugin.handlers()["file.read"]!!.invoke(
+            sandboxCtx("file.read", buildJsonObject { put("path", JsonPrimitive("note.txt")) }, sandbox)
+        )
+
+        assertTrue(result is CommandResult.Ok)
+        val value = (result as CommandResult.Ok).value.jsonObject
+        assertEquals("note.txt", value["path"]!!.jsonPrimitive.content)
+        assertEquals(13L, value["size"]!!.jsonPrimitive.long)
+        assertEquals("hello sandbox", value["text"]!!.jsonPrimitive.content)
+        assertEquals(listOf("note.txt"), sandbox.readPaths)
+    }
+
+    @Test
+    fun `F20-file_read of an absent path is files not_found`() = runBlocking {
+        val e = assertFailsWith<McosException> {
+            plugin.handlers()["file.read"]!!.invoke(
+                sandboxCtx("file.read", buildJsonObject { put("path", JsonPrimitive("gone.txt")) }, RecordingSandbox())
+            )
+        }
+        assertEquals("files.not_found", e.code)
+    }
+
+    @Test
+    fun `F21-file_read of an oversized file is files too_large`() = runBlocking {
+        val sandbox = RecordingSandbox()
+        sandbox.files["huge.txt"] = ByteArray(FilesPlugin.MAX_FILE_BYTES + 1)
+        val e = assertFailsWith<McosException> {
+            plugin.handlers()["file.read"]!!.invoke(
+                sandboxCtx("file.read", buildJsonObject { put("path", JsonPrimitive("huge.txt")) }, sandbox)
+            )
+        }
+        assertEquals("files.too_large", e.code)
+    }
+
+    @Test
+    fun `F22-file_stat reports exists isDir size and the absent shape`() = runBlocking {
+        val sandbox = RecordingSandbox()
+        sandbox.files["f.txt"] = byteArrayOf(1, 2, 3)
+        val handler = plugin.handlers()["file.stat"]!!
+
+        val present = handler.invoke(
+            sandboxCtx("file.stat", buildJsonObject { put("path", JsonPrimitive("f.txt")) }, sandbox)
+        ) as CommandResult.Ok
+        val pv = present.value.jsonObject
+        assertEquals(true, pv["exists"]!!.jsonPrimitive.boolean)
+        assertEquals(false, pv["isDir"]!!.jsonPrimitive.boolean)
+        assertEquals(3L, pv["size"]!!.jsonPrimitive.long)
+
+        val absent = handler.invoke(
+            sandboxCtx("file.stat", buildJsonObject { put("path", JsonPrimitive("nope.txt")) }, sandbox)
+        ) as CommandResult.Ok
+        val av = absent.value.jsonObject
+        assertEquals(false, av["exists"]!!.jsonPrimitive.boolean)
+        assertNull(av["size"])
+    }
+
+    @Test
+    fun `F23-file_delete is idempotent and forwards the path`() = runBlocking {
+        val sandbox = RecordingSandbox()
+        sandbox.files["temp.txt"] = "x".toByteArray()
+        val handler = plugin.handlers()["file.delete"]!!
+
+        val first = handler.invoke(
+            sandboxCtx("file.delete", buildJsonObject { put("path", JsonPrimitive("temp.txt")) }, sandbox)
+        ) as CommandResult.Ok
+        assertEquals(true, first.value.jsonObject["deleted"]!!.jsonPrimitive.boolean)
+
+        val second = handler.invoke(
+            sandboxCtx("file.delete", buildJsonObject { put("path", JsonPrimitive("temp.txt")) }, sandbox)
+        ) as CommandResult.Ok
+        assertEquals(false, second.value.jsonObject["deleted"]!!.jsonPrimitive.boolean)
+        assertEquals(listOf("temp.txt", "temp.txt"), sandbox.deletes)
+    }
+
+    @Test
+    fun `F24-sandbox path violations surface the service error untouched`() = runBlocking {
+        val sandbox = RecordingSandbox().apply {
+            failWith = McosException(
+                code = "SCHEMA_VIOLATION",
+                message = "Invalid sandbox path (dot segment)",
+                details = JsonObject(mapOf("reason" to JsonPrimitive("sandbox_path_invalid"))),
+            )
+        }
+        val e = assertFailsWith<McosException> {
+            plugin.handlers()["file.write"]!!.invoke(
+                sandboxCtx("file.write", buildJsonObject {
+                    put("path", JsonPrimitive("../escape.txt"))
+                    put("text", JsonPrimitive("no"))
+                }, sandbox)
+            )
+        }
+        // The Executor maps this to Err(SCHEMA_VIOLATION, details) — here we
+        // only assert the handler does not swallow the sandbox's verdict.
+        assertEquals("SCHEMA_VIOLATION", e.code)
+        assertEquals("sandbox_path_invalid", e.details["reason"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun `F25-manifest marks write commands write-class and read commands read-class`() {
+        val byId = plugin.manifest.commands.associateBy { it.id }
+        assertEquals(SideEffectClass.write, byId.getValue("file.write").sideEffectClass)
+        assertEquals(SideEffectClass.write, byId.getValue("file.delete").sideEffectClass)
+        assertEquals(SideEffectClass.read, byId.getValue("file.read").sideEffectClass)
+        assertEquals(SideEffectClass.read, byId.getValue("file.stat").sideEffectClass)
+    }
+
     // ─── Helpers ──────────────────────────────────────────────────────────
 
-    private fun execCtx(commandId: String, args: JsonObject): ExecutionContext {
+    private fun execCtx(commandId: String, args: JsonObject, services: HostServices = stubServices): ExecutionContext {
         return ExecutionContext(
             runId = "test-run-1",
             commandId = commandId,
             args = args,
-            services = stubServices,
+            services = services,
         )
+    }
+}
+
+/** [HostServices] stub whose only addition is a sandbox capability. */
+class SandboxedStubServices(private val sandboxService: SandboxFileService) : HostServices by StubFilesHostServices() {
+    override val sandbox: SandboxFileService get() = sandboxService
+}
+
+/** Recording fake with an in-memory backing map (real-call assertions). */
+class RecordingSandbox : SandboxFileService {
+    val writes = mutableListOf<Triple<String, ByteArray, Boolean>>()
+    val readPaths = mutableListOf<String>()
+    val stats = mutableListOf<String>()
+    val deletes = mutableListOf<String>()
+    val lists = mutableListOf<String>()
+    val tempFiles = mutableListOf<Pair<String, String>>()
+    val files = mutableMapOf<String, ByteArray>()
+    var failWith: McosException? = null
+
+    private fun guard() {
+        failWith?.let { throw it }
+    }
+
+    override suspend fun read(path: String): ByteArray? {
+        guard()
+        readPaths += path
+        return files[path]
+    }
+
+    override suspend fun write(path: String, data: ByteArray, append: Boolean) {
+        guard()
+        writes += Triple(path, data, append)
+        files[path] = if (append) (files[path] ?: ByteArray(0)) + data else data
+    }
+
+    override suspend fun stat(path: String): SandboxEntry? {
+        guard()
+        stats += path
+        return files[path]?.let { SandboxEntry(path = path, isDir = false, size = it.size.toLong()) }
+    }
+
+    override suspend fun delete(path: String): Boolean {
+        guard()
+        deletes += path
+        return files.remove(path) != null
+    }
+
+    override suspend fun list(dir: String): List<SandboxEntry> {
+        guard()
+        lists += dir
+        return files.keys.filter { it.startsWith("$dir/") }
+            .map { SandboxEntry(path = it, isDir = false, size = files[it]!!.size.toLong()) }
+    }
+
+    override suspend fun tempFile(prefix: String, suffix: String): String {
+        guard()
+        tempFiles += prefix to suffix
+        val name = "${prefix}${tempFiles.size}${suffix}"
+        files[name] = ByteArray(0)
+        return name
     }
 }
 
