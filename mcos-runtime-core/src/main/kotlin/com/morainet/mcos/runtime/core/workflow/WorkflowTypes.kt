@@ -125,3 +125,68 @@ data class WorkflowResult(
     val outcome: WorkflowOutcome,
     val totalDurationMs: Long = 0
 )
+
+// ─── Triggers (05-workflow.md §9) ────────────────────────────────────────────
+
+/**
+ * How a workflow starts. `null` trigger (or a workflow registered without one)
+ * means **manual-only** — the workflow runs exclusively via an explicit
+ * `execute(WorkflowRef)` call.
+ *
+ * Matches spec [05-workflow.md §9]. `Trigger.Event` is the only trigger the
+ * [EventTriggerManager] arms today; `Trigger.Schedule` parses (schema-faithful)
+ * but arming it is rejected until the V1 scheduler work.
+ */
+sealed class Trigger {
+    /** Started by an explicit `execute(WorkflowRef, inputs)` call (§9.1). */
+    data class Manual(
+        val source: String? = null,
+        val inputs: List<String> = emptyList()
+    ) : Trigger()
+
+    /**
+     * Started by a matching event on the EventBus (§9.2).
+     *
+     * @param filter `{"type": <event type>, "where": {...}}` — `type` is used
+     *        as the subscription's `typePrefix` (03 §11.4 prefix semantics),
+     *        `where` supports literal values and `{"$memory": path}` references
+     *        (07 §13.1).
+     * @param resolveMemory when `$memory` references are resolved: `ARM` once
+     *        at subscription time (default — faster, won't see memory changes
+     *        until re-arm), `FIRE` per incoming event before matching.
+     */
+    data class Event(
+        val filter: JsonObject,
+        val resolveMemory: MemoryResolution = MemoryResolution.ARM
+    ) : Trigger()
+
+    /**
+     * Started on a cron schedule (§9.3). **Parsed but not armed** — scheduling
+     * requires the Android `AlarmManager`/`WorkManager` integration planned
+     * for V1; `EventTriggerManager.arm` rejects it explicitly.
+     */
+    data class Schedule(
+        val cron: String,
+        val tz: String,
+        val misfirePolicy: String = "skip"
+    ) : Trigger()
+}
+
+/** When [Trigger.Event] `$memory` references are resolved (05 §9.2, 07 §13.1). */
+enum class MemoryResolution {
+    /** Resolve once when the trigger is armed (default). */
+    ARM,
+
+    /** Resolve per incoming event, before evaluating `where`. */
+    FIRE
+}
+
+/**
+ * A named workflow definition: the step tree plus its (optional) trigger.
+ * The workflow id is the [WorkflowStore] key — it is deliberately not
+ * duplicated here.
+ */
+data class WorkflowSpec(
+    val trigger: Trigger?,
+    val step: WorkflowStep
+)

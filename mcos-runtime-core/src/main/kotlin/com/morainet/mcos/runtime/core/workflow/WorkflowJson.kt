@@ -2,6 +2,7 @@ package com.morainet.mcos.runtime.core.workflow
 
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
@@ -25,6 +26,66 @@ object WorkflowJson {
      *         recognized workflow node (unknown type, wrong shape, etc.).
      */
     fun fromJson(json: JsonElement): WorkflowStep? = parseStep(json)
+
+    /**
+     * Decode a workflow definition **including its trigger** (05 §9) from [json].
+     *
+     * The trigger may sit at the IR-envelope level (`{"type":"workflow",
+     * "trigger": {...}, "body": {...}}`) or inside the body (the spec's compile
+     * pass reads `body["trigger"]`, 05 §11.1 step 8) — both shapes are accepted.
+     * An absent or null trigger yields a manual-only spec.
+     *
+     * @return the decoded [WorkflowSpec], or null when the step tree does not
+     *         decode (a malformed trigger also rejects the whole spec — an
+     *         unparseable trigger must never silently degrade to manual-only).
+     */
+    fun specFromJson(json: JsonElement): WorkflowSpec? {
+        val obj = json as? JsonObject ?: return null
+        val body = obj["body"]
+        val triggerJson = obj["trigger"] ?: (body as? JsonObject)?.get("trigger")
+        val trigger = if (triggerJson == null || triggerJson is JsonNull) null else parseTrigger(triggerJson)
+            ?: return null
+        val step = parseStep(json) ?: return null
+        return WorkflowSpec(trigger = trigger, step = step)
+    }
+
+    // ─── Trigger decoding (05 §9) ───────────────────────────────────────
+
+    private fun parseTrigger(json: JsonElement): Trigger? {
+        val obj = json as? JsonObject ?: return null
+        return when (val type = asString(obj["type"])) {
+            "manual" -> Trigger.Manual(
+                source = asString(obj["source"]),
+                inputs = asStringList(obj["inputs"])
+            )
+            "event" -> {
+                val filter = obj["filter"] as? JsonObject ?: return null
+                Trigger.Event(
+                    filter = filter,
+                    resolveMemory = when (val rm = asString(obj["resolveMemory"])) {
+                        null, "arm" -> MemoryResolution.ARM
+                        "fire" -> MemoryResolution.FIRE
+                        else -> return null
+                    }
+                )
+            }
+            "schedule" -> {
+                val cron = asString(obj["cron"]) ?: return null
+                val tz = asString(obj["tz"]) ?: return null
+                val misfirePolicy = asString(obj["misfirePolicy"]) ?: "skip"
+                if (misfirePolicy !in setOf("skip", "fire-and-forget", "fire-and-forget-if-window")) {
+                    return null
+                }
+                Trigger.Schedule(cron = cron, tz = tz, misfirePolicy = misfirePolicy)
+            }
+            else -> null
+        }
+    }
+
+    private fun asStringList(json: JsonElement?): List<String> {
+        val arr = json as? JsonArray ?: return emptyList()
+        return arr.mapNotNull { asString(it) }
+    }
 
     // ─── Step decoding ──────────────────────────────────────────────────
 
