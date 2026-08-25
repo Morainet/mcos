@@ -13,8 +13,8 @@ import kotlinx.serialization.json.JsonElement
 
 // ─── Execution Request ──────────────────────────────────────────────────
 
-/** Origin of an execution request. */
-enum class Source { CLI, CHAT, VOICE, EVENT, API }
+/** Origin of an execution request. `SCHEDULE` is runtime-produced only (05 §9.3). */
+enum class Source { CLI, CHAT, VOICE, EVENT, SCHEDULE, API }
 
 /** Payload variants that the runtime accepts. */
 sealed class Payload {

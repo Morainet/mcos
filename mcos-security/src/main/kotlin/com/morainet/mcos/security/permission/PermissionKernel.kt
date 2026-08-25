@@ -81,9 +81,10 @@ interface PermissionKernel {
 
     /**
      * Source-aware authorization (08-security.md §4.0 step 4): background
-     * event-triggered runs (`source == [SOURCE_EVENT]`, 01 §11.6) are held to
-     * a stricter matrix — network and destructive side effects re-confirm
-     * even when granted or auto-approved.
+     * trigger runs (`source` in [BACKGROUND_SOURCES] — event- and
+     * schedule-triggered, 01 §11.6) are held to a stricter matrix — network
+     * and destructive side effects re-confirm even when granted or
+     * auto-approved.
      *
      * The default implementation ignores [source] and delegates, so custom
      * kernels keep compiling and behaving unchanged;
@@ -92,7 +93,7 @@ interface PermissionKernel {
      * @param descriptor The resolved command descriptor.
      * @param enterprisePolicy Optional enterprise policy.
      * @param source Audit source label (08 §14) — `"CLI"`, `"CHAT"`,
-     *        `"EVENT"`, … — the same string the executor audits.
+     *        `"EVENT"`, `"SCHEDULE"`, … — the same string the executor audits.
      */
     fun authorize(
         descriptor: CommandDescriptor,
@@ -159,6 +160,16 @@ interface PermissionKernel {
          * module sits below the runtime in the dependency graph.
          */
         const val SOURCE_EVENT = "EVENT"
+
+        /** Audit source label for schedule-triggered runs (08 §14, 05 §9.3). */
+        const val SOURCE_SCHEDULE = "SCHEDULE"
+
+        /**
+         * Sources held to the stricter background matrix (§4.0 step 4):
+         * both trigger families — event and schedule. Same rationale for
+         * both: the run starts without a human in the loop.
+         */
+        val BACKGROUND_SOURCES = setOf(SOURCE_EVENT, SOURCE_SCHEDULE)
     }
 }
 
@@ -226,20 +237,20 @@ class DefaultPermissionKernel(
     ): AuthorizationResult {
         val base = authorize(descriptor, enterprisePolicy)
 
-        // 08-security.md §4.0 step 4: background event-triggered runs are
-        // stricter — network and destructive side effects ALWAYS re-confirm.
-        // Auto-approve is suppressed for them; an Authorized result is
-        // downgraded to ConfirmationNeeded. Denials and confirmations from
-        // the base pass stay as-is (a hard deny is never softened into a
-        // mere confirmation).
+        // 08-security.md §4.0 step 4: background trigger runs (event or
+        // schedule) are stricter — network and destructive side effects
+        // ALWAYS re-confirm. Auto-approve is suppressed for them; an
+        // Authorized result is downgraded to ConfirmationNeeded. Denials and
+        // confirmations from the base pass stay as-is (a hard deny is never
+        // softened into a mere confirmation).
         val stricterClass = descriptor.sideEffectClass == SideEffectClass.network ||
             descriptor.sideEffectClass == SideEffectClass.destructive
-        if (source == PermissionKernel.SOURCE_EVENT && stricterClass &&
+        if (source in PermissionKernel.BACKGROUND_SOURCES && stricterClass &&
             base is AuthorizationResult.Authorized
         ) {
             return AuthorizationResult.ConfirmationNeeded(
                 commandId = descriptor.id,
-                reason = "Background event-triggered runs always confirm " +
+                reason = "Background trigger runs (event/schedule) always confirm " +
                     descriptor.sideEffectClass.name + " commands (08 §4.0 step 4)",
                 missingPermissions = emptyList(),
                 sideEffectClass = descriptor.sideEffectClass

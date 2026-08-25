@@ -47,6 +47,8 @@ import com.morainet.mcos.security.TokenBucketRateLimiter
 import com.morainet.mcos.security.audit.AuditLog
 import com.morainet.mcos.sdk.McosPlugin
 import com.morainet.mcos.runtime.core.workflow.EventTriggerManager
+import com.morainet.mcos.runtime.core.workflow.ScheduleTriggerManager
+import com.morainet.mcos.runtime.core.workflow.Trigger
 import com.morainet.mcos.runtime.core.workflow.TriggerArmResult
 import com.morainet.mcos.runtime.core.workflow.WorkflowEngine
 import com.morainet.mcos.runtime.core.workflow.WorkflowJson
@@ -137,6 +139,17 @@ class McosRuntime internal constructor(
     private val triggerManager = EventTriggerManager(
         bus = eventBus,
         memory = memory,
+        auditLog = auditLog,
+    )
+
+    // ─── Schedule triggers (05-workflow.md §9.3) ────────────────────────
+    //
+    // Armed cron schedules launch their workflow DIRECTLY when a boundary
+    // arrives — not via the EventBus, whose subscriptions are at-most-once
+    // with no redelivery (03 §11.4) and therefore incompatible with misfire
+    // recovery. The facade owns the launcher (RunManager launch +
+    // runWorkflow with empty inputs and SCHEDULE step source).
+    private val scheduleTriggerManager = ScheduleTriggerManager(
         auditLog = auditLog,
     )
 
@@ -360,8 +373,11 @@ class McosRuntime internal constructor(
      * as cancelled — callers should not reuse a shut-down runtime.
      */
     fun shutdown() {
-        // Armed event triggers are released first so no in-flight bus event
-        // can launch a new run on the scope being cancelled below.
+        // Armed schedules are released first — disarming them cancels the
+        // driver coroutine so no boundary tick can fire a run while the
+        // scopes below are torn down. Then event triggers (same rationale
+        // for in-flight bus events), then the runs themselves.
+        scheduleTriggerManager.disarmAll()
         triggerManager.disarmAll()
         // Cancel every active run; the SupervisorJob's children are cancelled
         // in bulk by cancelling the scope's job as well.
@@ -417,31 +433,59 @@ class McosRuntime internal constructor(
      *        install time (05 §10) — carried to the launcher for the
      *        pre-authorization stamp flow (08 §4.1).
      * @return [TriggerArmResult.Armed], or [TriggerArmResult.Rejected] with a
-     *         stable reason (unknown workflow, no trigger, schedule trigger).
+     *         stable reason (unknown workflow, no trigger; schedule triggers
+     *         are additionally validated for cron syntax, timezone, and
+     *         satisfiability by the schedule manager).
      */
     suspend fun armTrigger(workflowId: String, preAuthorized: Boolean = false): TriggerArmResult {
         val spec: WorkflowSpec = workflowStore.spec(workflowId)
             ?: return TriggerArmResult.Rejected(workflowId, "workflow_not_found")
         val trigger = spec.trigger
             ?: return TriggerArmResult.Rejected(workflowId, "workflow_has_no_trigger")
-        return triggerManager.arm(workflowId, trigger, preAuthorized, ::fireTriggeredWorkflow)
+        return when (trigger) {
+            is Trigger.Schedule -> {
+                // Cross-family hygiene: a spec re-registered with a different
+                // trigger type must not leave the other family's entry live.
+                triggerManager.disarm(workflowId)
+                scheduleTriggerManager.arm(workflowId, trigger, preAuthorized) { id, inputs, pre ->
+                    fireTriggeredWorkflow(id, inputs, pre, Source.SCHEDULE.name)
+                }
+            }
+            // Event and Manual both route to the event manager: Event arms,
+            // Manual is rejected there (manual_triggers_cannot_be_armed).
+            else -> {
+                scheduleTriggerManager.disarm(workflowId)
+                triggerManager.arm(workflowId, trigger, preAuthorized) { id, inputs, pre ->
+                    fireTriggeredWorkflow(id, inputs, pre, Source.EVENT.name)
+                }
+            }
+        }
     }
 
-    /** Disarm a previously armed trigger. `true` if [workflowId] was armed. */
-    fun disarmTrigger(workflowId: String): Boolean = triggerManager.disarm(workflowId)
+    /** Disarm a previously armed trigger (either family). `true` if [workflowId] was armed. */
+    fun disarmTrigger(workflowId: String): Boolean =
+        scheduleTriggerManager.disarm(workflowId) || triggerManager.disarm(workflowId)
 
-    /** Currently armed trigger workflow ids (05 §9.2). */
-    fun armedTriggers(): List<String> = triggerManager.armed()
+    /** Currently armed trigger workflow ids, both families (05 §9.2-§9.3). */
+    fun armedTriggers(): List<String> =
+        (scheduleTriggerManager.armed() + triggerManager.armed()).distinct().sorted()
 
     /**
-     * Launcher the [EventTriggerManager] invokes on a matching event. The
-     * run is launched on the owned run scope (P0-C2) so shutdown cancels it;
-     * the event payload becomes `__input` and every step is audited as EVENT.
+     * Launcher the trigger managers invoke on a match (event) or boundary
+     * (schedule). The run is launched on the owned run scope (P0-C2) so
+     * shutdown cancels it; event payloads become `__input` (schedule runs get
+     * the empty object, 05 §6.2) and every step is audited with the trigger
+     * family's source (`EVENT` or `SCHEDULE`).
      */
-    private fun fireTriggeredWorkflow(workflowId: String, inputs: JsonObject, preAuthorized: Boolean) {
+    private fun fireTriggeredWorkflow(
+        workflowId: String,
+        inputs: JsonObject,
+        preAuthorized: Boolean,
+        stepSource: String,
+    ) {
         // The workflow may have been removed from the store while armed
         // (uninstall disarms explicitly, but a store.clear() racing a fire is
-        // possible) — a dangling armed trigger must not crash the bus handler.
+        // possible) — a dangling armed trigger must not crash the handler.
         val step = workflowStore.get(workflowId) ?: return
         val runId = UUID.randomUUID().toString()
         runManager.launch(runId) {
@@ -454,7 +498,7 @@ class McosRuntime internal constructor(
                     timestamp = startTime,
                     payload = Payload.WorkflowRef(workflowId),
                     inputs = inputs,
-                    stepSource = Source.EVENT.name,
+                    stepSource = stepSource,
                     preAuthorized = preAuthorized,
                 )
             } catch (e: CancellationException) {
@@ -777,9 +821,10 @@ class McosRuntime internal constructor(
         }
         // Trigger-fired runs surface mid-run confirmations to the host
         // (network/destructive steps, 08 §4.0 step 4) with the background
-        // timeout budget instead of failing the workflow outright.
+        // timeout budget instead of failing the workflow outright. Both
+        // background families qualify — EVENT and SCHEDULE.
         val confirmFor: (suspend (String, CommandResult.Err) -> AuthStamp?)? =
-            if (stepSource == Source.EVENT.name) {
+            if (stepSource == Source.EVENT.name || stepSource == Source.SCHEDULE.name) {
                 { commandId, err -> confirmTriggeredStep(runId, commandId, err) }
             } else {
                 null

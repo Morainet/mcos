@@ -241,13 +241,16 @@ class McosRuntimeTriggerTest {
         runtime.workflowStore().registerSpec(
             "nightly",
             WorkflowSpec(
-                trigger = Trigger.Schedule(cron = "0 23 * * *", tz = "Asia/Shanghai"),
+                // Valid crons arm now (TE11-TE12); an INVALID one still
+                // rejects through the facade. The event manager's own
+                // schedule rejection stays locked by TR13.
+                trigger = Trigger.Schedule(cron = "not a cron", tz = "Asia/Shanghai"),
                 step = WorkflowStep.Command("net.notify"),
             ),
         )
         val schedule = runtime.armTrigger("nightly")
         assertIs<TriggerArmResult.Rejected>(schedule)
-        assertEquals("schedule_triggers_unsupported", schedule.reason)
+        assertEquals("schedule_cron_invalid", schedule.reason)
 
         assertTrue(runtime.armedTriggers().isEmpty())
     }
@@ -450,5 +453,160 @@ class McosRuntimeTriggerTest {
         awaitTrue { invocations.isNotEmpty() }
         awaitTrue { bus.runEvents.any { it.second is RuntimeEvent.RunSucceeded } }
         assertEquals(1, invocations.size)
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // TE11-TE13: schedule triggers through the facade
+    // (05-workflow.md §9.3). TE12 is the only real-time test of the
+    // schedule path; everything else is deterministic via
+    // ScheduleTriggerManagerTest's manual tick().
+    // ═══════════════════════════════════════════════════════════════
+
+    private fun registerScheduleSpec(
+        workflowId: String,
+        commandId: String,
+        cron: String = "0 23 * * *",
+        tz: String = "Asia/Shanghai",
+    ) {
+        runtime.workflowStore().registerSpec(
+            workflowId,
+            WorkflowSpec(
+                trigger = Trigger.Schedule(cron = cron, tz = tz),
+                step = WorkflowStep.Command(commandId),
+            ),
+        )
+    }
+
+    @Test
+    fun `TE11-schedule arm, validation rejections, disarm and cross-family hygiene`() = runBlocking {
+        registerRecordingCommand("net.notify")
+        registerScheduleSpec("nightly", "net.notify")
+
+        // Valid cron + tz arms and is visible in the (union) armed set.
+        assertIs<TriggerArmResult.Armed>(runtime.armTrigger("nightly"))
+        assertEquals(listOf("nightly"), runtime.armedTriggers())
+
+        // Facade disarm covers the schedule family.
+        assertTrue(runtime.disarmTrigger("nightly"))
+        assertFalse(runtime.disarmTrigger("nightly"))
+        assertTrue(runtime.armedTriggers().isEmpty())
+
+        // Validation rejections keep their stable reason codes.
+        registerScheduleSpec("bad-cron", "net.notify", cron = "0 25 * * *")
+        val badCron = runtime.armTrigger("bad-cron")
+        assertIs<TriggerArmResult.Rejected>(badCron)
+        assertEquals("schedule_cron_invalid", badCron.reason)
+        registerScheduleSpec("bad-tz", "net.notify", tz = "Mars/Olympus")
+        val badTz = runtime.armTrigger("bad-tz")
+        assertIs<TriggerArmResult.Rejected>(badTz)
+        assertEquals("schedule_timezone_invalid", badTz.reason)
+
+        // Cross-family hygiene: re-registering "nightly" as an EVENT spec and
+        // re-arming must replace, not accumulate — only one family's entry.
+        runtime.workflowStore().registerSpec(
+            "nightly",
+            WorkflowSpec(
+                trigger = Trigger.Event(filter = buildJsonObject { put("type", "wifi.connected") }),
+                step = WorkflowStep.Command("net.notify"),
+            ),
+        )
+        assertIs<TriggerArmResult.Armed>(runtime.armTrigger("nightly"))
+        assertEquals(listOf("nightly"), runtime.armedTriggers())
+
+        // …and switching back to a schedule releases the event subscription.
+        registerScheduleSpec("nightly", "net.notify")
+        assertIs<TriggerArmResult.Armed>(runtime.armTrigger("nightly"))
+        assertEquals(listOf("nightly"), runtime.armedTriggers())
+
+        runtime.shutdown()
+        assertTrue(runtime.armedTriggers().isEmpty(), "shutdown must disarm schedules too")
+    }
+
+    @Test
+    fun `TE12-real every-minute schedule fires end-to-end with SCHEDULE semantics`() = runBlocking {
+        // The ONE real-time test of the full schedule chain: the driver polls
+        // at ≤10s (waking just past each minute boundary), so an `* * * * *`
+        // recipe in UTC fires within seconds of a boundary that is at most
+        // 60s away — 75s is a safe budget. Everything else about boundaries,
+        // misfires and rate limits is covered deterministically in
+        // ScheduleTriggerManagerTest via tick().
+        registerRecordingCommand("sched.notify", SideEffectClass.write)
+        permissions.grant("test-plugin-sched.notify", "mcos:storage")
+        registerRecordingCommand("sched.net", SideEffectClass.network)
+        permissions.grant("test-plugin-sched.net", "mcos:network")
+        permissions.setAutoApprove("sched.net", true) // even auto-approved → SCHEDULE confirms
+        val bus = RecordingBus(this@McosRuntimeTriggerTest.bus)
+        runtime = buildRuntime(bus)
+
+        registerScheduleSpec("nightly-write", "sched.notify", cron = "* * * * *", tz = "UTC")
+        registerScheduleSpec("bg-net", "sched.net", cron = "* * * * *", tz = "UTC")
+        assertIs<TriggerArmResult.Armed>(runtime.armTrigger("nightly-write", preAuthorized = true))
+        assertIs<TriggerArmResult.Armed>(runtime.armTrigger("bg-net", preAuthorized = true))
+
+        // Both fire at the same minute boundary.
+        awaitTrue(timeoutMs = 75_000) { invocations.any { it.first == "sched.notify" } }
+
+        // Pre-authorized write ran silently (08 §4.1): no challenge for it…
+        assertTrue(
+            bus.runEvents.none {
+                it.second is RuntimeEvent.ConfirmationNeeded &&
+                    (it.second as RuntimeEvent.ConfirmationNeeded).commandId == "sched.notify"
+            },
+            "pre-authorized write under SCHEDULE must not challenge",
+        )
+
+        // …while the granted + auto-approved NETWORK command still challenges
+        // (kernel tightening, 08 §4.0 step 4) and a Reject keeps it unexecuted.
+        awaitTrue(timeoutMs = 10_000) {
+            bus.runEvents.any {
+                it.second is RuntimeEvent.ConfirmationNeeded &&
+                    (it.second as RuntimeEvent.ConfirmationNeeded).commandId == "sched.net"
+            }
+        }
+        val confirmation = bus.runEvents.first {
+            it.second is RuntimeEvent.ConfirmationNeeded &&
+                (it.second as RuntimeEvent.ConfirmationNeeded).commandId == "sched.net"
+        }
+        assertTrue(
+            runtime.respondConfirmation(confirmation.first, "sched.net", ConfirmationDecision.Reject)
+        )
+        awaitTrue { bus.runEvents.any { it.second is RuntimeEvent.RunFailed } }
+        assertTrue(invocations.none { it.first == "sched.net" }, "rejected network step must never execute")
+
+        // Audit: lifecycle records carry source SCHEDULE + scheduledAt
+        // ISO-8601 (05 §7.5), and the run's steps audit as SCHEDULE.
+        audit.flush()
+        val fired = audit.getRuns().single { it.commandId == "workflow.trigger_fired" && it.ir!!.contains("nightly-write") }
+        assertEquals("SCHEDULE", fired.source)
+        assertTrue(
+            Regex("scheduledAt=\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z").containsMatchIn(fired.ir!!),
+            "trigger_fired ir must carry the ISO-8601 scheduledAt, was: ${fired.ir}",
+        )
+        val stepRecord = audit.getRuns().single { it.source == "SCHEDULE" && it.commandId == "sched.notify" }
+        assertTrue(stepRecord.steps.isNotEmpty())
+        assertTrue(stepRecord.steps[0].ok)
+    }
+
+    @Test
+    fun `TE13-armedTriggers unions both families`() = runBlocking {
+        registerRecordingCommand("net.notify")
+        registerScheduleSpec("nightly", "net.notify")
+        runtime.workflowStore().registerSpec(
+            "wifi-vpn",
+            WorkflowSpec(
+                trigger = Trigger.Event(filter = buildJsonObject { put("type", "wifi.connected") }),
+                step = WorkflowStep.Command("net.notify"),
+            ),
+        )
+
+        assertIs<TriggerArmResult.Armed>(runtime.armTrigger("nightly"))
+        assertIs<TriggerArmResult.Armed>(runtime.armTrigger("wifi-vpn"))
+        assertEquals(listOf("nightly", "wifi-vpn"), runtime.armedTriggers())
+
+        // Facade disarm picks the right family for each id.
+        assertTrue(runtime.disarmTrigger("nightly"))
+        assertEquals(listOf("wifi-vpn"), runtime.armedTriggers())
+        assertTrue(runtime.disarmTrigger("wifi-vpn"))
+        assertTrue(runtime.armedTriggers().isEmpty())
     }
 }

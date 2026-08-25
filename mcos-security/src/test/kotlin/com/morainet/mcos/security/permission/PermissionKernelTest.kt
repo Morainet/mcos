@@ -531,6 +531,59 @@ class PermissionKernelTest {
     }
 
     // ═══════════════════════════════════════════════════════════════
+    // P31-P32: SCHEDULE joins the background matrix (08 §4.0 step 4,
+    // 05-workflow.md §9.3) — same rationale as EVENT: no human in the loop.
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `P31-SCHEDULE source downgrades granted and auto-approved network and destructive`() {
+        kernel.grant("example.net", "network.example.com")
+        kernel.grant("example.fs", "mcos:storage")
+        kernel.setAutoApprove("mail.send", true)
+        kernel.setAutoApprove("photo.clean", true)
+        val network = createDescriptor(
+            id = "mail.send",
+            pluginId = "example.net",
+            sideEffectClass = SideEffectClass.network,
+            permissions = listOf(PermissionEntry("network", "network.example.com")),
+        )
+        val destructive = createDescriptor(
+            id = "photo.clean",
+            pluginId = "example.fs",
+            sideEffectClass = SideEffectClass.destructive,
+            permissions = listOf(PermissionEntry("storage", "mcos:storage")),
+        )
+
+        // Foreground stays authorized (auto-approved)…
+        assertIs<AuthorizationResult.Authorized>(kernel.authorize(network, null, "CLI"))
+        // …but a schedule-triggered run re-confirms both classes.
+        val networkResult = kernel.authorize(network, null, PermissionKernel.SOURCE_SCHEDULE)
+        assertIs<AuthorizationResult.ConfirmationNeeded>(networkResult)
+        assertEquals(SideEffectClass.network, networkResult.sideEffectClass)
+        val destructiveResult = kernel.authorize(destructive, null, PermissionKernel.SOURCE_SCHEDULE)
+        assertIs<AuthorizationResult.ConfirmationNeeded>(destructiveResult)
+        assertEquals(SideEffectClass.destructive, destructiveResult.sideEffectClass)
+    }
+
+    @Test
+    fun `P32-SCHEDULE source leaves read and consented write authorized`() {
+        kernel.grant("example.sys", "android.permission.SET_ALARM")
+        kernel.setAutoApprove("sys.notify", true)
+        val read = createDescriptor(id = "sys.clock", pluginId = "example.sys", sideEffectClass = SideEffectClass.read)
+        val write = createDescriptor(
+            id = "sys.notify",
+            pluginId = "example.sys",
+            sideEffectClass = SideEffectClass.write,
+            permissions = listOf(PermissionEntry("android", "android.permission.SET_ALARM")),
+        )
+
+        // Pre-authorized schedule recipes rely on this: the tightening targets
+        // network/destructive only; reads and consented writes authorize.
+        assertIs<AuthorizationResult.Authorized>(kernel.authorize(read, null, PermissionKernel.SOURCE_SCHEDULE))
+        assertIs<AuthorizationResult.Authorized>(kernel.authorize(write, null, PermissionKernel.SOURCE_SCHEDULE))
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     // Helpers
     // ═══════════════════════════════════════════════════════════════
 
