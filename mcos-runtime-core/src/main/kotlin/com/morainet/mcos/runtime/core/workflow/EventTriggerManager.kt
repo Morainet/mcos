@@ -116,7 +116,8 @@ class EventTriggerManager(
      * `suspend` because ARM-mode triggers resolve `$memory` references now.
      *
      * @return [TriggerArmResult.Armed], or [TriggerArmResult.Rejected] with a
-     *   stable reason code (schedule triggers are parse-only until V1).
+     *   stable reason code (schedule triggers belong to
+     *   [ScheduleTriggerManager]; this manager still rejects them).
      */
     suspend fun arm(
         workflowId: String,
@@ -329,7 +330,7 @@ class EventTriggerManager(
         /** Audit source label for trigger lifecycle records (08 §14). */
         const val EVENT_SOURCE = "EVENT"
 
-        /** Schedule triggers parse (05 §9.3) but arming waits for the V1 scheduler. */
+        /** Schedules are armed by [ScheduleTriggerManager]; this manager rejects them. */
         const val REASON_SCHEDULE_UNSUPPORTED = "schedule_triggers_unsupported"
 
         /** Manual triggers run via explicit execute(WorkflowRef), not the bus. */

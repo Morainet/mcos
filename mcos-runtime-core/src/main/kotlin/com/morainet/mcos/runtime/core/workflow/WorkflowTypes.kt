@@ -161,9 +161,15 @@ sealed class Trigger {
     ) : Trigger()
 
     /**
-     * Started on a cron schedule (§9.3). **Parsed but not armed** — scheduling
-     * requires the Android `AlarmManager`/`WorkManager` integration planned
-     * for V1; `EventTriggerManager.arm` rejects it explicitly.
+     * Started on a cron schedule (§9.3) — armed by [ScheduleTriggerManager]
+     * (minute granularity in [tz], misfire dispatch on [misfirePolicy]).
+     * Durable host scheduling (`AlarmManager`/`WorkManager`, Doze, boot
+     * recovery) remains V1 host work.
+     *
+     * @param cron 5-field vixie-cron subset — see [CronExpression].
+     * @param tz IANA zone id the schedule is computed in.
+     * @param misfirePolicy `skip` (default) | `fire-and-forget` |
+     *        `fire-and-forget-if-window` (05 §9.3).
      */
     data class Schedule(
         val cron: String,
