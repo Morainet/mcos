@@ -1,8 +1,11 @@
 package com.morainet.mcos.runtime.api
 
+import com.morainet.mcos.runtime.core.api.ConfirmationDecision
 import com.morainet.mcos.runtime.core.api.ExecuteRequest
 import com.morainet.mcos.runtime.core.api.Payload
+import com.morainet.mcos.runtime.core.api.RuntimeEvent
 import com.morainet.mcos.runtime.core.api.Source
+import com.morainet.mcos.runtime.core.events.EventBus
 import com.morainet.mcos.runtime.core.events.EventEnvelope
 import com.morainet.mcos.runtime.core.events.TypedEventBus
 import com.morainet.mcos.runtime.core.memory.MemoryStore
@@ -298,5 +301,154 @@ class McosRuntimeTriggerTest {
             audit.getRuns().any { it.commandId == "plain.cmd" && it.source == "CLI" },
             "manual workflow run should audit its step with source CLI",
         )
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // TE7-TE10: pre-authorization stamps + EVENT confirmation rules
+    // (05 §10, 08 §4.0 step 4 / §4.1)
+    // ═══════════════════════════════════════════════════════════════
+
+    /** Bus decorator recording run events so tests can capture trigger-run ids. */
+    private class RecordingBus(private val delegate: TypedEventBus) : EventBus by delegate {
+        val runEvents = CopyOnWriteArrayList<Pair<String, RuntimeEvent>>()
+        override fun publish(runId: String, event: RuntimeEvent) {
+            runEvents.add(runId to event)
+            delegate.publish(runId, event)
+        }
+    }
+
+    private fun buildRuntime(bus: EventBus): McosRuntime =
+        McosRuntime.Builder()
+            .withRegistry(registry)
+            .withPermissionKernel(permissions)
+            .withMemory(memory)
+            .withEventBus(bus)
+            .withAuditLog(audit)
+            .build()
+
+    @Test
+    fun `TE7-pre-authorized write step runs silently via shared stamp`() = runBlocking {
+        registerRecordingCommand("net.connect", SideEffectClass.write)
+        permissions.grant("test-plugin-net.connect", "android.permission.CHANGE_NETWORK_STATE")
+        val bus = RecordingBus(this@McosRuntimeTriggerTest.bus)
+        runtime = buildRuntime(bus)
+
+        runtime.workflowStore().registerSpec(
+            "wifi-vpn",
+            WorkflowSpec(
+                trigger = Trigger.Event(
+                    filter = buildJsonObject { put("type", "wifi.connected") },
+                ),
+                step = WorkflowStep.Command(
+                    "net.connect",
+                    args = buildJsonObject {
+                        put("ssid", buildJsonObject { put("\$ref", JsonPrimitive("__input.ssid")) })
+                    },
+                ),
+            ),
+        )
+        assertIs<TriggerArmResult.Armed>(runtime.armTrigger("wifi-vpn", preAuthorized = true))
+
+        publishWifiEvent("Office")
+        awaitTrue { invocations.isNotEmpty() }
+
+        // The write ran with no confirmation surfaced and the event payload
+        // bound through the pre-authorized run's __input.
+        assertEquals(1, invocations.size)
+        assertEquals("Office", (invocations[0].second["ssid"] as? JsonPrimitive)?.content)
+        assertTrue(
+            bus.runEvents.none { it.second is RuntimeEvent.ConfirmationNeeded },
+            "pre-authorized write must not challenge",
+        )
+    }
+
+    @Test
+    fun `TE8-destructive step still challenges and rejects without approval`() = runBlocking {
+        registerRecordingCommand("fs.wipe", SideEffectClass.destructive)
+        permissions.grant("test-plugin-fs.wipe", "mcos:storage")
+        permissions.setAutoApprove("fs.wipe", true) // even auto-approved…
+        val bus = RecordingBus(this@McosRuntimeTriggerTest.bus)
+        runtime = buildRuntime(bus)
+
+        runtime.workflowStore().registerSpec(
+            "danger",
+            WorkflowSpec(
+                trigger = Trigger.Event(filter = buildJsonObject { put("type", "wifi.connected") }),
+                step = WorkflowStep.Command("fs.wipe"),
+            ),
+        )
+        assertIs<TriggerArmResult.Armed>(runtime.armTrigger("danger", preAuthorized = true))
+
+        publishWifiEvent("Office")
+
+        // The challenge surfaces to the host…
+        awaitTrue { bus.runEvents.any { it.second is RuntimeEvent.ConfirmationNeeded } }
+        val confirmation = bus.runEvents.first { it.second is RuntimeEvent.ConfirmationNeeded }
+        val needed = confirmation.second as RuntimeEvent.ConfirmationNeeded
+        assertEquals("fs.wipe", needed.commandId)
+
+        // …and an explicit Reject keeps the step unexecuted.
+        assertTrue(runtime.respondConfirmation(confirmation.first, "fs.wipe", ConfirmationDecision.Reject))
+        awaitTrue {
+            bus.runEvents.any { it.second is RuntimeEvent.RunFailed }
+        }
+        assertTrue(invocations.isEmpty(), "rejected destructive step must never execute")
+    }
+
+    @Test
+    fun `TE9-unpreauthorized write challenges and rejection keeps it unexecuted`() = runBlocking {
+        registerRecordingCommand("net.connect", SideEffectClass.write)
+        permissions.grant("test-plugin-net.connect", "android.permission.CHANGE_NETWORK_STATE")
+        val bus = RecordingBus(this@McosRuntimeTriggerTest.bus)
+        runtime = buildRuntime(bus)
+
+        runtime.workflowStore().registerSpec(
+            "wifi-vpn",
+            WorkflowSpec(
+                trigger = Trigger.Event(filter = buildJsonObject { put("type", "wifi.connected") }),
+                step = WorkflowStep.Command("net.connect"),
+            ),
+        )
+        assertIs<TriggerArmResult.Armed>(runtime.armTrigger("wifi-vpn", preAuthorized = false))
+
+        publishWifiEvent("Office")
+        awaitTrue { bus.runEvents.any { it.second is RuntimeEvent.ConfirmationNeeded } }
+        val confirmation = bus.runEvents.first { it.second is RuntimeEvent.ConfirmationNeeded }
+
+        assertTrue(
+            runtime.respondConfirmation(confirmation.first, "net.connect", ConfirmationDecision.Reject)
+        )
+        awaitTrue { bus.runEvents.any { it.second is RuntimeEvent.RunFailed } }
+        assertTrue(invocations.isEmpty())
+    }
+
+    @Test
+    fun `TE10-approved destructive step retries and completes`() = runBlocking {
+        registerRecordingCommand("fs.wipe", SideEffectClass.destructive)
+        permissions.grant("test-plugin-fs.wipe", "mcos:storage")
+        val bus = RecordingBus(this@McosRuntimeTriggerTest.bus)
+        runtime = buildRuntime(bus)
+
+        runtime.workflowStore().registerSpec(
+            "danger",
+            WorkflowSpec(
+                trigger = Trigger.Event(filter = buildJsonObject { put("type", "wifi.connected") }),
+                step = WorkflowStep.Command("fs.wipe"),
+            ),
+        )
+        assertIs<TriggerArmResult.Armed>(runtime.armTrigger("danger", preAuthorized = true))
+
+        publishWifiEvent("Office")
+        awaitTrue { bus.runEvents.any { it.second is RuntimeEvent.ConfirmationNeeded } }
+        val confirmation = bus.runEvents.first { it.second is RuntimeEvent.ConfirmationNeeded }
+
+        assertTrue(
+            runtime.respondConfirmation(confirmation.first, "fs.wipe", ConfirmationDecision.Approve())
+        )
+
+        // Approval mints the retry stamp and the step executes once.
+        awaitTrue { invocations.isNotEmpty() }
+        awaitTrue { bus.runEvents.any { it.second is RuntimeEvent.RunSucceeded } }
+        assertEquals(1, invocations.size)
     }
 }

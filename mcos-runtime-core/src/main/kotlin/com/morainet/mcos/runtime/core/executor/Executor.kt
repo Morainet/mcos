@@ -227,7 +227,7 @@ class Executor(
             auth
         } else {
             val enterprise = security.enterprisePolicy.current()
-            when (val authz = security.kernel.authorize(entry.descriptor, enterprise)) {
+            when (val authz = security.kernel.authorize(entry.descriptor, enterprise, source)) {
                 is AuthorizationResult.Authorized -> authz.stamp
                 is AuthorizationResult.Denied -> {
                     return CommandResult.Err(

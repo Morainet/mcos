@@ -47,19 +47,27 @@ class WorkflowEngine(
      * @param authFor Per-command [AuthStamp] supplier (e.g. a pre-authorized
      *        trigger run's read/write-scoped stamp); returning null for a
      *        command makes that step go through the normal kernel path.
+     * @param confirmFor Optional confirmation hook: when a command step comes
+     *        back with `CONFIRMATION_REQUIRED`, the engine asks the hook for a
+     *        retry [AuthStamp] (an approved confirmation) and re-executes the
+     *        step once with it; `null` from the hook (rejected/timeout) keeps
+     *        the failure. The facade supplies this for trigger-fired runs so
+     *        network/destructive steps surface their confirmation to the host
+     *        (08 §4.0 step 4) instead of failing the workflow outright.
      * @return [WorkflowResult] with step-by-step results and overall outcome.
      */
     suspend fun execute(
         definition: WorkflowStep,
         inputs: JsonObject = JsonObject(emptyMap()),
         stepSource: String = "CLI",
-        authFor: (String) -> AuthStamp? = { null }
+        authFor: (String) -> AuthStamp? = { null },
+        confirmFor: (suspend (commandId: String, err: CommandResult.Err) -> AuthStamp?)? = null
     ): WorkflowResult {
         val runId = UUID.randomUUID().toString()
         val startTime = System.currentTimeMillis()
         val collectedSteps = mutableListOf<WorkflowStepResult>()
         var outcome = WorkflowOutcome.COMPLETED
-        val ctx = RunContext(inputs, stepSource, authFor)
+        val ctx = RunContext(inputs, stepSource, authFor, confirmFor)
 
         try {
             val rootOk = executeStep(definition, ctx, collectedSteps)
@@ -123,7 +131,8 @@ class WorkflowEngine(
     private class RunContext(
         val inputs: JsonObject,
         val stepSource: String,
-        val authFor: (String) -> AuthStamp?
+        val authFor: (String) -> AuthStamp?,
+        val confirmFor: (suspend (String, CommandResult.Err) -> AuthStamp?)?
     )
 
     private suspend fun executeStep(
@@ -151,7 +160,7 @@ class WorkflowEngine(
     ): Boolean {
         val start = System.currentTimeMillis()
         val resolvedArgs = resolveArgs(step.args, ctx.inputs)
-        val result = if (resolvedArgs is ArgResolution.Failed) {
+        var result: CommandResult = if (resolvedArgs is ArgResolution.Failed) {
             CommandResult.Err(
                 code = McosErrorCode.SCHEMA_VIOLATION.name,
                 message = "Unresolvable input reference in args for '${step.commandId}': ${resolvedArgs.reason}",
@@ -164,6 +173,26 @@ class WorkflowEngine(
                 ctx.authFor(step.commandId),
                 source = ctx.stepSource
             )
+        }
+        // Confirmation retry (08 §5): a CONFIRMATION_REQUIRED step with a
+        // hook present asks for the host's decision once; an approved stamp
+        // re-executes the step, anything else keeps the failure. Without a
+        // hook the step fails as before (the manual workflow path keeps its
+        // historical behavior).
+        if (result is CommandResult.Err &&
+            result.code == McosErrorCode.CONFIRMATION_REQUIRED.name &&
+            ctx.confirmFor != null &&
+            resolvedArgs is ArgResolution.Resolved
+        ) {
+            val stamp = ctx.confirmFor.invoke(step.commandId, result)
+            if (stamp != null) {
+                result = executor.execute(
+                    step.commandId,
+                    resolvedArgs.args,
+                    stamp,
+                    source = ctx.stepSource
+                )
+            }
         }
         val durationMs = System.currentTimeMillis() - start
 

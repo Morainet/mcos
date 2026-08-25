@@ -67,12 +67,18 @@ internal class ConfirmationCoordinator(
      * Publish the [RuntimeEvent.ConfirmationNeeded] notification and suspend
      * the run until the host answers via [respond] or the confirmation
      * timeout elapses (timeout ⇒ reject).
+     *
+     * @param timeoutOverrideMs per-call timeout override. Background
+     *        event-triggered runs pass the longer §6.4.1 budget (the user is
+     *        not looking at the screen); defaults to the configured
+     *        [timeoutMs].
      */
     suspend fun requestConfirmation(
         runId: String,
         index: Int,
         cmd: Command,
         result: CommandResult.Err,
+        timeoutOverrideMs: Long? = null,
     ): ConfirmationDecision {
         val sideEffectClass = (result.details?.get("sideEffectClass") as? JsonPrimitive)?.content
         eventBus.publish(
@@ -84,15 +90,19 @@ internal class ConfirmationCoordinator(
                 sideEffectClass = sideEffectClass,
             )
         )
-        return awaitConfirmation(runId, cmd.id)
+        return awaitConfirmation(runId, cmd.id, timeoutOverrideMs)
     }
 
-    private suspend fun awaitConfirmation(runId: String, commandId: String): ConfirmationDecision {
+    private suspend fun awaitConfirmation(
+        runId: String,
+        commandId: String,
+        timeoutOverrideMs: Long? = null,
+    ): ConfirmationDecision {
         val key = confirmationKey(runId, commandId)
         val deferred = CompletableDeferred<ConfirmationDecision>()
         pendingConfirmations[key] = deferred
         try {
-            return withTimeoutOrNull(timeoutMs) { deferred.await() }
+            return withTimeoutOrNull(timeoutOverrideMs ?: timeoutMs) { deferred.await() }
                 ?: ConfirmationDecision.Reject
         } finally {
             pendingConfirmations.remove(key)

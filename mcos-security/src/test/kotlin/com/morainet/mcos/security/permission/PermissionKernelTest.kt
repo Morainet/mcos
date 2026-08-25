@@ -457,6 +457,80 @@ class PermissionKernelTest {
     }
 
     // ═══════════════════════════════════════════════════════════════
+    // P27-P30: EVENT source stricter matrix (08 §4.0 step 4)
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `P27-EVENT source downgrades auto-approved network to confirmation`() {
+        kernel.grant("example.net", "network.example.com")
+        kernel.setAutoApprove("mail.send", true)
+        val descriptor = createDescriptor(
+            id = "mail.send",
+            pluginId = "example.net",
+            sideEffectClass = SideEffectClass.network,
+            permissions = listOf(PermissionEntry("network", "network.example.com")),
+        )
+
+        // Baseline: a foreground (CLI) auto-approved network run is authorized…
+        assertIs<AuthorizationResult.Authorized>(kernel.authorize(descriptor, null, "CLI"))
+
+        // …but a background event-triggered run always re-confirms (08 §4.0
+        // step 4: "background network always re-confirms").
+        val event = kernel.authorize(descriptor, null, PermissionKernel.SOURCE_EVENT)
+        assertIs<AuthorizationResult.ConfirmationNeeded>(event)
+        assertEquals(SideEffectClass.network, event.sideEffectClass)
+    }
+
+    @Test
+    fun `P28-EVENT source confirms destructive even when granted and auto-approved`() {
+        kernel.grant("example.fs", "mcos:storage")
+        kernel.setAutoApprove("photo.clean", true)
+        val descriptor = createDescriptor(
+            id = "photo.clean",
+            pluginId = "example.fs",
+            sideEffectClass = SideEffectClass.destructive,
+            permissions = listOf(PermissionEntry("storage", "mcos:storage")),
+        )
+
+        val event = kernel.authorize(descriptor, null, PermissionKernel.SOURCE_EVENT)
+        assertIs<AuthorizationResult.ConfirmationNeeded>(event)
+        assertEquals(SideEffectClass.destructive, event.sideEffectClass)
+    }
+
+    @Test
+    fun `P29-EVENT source leaves read and auto-approved write authorized`() {
+        kernel.grant("example.sys", "android.permission.SET_ALARM")
+        kernel.setAutoApprove("sys.notify", true)
+        val read = createDescriptor(id = "sys.clock", pluginId = "example.sys", sideEffectClass = SideEffectClass.read)
+        val write = createDescriptor(
+            id = "sys.notify",
+            pluginId = "example.sys",
+            sideEffectClass = SideEffectClass.write,
+            permissions = listOf(PermissionEntry("android", "android.permission.SET_ALARM")),
+        )
+
+        // The EVENT tightening targets network/destructive only (08 §4.0
+        // step 4): reads and consented writes (auto-approve / pre-auth)
+        // still authorize — this is what pre-authorized recipes rely on.
+        assertIs<AuthorizationResult.Authorized>(kernel.authorize(read, null, PermissionKernel.SOURCE_EVENT))
+        assertIs<AuthorizationResult.Authorized>(kernel.authorize(write, null, PermissionKernel.SOURCE_EVENT))
+    }
+
+    @Test
+    fun `P30-EVENT source never softens a hard denial`() {
+        // Missing grant → Denied stays Denied under EVENT (a deny is never
+        // downgraded into a mere confirmation).
+        val descriptor = createDescriptor(
+            id = "mail.send",
+            pluginId = "example.net",
+            sideEffectClass = SideEffectClass.network,
+            permissions = listOf(PermissionEntry("network", "network.example.com")),
+        )
+        val event = kernel.authorize(descriptor, null, PermissionKernel.SOURCE_EVENT)
+        assertIs<AuthorizationResult.Denied>(event)
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     // Helpers
     // ═══════════════════════════════════════════════════════════════
 

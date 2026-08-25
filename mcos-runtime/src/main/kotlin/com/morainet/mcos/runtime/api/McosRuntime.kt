@@ -54,6 +54,7 @@ import com.morainet.mcos.runtime.core.workflow.WorkflowResult
 import com.morainet.mcos.runtime.core.workflow.WorkflowSpec
 import com.morainet.mcos.runtime.core.workflow.WorkflowStep
 import com.morainet.mcos.runtime.core.workflow.WorkflowStore
+import com.morainet.mcos.sdk.AuthStamp
 import com.morainet.mcos.sdk.CommandResult
 import com.morainet.mcos.sdk.SideEffectClass
 import com.morainet.mcos.sdk.MemoryFacade
@@ -121,6 +122,7 @@ class McosRuntime internal constructor(
     private val pluginLoader: PluginLoader,
     private val pluginInstaller: PluginInstaller?,
     private val auditLog: AuditLog = NullAuditLog,
+    private val permissionKernel: PermissionKernel = DefaultPermissionKernel(),
 ) : RuntimeGateway {
     private val summarizer = RunSummarizer(episodicMemory)
 
@@ -450,12 +452,102 @@ class McosRuntime internal constructor(
                     payload = Payload.WorkflowRef(workflowId),
                     inputs = inputs,
                     stepSource = Source.EVENT.name,
+                    preAuthorized = preAuthorized,
                 )
             } catch (e: CancellationException) {
                 eventBus.publish(runId, RuntimeEvent.RunCancelled(runId))
             } catch (e: Exception) {
                 eventBus.publish(runId, RuntimeEvent.RunFailed(runId, e.message ?: "Unknown error"))
             }
+        }
+    }
+
+    /**
+     * How long a trigger-fired run waits for a foreground confirmation
+     * before treating it as rejected (08-security.md §6.4.1: background
+     * event confirmations time out after 5 minutes).
+     */
+    private val backgroundConfirmationTimeoutMs: Long = BACKGROUND_CONFIRMATION_TIMEOUT_MS
+
+    /** A pre-authorized trigger run's shared stamp and the commands it covers. */
+    private class PreAuthorization(
+        val stamp: AuthStamp,
+        val coveredCommandIds: Set<String>,
+    )
+
+    /**
+     * Mint the per-run pre-authorization stamp (05 §10, 08 §4.1): one signed
+     * [AuthStamp] whose scopes are the union of the required permissions of
+     * every **read/write** command in the workflow. Network/destructive (and
+     * control) commands are deliberately NOT covered — they return null from
+     * the authFor supplier and go through the kernel's stricter EVENT rules.
+     * TTL comes from the kernel's `authStampTtlMs` (§6.3, same source as
+     * kernel-minted stamps). Returns null when no command is coverable.
+     */
+    private fun mintPreAuthorization(runId: String, step: WorkflowStep): PreAuthorization? {
+        val scopes = mutableSetOf<String>()
+        val covered = mutableSetOf<String>()
+        for (commandId in collectCommandIds(step)) {
+            val descriptor =
+                (registry.resolve(commandId) as? RegistryResolveResult.Found)?.entry?.descriptor
+                    ?: continue // unresolvable: leave to the normal path (UNKNOWN_COMMAND)
+            if (descriptor.sideEffectClass == SideEffectClass.read ||
+                descriptor.sideEffectClass == SideEffectClass.write
+            ) {
+                descriptor.permissions.forEach { scopes.add(it.name) }
+                covered.add(commandId)
+            }
+        }
+        if (covered.isEmpty()) return null
+        val now = System.currentTimeMillis()
+        val stamp = authStampSigner.sign(
+            AuthStamp(
+                runId = runId,
+                commandId = "workflow.preauth",
+                pluginId = "workflow",
+                grantsUsed = scopes,
+                issuedAt = now,
+                expiresAt = now + permissionKernel.authStampTtlMs,
+            )
+        )
+        return PreAuthorization(stamp, covered)
+    }
+
+    /** Every command id in the workflow tree, depth-first (may repeat). */
+    private fun collectCommandIds(step: WorkflowStep): List<String> = when (step) {
+        is WorkflowStep.Command -> listOf(step.commandId)
+        is WorkflowStep.Sequential -> step.steps.flatMap { collectCommandIds(it) }
+        is WorkflowStep.Parallel -> step.steps.flatMap { collectCommandIds(it) }
+        is WorkflowStep.If ->
+            collectCommandIds(step.thenStep) + (step.elseStep?.let { collectCommandIds(it) } ?: emptyList())
+        is WorkflowStep.Loop -> collectCommandIds(step.body)
+        is WorkflowStep.Retry -> collectCommandIds(step.step)
+        is WorkflowStep.Try -> collectCommandIds(step.step) + step.compensation.flatMap { collectCommandIds(it) }
+    }
+
+    /**
+     * Confirmation hook for trigger-fired runs (08 §5): surface the step's
+     * CONFIRMATION_REQUIRED to the host with the background timeout budget
+     * and, on approval, mint the retry stamp. Rejection or timeout returns
+     * null and the step keeps its failure.
+     */
+    private suspend fun confirmTriggeredStep(
+        runId: String,
+        commandId: String,
+        err: CommandResult.Err,
+    ): AuthStamp? {
+        val cmd = Command(commandId, JsonObject(emptyMap()))
+        val decision = confirmations.requestConfirmation(
+            runId = runId,
+            index = 0,
+            cmd = cmd,
+            result = err,
+            timeoutOverrideMs = backgroundConfirmationTimeoutMs,
+        )
+        return if (decision is ConfirmationDecision.Approve) {
+            confirmations.mintAuthStamp(runId, cmd)
+        } else {
+            null
         }
     }
 
@@ -655,6 +747,9 @@ class McosRuntime internal constructor(
      *
      * @param stepSource Audit source label for every command step (08 §14):
      *        `CLI` for manual runs, `EVENT` for trigger-fired runs.
+     * @param preAuthorized Trigger-fired runs armed with the user's install-
+     *        time consent (05 §10): read/write steps run on one shared
+     *        pre-authorization stamp, network/destructive steps still confirm.
      */
     private suspend fun runWorkflow(
         runId: String,
@@ -664,10 +759,36 @@ class McosRuntime internal constructor(
         payload: Payload,
         inputs: JsonObject = JsonObject(emptyMap()),
         stepSource: String = "CLI",
+        preAuthorized: Boolean = false,
     ) {
         eventBus.publish(runId, RuntimeEvent.RunStarted(runId, null, timestamp))
 
-        val result = workflowEngine.execute(step, inputs = inputs, stepSource = stepSource)
+        // Pre-authorization (05 §10, 08 §4.1): one stamp covering the union
+        // of read/write steps' required permissions. Supplied-stamp steps
+        // skip the kernel; everything else keeps the kernel's EVENT rules.
+        val preAuth = if (preAuthorized) mintPreAuthorization(runId, step) else null
+        val authFor: (String) -> AuthStamp? = if (preAuth != null) {
+            { commandId -> if (commandId in preAuth.coveredCommandIds) preAuth.stamp else null }
+        } else {
+            { _ -> null }
+        }
+        // Trigger-fired runs surface mid-run confirmations to the host
+        // (network/destructive steps, 08 §4.0 step 4) with the background
+        // timeout budget instead of failing the workflow outright.
+        val confirmFor: (suspend (String, CommandResult.Err) -> AuthStamp?)? =
+            if (stepSource == Source.EVENT.name) {
+                { commandId, err -> confirmTriggeredStep(runId, commandId, err) }
+            } else {
+                null
+            }
+
+        val result = workflowEngine.execute(
+            step,
+            inputs = inputs,
+            stepSource = stepSource,
+            authFor = authFor,
+            confirmFor = confirmFor,
+        )
 
         result.steps.forEachIndexed { index, stepResult ->
             val commandId = stepResult.commandId ?: "workflow.control"
@@ -763,6 +884,11 @@ class McosRuntime internal constructor(
     }
 
     // ─── Builder ─────────────────────────────────────────────────────────
+
+    companion object {
+        /** 08-security.md §6.4.1: background event confirmations get 5 minutes. */
+        private const val BACKGROUND_CONFIRMATION_TIMEOUT_MS = 300_000L
+    }
 
     /**
      * Builder for [McosRuntime] with sensible defaults.
@@ -916,6 +1042,7 @@ class McosRuntime internal constructor(
                 pluginLoader = loader,
                 pluginInstaller = pluginInstaller,
                 auditLog = auditLog,
+                permissionKernel = perm,
             )
         }
     }

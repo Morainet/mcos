@@ -79,6 +79,27 @@ interface PermissionKernel {
         enterprisePolicy: EnterprisePolicy? = null,
     ): AuthorizationResult
 
+    /**
+     * Source-aware authorization (08-security.md §4.0 step 4): background
+     * event-triggered runs (`source == [SOURCE_EVENT]`, 01 §11.6) are held to
+     * a stricter matrix — network and destructive side effects re-confirm
+     * even when granted or auto-approved.
+     *
+     * The default implementation ignores [source] and delegates, so custom
+     * kernels keep compiling and behaving unchanged;
+     * [DefaultPermissionKernel] overrides it.
+     *
+     * @param descriptor The resolved command descriptor.
+     * @param enterprisePolicy Optional enterprise policy.
+     * @param source Audit source label (08 §14) — `"CLI"`, `"CHAT"`,
+     *        `"EVENT"`, … — the same string the executor audits.
+     */
+    fun authorize(
+        descriptor: CommandDescriptor,
+        enterprisePolicy: EnterprisePolicy?,
+        source: String,
+    ): AuthorizationResult = authorize(descriptor, enterprisePolicy)
+
     // ─── Grant management ─────────────────────────────────────────────────
 
     /** Grant a permission to a plugin. Persisted across sessions. */
@@ -131,6 +152,13 @@ interface PermissionKernel {
     companion object {
         /** Default authorization stamp lifetime: 5 minutes (run-scoped). */
         const val DEFAULT_AUTH_TTL_MS = 300_000L // 5 min
+
+        /**
+         * Audit source label for background event-triggered runs (08 §14).
+         * Lives here (not on the runtime's `Source` enum) because this
+         * module sits below the runtime in the dependency graph.
+         */
+        const val SOURCE_EVENT = "EVENT"
     }
 }
 
@@ -190,6 +218,35 @@ class DefaultPermissionKernel(
     }
 
     // ─── Authorization ────────────────────────────────────────────────────
+
+    override fun authorize(
+        descriptor: CommandDescriptor,
+        enterprisePolicy: EnterprisePolicy?,
+        source: String,
+    ): AuthorizationResult {
+        val base = authorize(descriptor, enterprisePolicy)
+
+        // 08-security.md §4.0 step 4: background event-triggered runs are
+        // stricter — network and destructive side effects ALWAYS re-confirm.
+        // Auto-approve is suppressed for them; an Authorized result is
+        // downgraded to ConfirmationNeeded. Denials and confirmations from
+        // the base pass stay as-is (a hard deny is never softened into a
+        // mere confirmation).
+        val stricterClass = descriptor.sideEffectClass == SideEffectClass.network ||
+            descriptor.sideEffectClass == SideEffectClass.destructive
+        if (source == PermissionKernel.SOURCE_EVENT && stricterClass &&
+            base is AuthorizationResult.Authorized
+        ) {
+            return AuthorizationResult.ConfirmationNeeded(
+                commandId = descriptor.id,
+                reason = "Background event-triggered runs always confirm " +
+                    descriptor.sideEffectClass.name + " commands (08 §4.0 step 4)",
+                missingPermissions = emptyList(),
+                sideEffectClass = descriptor.sideEffectClass
+            )
+        }
+        return base
+    }
 
     override fun authorize(
         descriptor: CommandDescriptor,
