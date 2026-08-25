@@ -10,6 +10,7 @@ import com.morainet.mcos.runtime.core.api.PreviewCommand
 import com.morainet.mcos.runtime.core.api.PreviewResult
 import com.morainet.mcos.runtime.core.api.RuntimeEvent
 import com.morainet.mcos.runtime.core.api.RuntimeGateway
+import com.morainet.mcos.runtime.core.api.Source
 import com.morainet.mcos.runtime.core.api.StubHostServices
 import com.morainet.mcos.runtime.core.events.EventBus
 import com.morainet.mcos.runtime.core.events.TypedEventBus
@@ -44,10 +45,13 @@ import com.morainet.mcos.security.SlidingWindowCrashQuarantine
 import com.morainet.mcos.security.TokenBucketRateLimiter
 import com.morainet.mcos.security.audit.AuditLog
 import com.morainet.mcos.sdk.McosPlugin
+import com.morainet.mcos.runtime.core.workflow.EventTriggerManager
+import com.morainet.mcos.runtime.core.workflow.TriggerArmResult
 import com.morainet.mcos.runtime.core.workflow.WorkflowEngine
 import com.morainet.mcos.runtime.core.workflow.WorkflowJson
 import com.morainet.mcos.runtime.core.workflow.WorkflowOutcome
 import com.morainet.mcos.runtime.core.workflow.WorkflowResult
+import com.morainet.mcos.runtime.core.workflow.WorkflowSpec
 import com.morainet.mcos.runtime.core.workflow.WorkflowStep
 import com.morainet.mcos.runtime.core.workflow.WorkflowStore
 import com.morainet.mcos.sdk.CommandResult
@@ -116,8 +120,20 @@ class McosRuntime internal constructor(
     private val confirmationTimeoutMs: Long,
     private val pluginLoader: PluginLoader,
     private val pluginInstaller: PluginInstaller?,
+    private val auditLog: AuditLog = NullAuditLog,
 ) : RuntimeGateway {
     private val summarizer = RunSummarizer(episodicMemory)
+
+    // ─── Event triggers (05-workflow.md §9.2) ───────────────────────────
+    //
+    // Armed event triggers subscribe to the system event bus and launch their
+    // workflow on match. The facade owns the launcher (RunManager launch +
+    // runWorkflow with the event payload as __input and EVENT step source).
+    private val triggerManager = EventTriggerManager(
+        bus = eventBus,
+        memory = memory,
+        auditLog = auditLog,
+    )
 
     // ─── Confirmation flow (08-security.md §5) ──────────────────────────
     //
@@ -339,6 +355,9 @@ class McosRuntime internal constructor(
      * as cancelled — callers should not reuse a shut-down runtime.
      */
     fun shutdown() {
+        // Armed event triggers are released first so no in-flight bus event
+        // can launch a new run on the scope being cancelled below.
+        triggerManager.disarmAll()
         // Cancel every active run; the SupervisorJob's children are cancelled
         // in bulk by cancelling the scope's job as well.
         runManager.shutdown()
@@ -382,6 +401,63 @@ class McosRuntime internal constructor(
      * Access the workflow store for registering/loading named workflows.
      */
     fun workflowStore(): WorkflowStore = workflowStore
+
+    /**
+     * Arm the registered workflow's event trigger (05-workflow.md §9.2):
+     * subscribe to the event bus per the trigger's filter; each matching
+     * event launches the workflow with the event payload as its `__input`
+     * (05 §6.2) and per-step audit source `EVENT`.
+     *
+     * @param preAuthorized `true` when the user pre-authorized the recipe at
+     *        install time (05 §10) — carried to the launcher for the
+     *        pre-authorization stamp flow (08 §4.1).
+     * @return [TriggerArmResult.Armed], or [TriggerArmResult.Rejected] with a
+     *         stable reason (unknown workflow, no trigger, schedule trigger).
+     */
+    suspend fun armTrigger(workflowId: String, preAuthorized: Boolean = false): TriggerArmResult {
+        val spec: WorkflowSpec = workflowStore.spec(workflowId)
+            ?: return TriggerArmResult.Rejected(workflowId, "workflow_not_found")
+        val trigger = spec.trigger
+            ?: return TriggerArmResult.Rejected(workflowId, "workflow_has_no_trigger")
+        return triggerManager.arm(workflowId, trigger, preAuthorized, ::fireTriggeredWorkflow)
+    }
+
+    /** Disarm a previously armed trigger. `true` if [workflowId] was armed. */
+    fun disarmTrigger(workflowId: String): Boolean = triggerManager.disarm(workflowId)
+
+    /** Currently armed trigger workflow ids (05 §9.2). */
+    fun armedTriggers(): List<String> = triggerManager.armed()
+
+    /**
+     * Launcher the [EventTriggerManager] invokes on a matching event. The
+     * run is launched on the owned run scope (P0-C2) so shutdown cancels it;
+     * the event payload becomes `__input` and every step is audited as EVENT.
+     */
+    private fun fireTriggeredWorkflow(workflowId: String, inputs: JsonObject, preAuthorized: Boolean) {
+        // The workflow may have been removed from the store while armed
+        // (uninstall disarms explicitly, but a store.clear() racing a fire is
+        // possible) — a dangling armed trigger must not crash the bus handler.
+        val step = workflowStore.get(workflowId) ?: return
+        val runId = UUID.randomUUID().toString()
+        runManager.launch(runId) {
+            val startTime = System.currentTimeMillis()
+            try {
+                runWorkflow(
+                    runId = runId,
+                    step = step,
+                    startTime = startTime,
+                    timestamp = startTime,
+                    payload = Payload.WorkflowRef(workflowId),
+                    inputs = inputs,
+                    stepSource = Source.EVENT.name,
+                )
+            } catch (e: CancellationException) {
+                eventBus.publish(runId, RuntimeEvent.RunCancelled(runId))
+            } catch (e: Exception) {
+                eventBus.publish(runId, RuntimeEvent.RunFailed(runId, e.message ?: "Unknown error"))
+            }
+        }
+    }
 
     /**
      * Load a plugin into the runtime ([09-marketplace.md §7.0]). The plugin
@@ -576,6 +652,9 @@ class McosRuntime internal constructor(
     /**
      * Run a workflow definition via [WorkflowEngine], mapping step results
      * onto runtime events.
+     *
+     * @param stepSource Audit source label for every command step (08 §14):
+     *        `CLI` for manual runs, `EVENT` for trigger-fired runs.
      */
     private suspend fun runWorkflow(
         runId: String,
@@ -584,10 +663,11 @@ class McosRuntime internal constructor(
         timestamp: Long,
         payload: Payload,
         inputs: JsonObject = JsonObject(emptyMap()),
+        stepSource: String = "CLI",
     ) {
         eventBus.publish(runId, RuntimeEvent.RunStarted(runId, null, timestamp))
 
-        val result = workflowEngine.execute(step, inputs = inputs)
+        val result = workflowEngine.execute(step, inputs = inputs, stepSource = stepSource)
 
         result.steps.forEachIndexed { index, stepResult ->
             val commandId = stepResult.commandId ?: "workflow.control"
@@ -835,6 +915,7 @@ class McosRuntime internal constructor(
                 confirmationTimeoutMs = confirmationTimeoutMs,
                 pluginLoader = loader,
                 pluginInstaller = pluginInstaller,
+                auditLog = auditLog,
             )
         }
     }

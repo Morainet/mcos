@@ -19,7 +19,9 @@ import com.morainet.mcos.sdk.McosPlugin
 import com.morainet.mcos.sdk.PluginManifest
 import com.morainet.mcos.sdk.ProviderInfo
 import com.morainet.mcos.sdk.SideEffectClass
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -38,6 +40,18 @@ class RunSummarizerTest {
     private val permissions = com.morainet.mcos.security.permission.DefaultPermissionKernel()
 
     private fun newEpisodic(): EpisodicMemory = EpisodicMemory()
+
+    /**
+     * Poll until the background run finishes and its episode lands — a fixed
+     * delay flaked under parallel test load (the episode is written after the
+     * run coroutine completes, timing varies with the dispatcher).
+     */
+    private suspend fun awaitEpisode(runtime: McosRuntime, expected: Int = 1) {
+        withTimeout(5_000) {
+            while (runtime.episodicMemory().count() < expected) delay(20)
+        }
+    }
+
 
     private fun argsOf(vararg pairs: Pair<String, String>): Map<String, JsonElement> =
         buildJsonObject {
@@ -191,7 +205,7 @@ class RunSummarizerTest {
         assertEquals(ExecutionStatus.RUNNING, handle.status)
 
         // Give the background coroutine time to finish.
-        kotlinx.coroutines.delay(500)
+        awaitEpisode(runtime)
         assertEquals(1, runtime.episodicMemory().count())
 
         val ep = runtime.episodicMemory().exportEpisodic()[0].jsonObject
@@ -212,7 +226,7 @@ class RunSummarizerTest {
         runtime.execute(
             ExecuteRequest(source = Source.CHAT, payload = Payload.DslText("mail.send()"))
         )
-        kotlinx.coroutines.delay(500)
+        awaitEpisode(runtime)
         assertEquals(1, runtime.episodicMemory().count())
         val ep = runtime.episodicMemory().exportEpisodic()[0].jsonObject
         assertEquals("FAILED", ep["outcome"]!!.jsonPrimitive.content)
@@ -236,7 +250,7 @@ class RunSummarizerTest {
                 payload = Payload.WorkflowRef("wf-sum")
             )
         )
-        kotlinx.coroutines.delay(500)
+        awaitEpisode(runtime)
         assertEquals(1, runtime.episodicMemory().count())
         val ep = runtime.episodicMemory().exportEpisodic()[0].jsonObject
         assertEquals("photo.compress", ep["commandIds"]!!.jsonArray[0].jsonPrimitive.content)
