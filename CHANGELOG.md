@@ -10,6 +10,18 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### MCP bridge spike (2026-08-26)
+
+The one sanctioned cross-phase spike lands (10-roadmap task `p2-14`): **a user-configured MCP server is bridged into the command bus as a synthesized plugin**, validating schema conversion + the ecosystem-adoption thesis without the P3 production surface (02 §12.4).
+
+- **New module** — `plugins/mcos-plugin-mcp` (depends only on `mcos-sdk`), namespace `com.morainet.mcos.plugin.mcp`.
+- **Client** — `McpClient`: a minimal JSON-RPC 2.0 client for a single server, routed through the host `NetService` so egress policy/proxy/enterprise domain rules apply uniformly (04 §10, 02 §12.1). Single-POST request/response transport (spike scope: no SSE, no session resumption); `tools/list` + `tools/call`; `token` → `Authorization: Bearer`; HTTP status → runtime error mapping (401/403 → `PERMISSION_DENIED`, 5xx / connection fault → retryable `UNAVAILABLE`, JSON-RPC `-32602` → `SCHEMA_VIOLATION`, else `PLUGIN_ERROR`).
+- **Schema conversion** — `McpSchemaConverter`: MCP tool JSON Schema → MCOS `inputSchema` per the normative §12.4 table, **fail-closed** — unmappable keywords (`oneOf`/`anyOf`/`allOf`/`patternProperties`/tuple `items[]`/`format` outside `{date-time, byte, uri, duration}`/unresolvable local `$ref`/missing `type`) → `Result.Unmapped` and the tool is dropped, never silently degraded. §12.4 caps applied (string `maxLength` 65536, `format:byte` capped on base64 length ≈ 10 MiB decoded); local `$ref` resolved against `$defs`/`definitions`; `const`/`enum` type inference.
+- **Adapter** — `McpAdapter.discover(net, config)` runs discovery *before* registration (tools are enumerated at runtime), synthesizing an `McpBridgedPlugin` (id `mcos.plugin.mcp.<serverId>`, command ids `mcp.<serverId>.<sanitized-tool>`) plus a `List<SkippedTool>`. Side-effect floor is `network` (every call leaves the device), upgraded to `destructive` on a `destructiveHint` annotation. `McpProxyHandler` maps one command → `tools/call` and the MCP `content`/`isError` envelope back to a `CommandResult`.
+- **🟡 Honest boundary** — user-manually-configured trusted servers only (no directory/discovery); the spike keeps the token in config — per-server `SecureStore`, reconnect/connection management, and third-party process isolation are P3 (10 §5.7); not yet wired into the Android shell (no server-config UI this phase).
+- **Tests**: +47 — `McpSchemaConverterTest` SC1-SC28 · `McpAdapterTest` AD1-AD14 (fake `NetService`) · `McpEndToEndTest` E1-E5 (in-process JDK `HttpServer` reference MCP server, real-socket JSON-RPC-over-HTTP). `PackageBoundariesTest` registers `com.morainet.mcos.plugin.mcp → plugins:mcos-plugin-mcp`.
+- **Docs**: `11-implementation-status` — item 30, module-table row marked ✅ spike.
+
 ### Sandboxed file storage (2026-08-25)
 
 04 §6.1's oldest waiting consumer lands: **every plugin gets a namespaced, escape-proof directory**, and `mcos.plugin.files` reads/writes it — schedule/event recipes can finally persist real data.

@@ -106,6 +106,7 @@ class PackageBoundariesTest {
         "com.morainet.mcos.plugin.system" to "plugins:mcos-plugin-system",
         "com.morainet.mcos.plugin.camera" to "plugins:mcos-plugin-camera",
         "com.morainet.mcos.plugin.files" to "plugins:mcos-plugin-files",
+        "com.morainet.mcos.plugin.mcp" to "plugins:mcos-plugin-mcp",
     )
 
     private fun expectedOwner(pkg: String): String? = packageRules
