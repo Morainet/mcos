@@ -46,15 +46,11 @@ import com.morainet.mcos.security.SlidingWindowCrashQuarantine
 import com.morainet.mcos.security.TokenBucketRateLimiter
 import com.morainet.mcos.security.audit.AuditLog
 import com.morainet.mcos.sdk.McosPlugin
-import com.morainet.mcos.runtime.core.workflow.EventTriggerManager
-import com.morainet.mcos.runtime.core.workflow.ScheduleTriggerManager
-import com.morainet.mcos.runtime.core.workflow.Trigger
 import com.morainet.mcos.runtime.core.workflow.TriggerArmResult
 import com.morainet.mcos.runtime.core.workflow.WorkflowEngine
 import com.morainet.mcos.runtime.core.workflow.WorkflowJson
 import com.morainet.mcos.runtime.core.workflow.WorkflowOutcome
 import com.morainet.mcos.runtime.core.workflow.WorkflowResult
-import com.morainet.mcos.runtime.core.workflow.WorkflowSpec
 import com.morainet.mcos.runtime.core.workflow.WorkflowStep
 import com.morainet.mcos.runtime.core.workflow.WorkflowStore
 import com.morainet.mcos.sdk.AuthStamp
@@ -63,6 +59,8 @@ import com.morainet.mcos.sdk.EventPublisher
 import com.morainet.mcos.sdk.HostServices
 import com.morainet.mcos.sdk.SideEffectClass
 import com.morainet.mcos.sdk.MemoryFacade
+// EventTriggerManager / ScheduleTriggerManager / Trigger / WorkflowSpec moved
+// into TriggerCoordinator; the facade only references TriggerArmResult now.
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.json.JsonNull
@@ -131,26 +129,17 @@ class McosRuntime internal constructor(
 ) : RuntimeGateway {
     private val summarizer = RunSummarizer(episodicMemory)
 
-    // ─── Event triggers (05-workflow.md §9.2) ───────────────────────────
+    // ─── Triggers (05-workflow.md §9.2 event / §9.3 schedule) ───────────
     //
-    // Armed event triggers subscribe to the system event bus and launch their
-    // workflow on match. The facade owns the launcher (RunManager launch +
-    // runWorkflow with the event payload as __input and EVENT step source).
-    private val triggerManager = EventTriggerManager(
-        bus = eventBus,
+    // The coordinator owns both trigger families and the arm/disarm lifecycle;
+    // it calls back into [fireTriggeredWorkflow] to actually launch a run,
+    // since firing needs the facade's owned run scope + execution pipeline.
+    private val triggers = TriggerCoordinator(
+        eventBus = eventBus,
         memory = memory,
         auditLog = auditLog,
-    )
-
-    // ─── Schedule triggers (05-workflow.md §9.3) ────────────────────────
-    //
-    // Armed cron schedules launch their workflow DIRECTLY when a boundary
-    // arrives — not via the EventBus, whose subscriptions are at-most-once
-    // with no redelivery (03 §11.4) and therefore incompatible with misfire
-    // recovery. The facade owns the launcher (RunManager launch +
-    // runWorkflow with empty inputs and SCHEDULE step source).
-    private val scheduleTriggerManager = ScheduleTriggerManager(
-        auditLog = auditLog,
+        workflowStore = workflowStore,
+        fire = { id, inputs, pre, stepSource -> fireTriggeredWorkflow(id, inputs, pre, stepSource) },
     )
 
     // ─── Confirmation flow (08-security.md §5) ──────────────────────────
@@ -373,12 +362,11 @@ class McosRuntime internal constructor(
      * as cancelled — callers should not reuse a shut-down runtime.
      */
     fun shutdown() {
-        // Armed schedules are released first — disarming them cancels the
-        // driver coroutine so no boundary tick can fire a run while the
-        // scopes below are torn down. Then event triggers (same rationale
-        // for in-flight bus events), then the runs themselves.
-        scheduleTriggerManager.disarmAll()
-        triggerManager.disarmAll()
+        // Armed triggers are released first — disarming schedules cancels the
+        // driver coroutine so no boundary tick can fire a run while the scopes
+        // below are torn down (event subscriptions follow, same rationale for
+        // in-flight bus events). Then the runs themselves.
+        triggers.disarmAll()
         // Cancel every active run; the SupervisorJob's children are cancelled
         // in bulk by cancelling the scope's job as well.
         runManager.shutdown()
@@ -437,38 +425,14 @@ class McosRuntime internal constructor(
      *         are additionally validated for cron syntax, timezone, and
      *         satisfiability by the schedule manager).
      */
-    suspend fun armTrigger(workflowId: String, preAuthorized: Boolean = false): TriggerArmResult {
-        val spec: WorkflowSpec = workflowStore.spec(workflowId)
-            ?: return TriggerArmResult.Rejected(workflowId, "workflow_not_found")
-        val trigger = spec.trigger
-            ?: return TriggerArmResult.Rejected(workflowId, "workflow_has_no_trigger")
-        return when (trigger) {
-            is Trigger.Schedule -> {
-                // Cross-family hygiene: a spec re-registered with a different
-                // trigger type must not leave the other family's entry live.
-                triggerManager.disarm(workflowId)
-                scheduleTriggerManager.arm(workflowId, trigger, preAuthorized) { id, inputs, pre ->
-                    fireTriggeredWorkflow(id, inputs, pre, Source.SCHEDULE.name)
-                }
-            }
-            // Event and Manual both route to the event manager: Event arms,
-            // Manual is rejected there (manual_triggers_cannot_be_armed).
-            else -> {
-                scheduleTriggerManager.disarm(workflowId)
-                triggerManager.arm(workflowId, trigger, preAuthorized) { id, inputs, pre ->
-                    fireTriggeredWorkflow(id, inputs, pre, Source.EVENT.name)
-                }
-            }
-        }
-    }
+    suspend fun armTrigger(workflowId: String, preAuthorized: Boolean = false): TriggerArmResult =
+        triggers.arm(workflowId, preAuthorized)
 
     /** Disarm a previously armed trigger (either family). `true` if [workflowId] was armed. */
-    fun disarmTrigger(workflowId: String): Boolean =
-        scheduleTriggerManager.disarm(workflowId) || triggerManager.disarm(workflowId)
+    fun disarmTrigger(workflowId: String): Boolean = triggers.disarm(workflowId)
 
     /** Currently armed trigger workflow ids, both families (05 §9.2-§9.3). */
-    fun armedTriggers(): List<String> =
-        (scheduleTriggerManager.armed() + triggerManager.armed()).distinct().sorted()
+    fun armedTriggers(): List<String> = triggers.armed()
 
     /**
      * Launcher the trigger managers invoke on a match (event) or boundary
