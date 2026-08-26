@@ -39,6 +39,13 @@ private const val LLM_API_KEY = "llm_api_key"
 private const val DEFAULT_DSL = "hello.world(name=\"MCOS\")\ncamera.capture()"
 
 /**
+ * Cap on retained console log lines. Bounds both memory and the per-append
+ * copy cost of the immutable-list StateFlow — an uncapped `list + line`
+ * appends in O(n), i.e. O(n²) over a session, and grows without limit.
+ */
+private const val MAX_LOG_LINES = 1_000
+
+/**
  * Immutable UI state for the shell screen. All mutation happens in
  * [McosViewModel]; the composables only render.
  */
@@ -117,7 +124,10 @@ class McosViewModel : ViewModel() {
     private fun runtime(): McosRuntime = deps().runtime
 
     private fun log(line: String) {
-        _events.value = _events.value + line
+        _events.update { prev ->
+            val next = prev + line
+            if (next.size > MAX_LOG_LINES) next.takeLast(MAX_LOG_LINES) else next
+        }
     }
 
     // ── input handlers ─────────────────────────────────────────────────
