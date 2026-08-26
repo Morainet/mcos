@@ -39,8 +39,9 @@ import com.morainet.mcos.marketplace.PackageMetadata
  * activity-result bridge wiring and pure view-local visibility toggles.
  *
  * Structure: this composable is a thin shell. Each section is its own
- * component ([StatusBar], [MarketplaceCard], [AiChatCard], [DslInputCard],
- * [OutputLog]); the terminal palette lives in [McosTheme] / [McosColor].
+ * component ([StatusBar], [MarketplaceCard], [AiChatCard], [McpServerCard],
+ * [DslInputCard], [OutputLog]); the terminal palette lives in [McosTheme] /
+ * [McosColor].
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -121,6 +122,8 @@ fun MCOSApp(deps: AppDeps) {
                 )
 
                 AiChatCard(vm = vm, ui = ui)
+
+                McpServerCard(vm = vm, ui = ui)
 
                 DslInputCard(vm = vm, ui = ui)
 

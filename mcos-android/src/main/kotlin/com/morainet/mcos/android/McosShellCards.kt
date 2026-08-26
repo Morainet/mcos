@@ -272,6 +272,114 @@ internal fun AiChatCard(
     }
 }
 
+// ── MCP bridge card (02-command-protocol.md §12.4 spike) ────────────────────
+
+/**
+ * Configure one trusted MCP server (id / endpoint / optional bearer token) and
+ * bridge its tools into the command bus as `mcp.*` commands. Single-server,
+ * manual, token-in-config — the P2 spike scope (10-roadmap.md §5.7); reconnect,
+ * per-server secrets UI and process isolation are P3.
+ */
+@Composable
+internal fun McpServerCard(
+    vm: McosViewModel,
+    ui: McosUiState,
+) {
+    Card(
+        Modifier.fillMaxWidth().padding(bottom = McosSpace.md),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        shape = RoundedCornerShape(McosRadius.md),
+    ) {
+        Column(Modifier.padding(McosSpace.lg)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "MCP Server",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Spacer(Modifier.weight(1f))
+                ui.mcpStatus?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (it.startsWith("connected")) MaterialTheme.colorScheme.secondary else McosColor.danger,
+                    )
+                }
+            }
+            Spacer(Modifier.height(McosSpace.sm))
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(McosSpace.md),
+            ) {
+                OutlinedTextField(
+                    value = ui.mcpServerId,
+                    onValueChange = { vm.onMcpServerIdChange(it) },
+                    modifier = Modifier.width(120.dp),
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                    placeholder = { Text("id, e.g. github") },
+                    shape = RoundedCornerShape(McosRadius.sm),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = McosColor.border,
+                        cursorColor = MaterialTheme.colorScheme.primary,
+                    ),
+                )
+                OutlinedTextField(
+                    value = ui.mcpEndpoint,
+                    onValueChange = { vm.onMcpEndpointChange(it) },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                    placeholder = { Text("https://…/mcp") },
+                    shape = RoundedCornerShape(McosRadius.sm),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = McosColor.border,
+                        cursorColor = MaterialTheme.colorScheme.primary,
+                    ),
+                )
+            }
+            Spacer(Modifier.height(McosSpace.sm))
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(McosSpace.md),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Button(
+                    onClick = { vm.connectMcp() },
+                    enabled = !ui.mcpConnecting && ui.mcpServerId.isNotBlank() && ui.mcpEndpoint.isNotBlank(),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                ) {
+                    if (ui.mcpConnecting) {
+                        CircularProgressIndicator(
+                            Modifier.size(16.dp), strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onPrimary,
+                        )
+                        Spacer(Modifier.width(McosSpace.sm))
+                    }
+                    Text(if (ui.mcpConnecting) "Connecting…" else "Connect")
+                }
+                OutlinedTextField(
+                    value = ui.mcpToken,
+                    onValueChange = { vm.onMcpTokenChange(it) },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                    placeholder = { Text("bearer token (optional)") },
+                    shape = RoundedCornerShape(McosRadius.sm),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = McosColor.border,
+                        cursorColor = MaterialTheme.colorScheme.primary,
+                    ),
+                )
+            }
+        }
+    }
+}
+
 // ── DSL input card (02-command-protocol.md) ─────────────────────────────────
 
 @Composable

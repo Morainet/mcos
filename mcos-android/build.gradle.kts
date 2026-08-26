@@ -57,6 +57,9 @@ dependencies {
     implementation(project(":plugins:mcos-plugin-system"))
     implementation(project(":plugins:mcos-plugin-camera"))
     implementation(project(":plugins:mcos-plugin-files"))
+    // MCP bridge adapter (02 §12.4 spike): the shell discovers a user-configured
+    // MCP server and registers its tools as mcp.* commands via the runtime.
+    implementation(project(":plugins:mcos-plugin-mcp"))
 
     // AndroidX
     implementation(libs.androidx.core.ktx)

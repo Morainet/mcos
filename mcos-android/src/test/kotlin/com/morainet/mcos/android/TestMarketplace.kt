@@ -29,6 +29,7 @@ import com.morainet.mcos.security.NullAuditLog
 import com.morainet.mcos.security.PluginTrustGate
 import com.morainet.mcos.security.PublisherKey
 import com.morainet.mcos.security.permission.DefaultPermissionKernel
+import com.morainet.mcos.sdk.HostServices
 import com.morainet.mcos.sdk.SecureStore
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.serialization.builtins.ListSerializer
@@ -244,6 +245,7 @@ object TestMarketplace {
         secureStore: SecureStore,
         keyPair: KeyPair = keyPair(),
         permissionKernel: DefaultPermissionKernel = DefaultPermissionKernel(),
+        hostServices: HostServices = StubHostServices(InMemoryFacade()),
     ): AppDeps {
         val registry = CommandRegistry()
         val keyStore = InMemoryPublisherKeyStore().apply { put(pubKey(keyPair)) }
@@ -271,7 +273,7 @@ object TestMarketplace {
             .build()
         return AppDeps(
             runtime = runtime,
-            hostServices = StubHostServices(InMemoryFacade()),
+            hostServices = hostServices,
             registry = registry,
             plugins = listOf(HelloPlugin()),
             resultBridge = ActivityResultBridge(),

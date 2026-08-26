@@ -19,6 +19,8 @@ import com.morainet.mcos.llm.McosAgent
 import com.morainet.mcos.llm.OpenAiLlmProvider
 import com.morainet.mcos.llm.PromptInjectionDetector
 import com.morainet.mcos.llm.ProviderHealth
+import com.morainet.mcos.plugin.mcp.McpAdapter
+import com.morainet.mcos.plugin.mcp.McpServerConfig
 import com.morainet.mcos.runtime.core.ir.ExecutionIr
 import com.morainet.mcos.runtime.core.ir.IrInvoke
 import com.morainet.mcos.runtime.core.plugin.LoadResult
@@ -35,6 +37,13 @@ import java.util.Locale
 
 /** SharedPreferences key holding the LLM API key (managed via AndroidSecureStore). */
 private const val LLM_API_KEY = "llm_api_key"
+
+// The single user-configured MCP server (02 §12.4 spike scope — 10 §5.7).
+// The P2 spike keeps the token in config; per-server SecureStore secrets UI
+// is P3. Persisted so the bridge survives restarts.
+private const val MCP_SERVER_ID = "mcp_server_id"
+private const val MCP_ENDPOINT = "mcp_endpoint"
+private const val MCP_TOKEN = "mcp_token"
 
 private const val DEFAULT_DSL = "hello.world(name=\"MCOS\")\ncamera.capture()"
 
@@ -69,6 +78,13 @@ data class McosUiState(
     val agentWorking: Boolean = false,
     /** Agent 计划待审批（PlanReady 预览文本）— 驱动 Agent 审批对话框。 */
     val pendingAgentPlan: String? = null,
+    // ── MCP bridge (02 §12.4 spike): one user-configured server ──────────
+    val mcpServerId: String = "",
+    val mcpEndpoint: String = "",
+    val mcpToken: String = "",
+    val mcpConnecting: Boolean = false,
+    /** Last connect outcome for the MCP card status line (null = untried). */
+    val mcpStatus: String? = null,
 )
 
 /**
@@ -114,6 +130,16 @@ class McosViewModel : ViewModel() {
             persistedKeyLoaded = true
             viewModelScope.launch {
                 deps.secureStore.get(LLM_API_KEY)?.let { onApiKeyChange(it) }
+                val id = deps.secureStore.get(MCP_SERVER_ID)
+                if (id != null) {
+                    _uiState.update {
+                        it.copy(
+                            mcpServerId = id,
+                            mcpEndpoint = deps.secureStore.get(MCP_ENDPOINT) ?: "",
+                            mcpToken = deps.secureStore.get(MCP_TOKEN) ?: "",
+                        )
+                    }
+                }
             }
         }
     }
@@ -201,6 +227,77 @@ class McosViewModel : ViewModel() {
                 _uiState.update { it.copy(providerHealth = llmRegistry.probeAll()) }
             } finally {
                 _uiState.update { it.copy(probing = false) }
+            }
+        }
+    }
+
+    // ── MCP bridge (02 §12.4 spike) ─────────────────────────────────────
+
+    fun onMcpServerIdChange(value: String) = _uiState.update { it.copy(mcpServerId = value) }
+    fun onMcpEndpointChange(value: String) = _uiState.update { it.copy(mcpEndpoint = value) }
+    fun onMcpTokenChange(value: String) = _uiState.update { it.copy(mcpToken = value) }
+
+    /**
+     * Discover the configured MCP server's tools and register them as `mcp.*`
+     * commands through the runtime's install pipeline (builtin trust — the
+     * adapter is first-party bridging code; the bridged tools still carry a
+     * `network`/`destructive` side-effect class, so the permission kernel and
+     * egress policy govern every call). Manual, single-server, token-in-config
+     * per the P2 spike scope (10 §5.7); reconnect/isolation are P3.
+     */
+    fun connectMcp() {
+        val s = _uiState.value
+        val id = s.mcpServerId.trim()
+        val endpoint = s.mcpEndpoint.trim()
+        if (s.mcpConnecting || id.isBlank() || endpoint.isBlank()) return
+        _uiState.update { it.copy(mcpConnecting = true, mcpStatus = null) }
+        viewModelScope.launch {
+            val d = deps()
+            val token = s.mcpToken.trim().ifBlank { null }
+            d.secureStore.put(MCP_SERVER_ID, id)
+            d.secureStore.put(MCP_ENDPOINT, endpoint)
+            d.secureStore.put(MCP_TOKEN, token ?: "")
+            log("[${now()}] MCP: connecting to '$id' ($endpoint)…")
+            try {
+                val discovery = McpAdapter.discover(
+                    d.hostServices.net,
+                    McpServerConfig(id = id, endpoint = endpoint, token = token),
+                )
+                val plugin = discovery.plugin
+                when (val result = runtime().loadPlugin(
+                    packageId = plugin.manifest.id,
+                    version = plugin.manifest.version,
+                    builtin = true,
+                    plugin = plugin,
+                )) {
+                    is LoadResult.Installed -> {
+                        PluginPermissionBootstrap.grantAll(d.permissionKernel, plugin)
+                        plugin.onLoad(d.hostServices)
+                        discovery.skipped.forEach {
+                            log("[WARN]   └─ skipped '${it.toolName}': ${it.unmappedType} (${it.reason})")
+                        }
+                        log("[${now()}]   └─ OK (${result.commandsRegistered} cmd, ${discovery.skipped.size} skipped)")
+                        _uiState.update {
+                            it.copy(
+                                mcpStatus = "connected: ${result.commandsRegistered} cmd, ${discovery.skipped.size} skipped",
+                                commandIds = d.registry.allCommands().map { e -> e.id },
+                            )
+                        }
+                    }
+                    is LoadResult.Denied -> {
+                        log("[WARN]   └─ denied: ${result.code} — ${result.reason}")
+                        _uiState.update { it.copy(mcpStatus = "denied: ${result.code}") }
+                    }
+                    is LoadResult.Failed -> {
+                        log("[WARN]   └─ failed: ${result.message}")
+                        _uiState.update { it.copy(mcpStatus = "failed: ${result.message}") }
+                    }
+                }
+            } catch (e: Exception) {
+                log("[WARN] MCP: ${e.message}")
+                _uiState.update { it.copy(mcpStatus = "error: ${e.message}") }
+            } finally {
+                _uiState.update { it.copy(mcpConnecting = false) }
             }
         }
     }
