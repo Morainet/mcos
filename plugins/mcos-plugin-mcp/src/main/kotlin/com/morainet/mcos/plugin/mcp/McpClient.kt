@@ -1,6 +1,8 @@
 package com.morainet.mcos.plugin.mcp
 
+import com.morainet.mcos.sdk.NetResponse
 import com.morainet.mcos.sdk.NetService
+import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -39,15 +41,23 @@ class McpException(
  * enterprise domain rules apply uniformly ([04-plugin-sdk.md §10],
  * [02-command-protocol.md §12.1]).
  *
- * This is the P2 *bridge spike* transport: request/response JSON-RPC over a
- * single POST endpoint (no SSE stream, no session resumption). The spike
- * scope guardrails are in [10-roadmap.md §5.7].
+ * Transport: request/response JSON-RPC over a single POST endpoint (no SSE
+ * stream, no session resumption — that is P3 session work).
+ *
+ * **Reconnect** ([10-roadmap.md §6.2]): a *connection-level* fault (the request
+ * never reached the server) is retried up to [maxConnectRetries] times with
+ * exponential backoff from [backoffBaseMs]. This is safe even for
+ * non-idempotent `tools/call`: if the server never received the request, a
+ * retry cannot double-execute it. A server that *did* respond — including any
+ * `5xx` — is never auto-retried here; that decision is left to the caller.
  */
 class McpClient(
     private val net: NetService,
     private val endpoint: String,
     private val headers: Map<String, String> = emptyMap(),
     private val json: Json = Json { ignoreUnknownKeys = true },
+    private val maxConnectRetries: Int = 2,
+    private val backoffBaseMs: Long = 200,
 ) {
     private val idGen = AtomicLong(0)
 
@@ -87,18 +97,7 @@ class McpClient(
             put("method", method)
             put("params", params)
         }
-        val response = try {
-            net.request(
-                method = "POST",
-                url = endpoint,
-                body = json.encodeToString(JsonElement.serializer(), payload),
-                headers = headers + mapOf("Content-Type" to "application/json"),
-            )
-        } catch (e: Exception) {
-            // A thrown request is a connection-level fault — the device could
-            // not reach the server. Retryable so the adapter can re-arm later.
-            throw McpException("UNAVAILABLE", "MCP server unreachable: ${e.message}", retryable = true)
-        }
+        val response = requestWithReconnect(json.encodeToString(JsonElement.serializer(), payload))
 
         when (response.status) {
             in 200..299 -> Unit
@@ -130,5 +129,36 @@ class McpClient(
 
         return root["result"] as? JsonObject
             ?: throw McpException("PLUGIN_ERROR", "MCP response missing result")
+    }
+
+    /**
+     * POST [body], retrying only *connection-level* faults (the request threw
+     * before reaching the server) with exponential backoff. Once the server
+     * responds — with any status — the response is returned as-is; retrying a
+     * 5xx would risk re-running a non-idempotent tool the server may already
+     * have executed.
+     */
+    private suspend fun requestWithReconnect(body: String): NetResponse {
+        var attempt = 0
+        while (true) {
+            try {
+                return net.request(
+                    method = "POST",
+                    url = endpoint,
+                    body = body,
+                    headers = headers + mapOf("Content-Type" to "application/json"),
+                )
+            } catch (e: Exception) {
+                if (attempt >= maxConnectRetries) {
+                    throw McpException(
+                        "UNAVAILABLE",
+                        "MCP server unreachable after ${attempt + 1} attempt(s): ${e.message}",
+                        retryable = true,
+                    )
+                }
+                delay(backoffBaseMs shl attempt)
+                attempt++
+            }
+        }
     }
 }

@@ -10,6 +10,18 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### MCP production adapter — per-server secrets + reconnect (2026-08-27)
+
+The first P3 slice on the MCP spike, along the two axes that don't need process isolation (10 §6.2).
+
+- **Per-server secrets** (04 §11.1 / 08 §9.2) — `McpServerConfig` gains `secretKey`; the bearer token lives in `SecureStore`, not in config. Handlers carry an `Authorization: Bearer {{secret.<key>}}` template instead of a raw credential. `McpProxyHandler(endpoint, toolName, headers)` now opens the transport **per call over `ExecutionContext.services.net`** — the executor's Stage-4 `SecretResolvingNetService` — so the secret is resolved on the way out and never enters config, the plugin manifest/registry, the IR, or the audit trail (no executor change; the adapter just started using existing machinery). Discovery runs outside the executor, so `McpAdapter.discover(net, config, secretLookup)` resolves `secretKey` via an injected `SecureStore` lookup to auth `tools/list`; `secretKey` beats the spike's inline `token`.
+- **Reconnect/backoff** (§6.2) — `McpClient` retries *connection-level* faults (request threw before reaching the server) up to `maxConnectRetries` with exponential backoff from `backoffBaseMs`. A server that responded — **including any 5xx** — is never auto-retried, so a non-idempotent `tools/call` is never re-run against a server that may already have executed it.
+- **Connection gating** (04 §10) — a per-server `McpCircuitBreaker`, shared by every `mcp.<server>.*` handler, opens after `failureThreshold` consecutive *retryable* failures (connection faults / 5xx; `PERMISSION_DENIED`/`SCHEMA_VIOLATION` never trip it) and fast-fails `UNAVAILABLE` **without a network request** for `cooldownMs`; the first call after cooldown is a probe that closes the circuit on success and re-opens it on failure. Stateless-transport stand-in for "mark `mcp.<server>.*` UNAVAILABLE while disconnected".
+- **Shell** — `connectMcp` writes the token to `SecureStore` under `mcp.secret.<id>` and passes only the key name into the bridged config; the token field repopulates from `SecureStore` on attach.
+- **🟡 Still P3 (needs process isolation, 08 §8)** — third-party isolation, egress *enforcement* on remote servers, per-server enablement UI, marketplace MCP catalog (09 §10), SSE/session transport.
+- **Tests**: +14 — `McpAdapterTest` AD15-AD17 (secrets) · AD18-AD19 (breaker gating) · `McpClientReconnectTest` RC1-RC4 (reconnect) · `McpCircuitBreakerTest` CB1-CB5 (breaker state machine, injected clock).
+- **Docs**: `11-implementation-status` — item 31, module-table row.
+
 ### MCP bridge spike (2026-08-26)
 
 The one sanctioned cross-phase spike lands (10-roadmap task `p2-14`): **a user-configured MCP server is bridged into the command bus as a synthesized plugin**, validating schema conversion + the ecosystem-adoption thesis without the P3 production surface (02 §12.4).

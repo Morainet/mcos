@@ -38,12 +38,14 @@ import java.util.Locale
 /** SharedPreferences key holding the LLM API key (managed via AndroidSecureStore). */
 private const val LLM_API_KEY = "llm_api_key"
 
-// The single user-configured MCP server (02 §12.4 spike scope — 10 §5.7).
-// The P2 spike keeps the token in config; per-server SecureStore secrets UI
-// is P3. Persisted so the bridge survives restarts.
+// The single user-configured MCP server. Id/endpoint are plain config; the
+// bearer token is a secret and lives under `mcp.secret.<id>` in the SecureStore
+// the executor reads, so the bridged config carries only the key name and the
+// raw token never enters the plugin manifest, the IR, or the audit trail
+// (04 §11.1 / 10 §6.2 — the P3 per-server secrets path).
 private const val MCP_SERVER_ID = "mcp_server_id"
 private const val MCP_ENDPOINT = "mcp_endpoint"
-private const val MCP_TOKEN = "mcp_token"
+private fun mcpSecretKey(serverId: String) = "mcp.secret.$serverId"
 
 private const val DEFAULT_DSL = "hello.world(name=\"MCOS\")\ncamera.capture()"
 
@@ -136,7 +138,9 @@ class McosViewModel : ViewModel() {
                         it.copy(
                             mcpServerId = id,
                             mcpEndpoint = deps.secureStore.get(MCP_ENDPOINT) ?: "",
-                            mcpToken = deps.secureStore.get(MCP_TOKEN) ?: "",
+                            // Repopulate the token from the secret store the
+                            // executor reads (where connectMcp wrote it).
+                            mcpToken = deps.hostServices.secureStore.get(mcpSecretKey(id)) ?: "",
                         )
                     }
                 }
@@ -253,15 +257,24 @@ class McosViewModel : ViewModel() {
         _uiState.update { it.copy(mcpConnecting = true, mcpStatus = null) }
         viewModelScope.launch {
             val d = deps()
+            val secretStore = d.hostServices.secureStore
             val token = s.mcpToken.trim().ifBlank { null }
+            val secretKey = mcpSecretKey(id)
             d.secureStore.put(MCP_SERVER_ID, id)
             d.secureStore.put(MCP_ENDPOINT, endpoint)
-            d.secureStore.put(MCP_TOKEN, token ?: "")
+            // The token is a secret: keep it in the SecureStore the executor
+            // resolves against; the bridged config only names the key.
+            if (token != null) secretStore.put(secretKey, token) else secretStore.remove(secretKey)
             log("[${now()}] MCP: connecting to '$id' ($endpoint)…")
             try {
                 val discovery = McpAdapter.discover(
                     d.hostServices.net,
-                    McpServerConfig(id = id, endpoint = endpoint, token = token),
+                    McpServerConfig(
+                        id = id,
+                        endpoint = endpoint,
+                        secretKey = token?.let { secretKey },
+                    ),
+                    secretLookup = { key -> secretStore.get(key) },
                 )
                 val plugin = discovery.plugin
                 when (val result = runtime().loadPlugin(

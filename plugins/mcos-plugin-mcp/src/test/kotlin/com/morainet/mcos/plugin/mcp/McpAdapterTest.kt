@@ -194,4 +194,72 @@ class McpAdapterTest {
         assertTrue(discovery.plugin.manifest.commands.isEmpty())
         assertNull(discovery.plugin.handlers()["mcp.demo.anything"])
     }
+
+    // ─── Per-server secrets (P3, 04 §11.1 / 08 §9.2) ───────────────────────────
+
+    @Test fun `AD15 secretKey yields a secret-template bearer header on tool calls`() = runBlocking {
+        val net = routing(onList = { rpcOk("""{"tools":[{"name":"echo","inputSchema":{"type":"object"}}]}""") })
+        val cfg = config.copy(secretKey = "mcp.secret.demo")
+        // The handler carries the template, not the secret; the executor's
+        // Stage-4 net decorator resolves it per call. Here the fake net records
+        // the literal template, proving it reaches the resolution boundary.
+        val discovery = McpAdapter.discover(McpClient(net, cfg.endpoint), cfg)
+        discovery.plugin.handlers()["mcp.demo.echo"]!!.invoke(
+            execContext("mcp.demo.echo", JsonObject(emptyMap()), net),
+        )
+        assertEquals("Bearer {{secret.mcp.secret.demo}}", net.requests.last().headers["Authorization"])
+    }
+
+    @Test fun `AD16 discovery resolves secretKey via the lookup for tools list auth`() = runBlocking {
+        val net = routing(onList = { rpcOk("""{"tools":[]}""") })
+        val cfg = config.copy(secretKey = "k1")
+        McpAdapter.discover(net, cfg, secretLookup = { key -> if (key == "k1") "resolved-token" else null })
+        // tools/list ran outside the executor, so the concrete token is used.
+        assertEquals("Bearer resolved-token", net.requests.first().headers["Authorization"])
+    }
+
+    @Test fun `AD17 secretKey takes precedence over an inline token`() = runBlocking {
+        val net = routing(onList = { rpcOk("""{"tools":[{"name":"echo","inputSchema":{"type":"object"}}]}""") })
+        val cfg = config.copy(token = "inline", secretKey = "k1")
+        val discovery = McpAdapter.discover(McpClient(net, cfg.endpoint), cfg)
+        discovery.plugin.handlers()["mcp.demo.echo"]!!.invoke(
+            execContext("mcp.demo.echo", JsonObject(emptyMap()), net),
+        )
+        assertEquals("Bearer {{secret.k1}}", net.requests.last().headers["Authorization"])
+    }
+
+    // ─── Circuit breaker (04 §10 connection management) ────────────────────────
+
+    @Test fun `AD18 an open circuit fast-fails without a network request`() = runBlocking {
+        val net = routing(onList = { rpcOk("""{"tools":[{"name":"echo","inputSchema":{"type":"object"}}]}""") })
+        val breaker = McpCircuitBreaker(failureThreshold = 1, cooldownMs = 60_000)
+        val discovery = McpAdapter.discover(McpClient(net, config.endpoint), config, breaker)
+        breaker.recordFailure() // trips the circuit (threshold 1)
+        val before = net.requests.size
+        val result = discovery.plugin.handlers()["mcp.demo.echo"]!!.invoke(
+            execContext("mcp.demo.echo", JsonObject(emptyMap()), net),
+        ) as CommandResult.Err
+        assertEquals("UNAVAILABLE", result.code)
+        assertTrue(result.retryable)
+        assertEquals(before, net.requests.size) // the network was never touched
+    }
+
+    @Test fun `AD19 a retryable failure through the handler trips the shared breaker`() = runBlocking {
+        val net = routing(
+            onList = { rpcOk("""{"tools":[{"name":"echo","inputSchema":{"type":"object"}}]}""") },
+            onCall = { throw java.io.IOException("connection refused") },
+        )
+        val breaker = McpCircuitBreaker(failureThreshold = 1, cooldownMs = 60_000)
+        val handler = McpAdapter.discover(McpClient(net, config.endpoint), config, breaker)
+            .plugin.handlers()["mcp.demo.echo"]!!
+        // First call reaches the server (and its retries) then fails → trips.
+        handler.invoke(execContext("mcp.demo.echo", JsonObject(emptyMap()), net))
+        val after = net.requests.size
+        // Second call is short-circuited: no further network traffic.
+        val result = handler.invoke(
+            execContext("mcp.demo.echo", JsonObject(emptyMap()), net),
+        ) as CommandResult.Err
+        assertEquals("UNAVAILABLE", result.code)
+        assertEquals(after, net.requests.size)
+    }
 }
