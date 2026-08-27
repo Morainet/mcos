@@ -14,7 +14,8 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withTimeout
 import org.junit.After
-import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -23,11 +24,10 @@ import org.junit.rules.TestWatcher
 import org.junit.runner.Description
 
 /**
- * The shell MCP wiring (02 §12.4 spike follow-up): [McosViewModel.connectMcp]
- * runs `McpAdapter.discover` against the host [NetService] and registers the
- * synthesized plugin through the runtime install pipeline, so the bridged
- * `mcp.*` tools land in the live registry. This test drives the real facade +
- * registry with a fake MCP server bolted onto the host's `net`.
+ * The shell MCP wiring (04 §10 per-server enablement): adding a server then
+ * toggling it on runs `McpAdapter.discover` and registers its `mcp.<id>.*`
+ * commands through the runtime; toggling it off unregisters them. Drives the
+ * real facade + registry with a fake MCP server bolted onto the host's `net`.
  */
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class McpShellWiringTest {
@@ -49,32 +49,56 @@ class McpShellWiringTest {
     @After
     fun tearDown() { vm.viewModelScope.cancel() }
 
+    private suspend fun addAndEnableDemo() {
+        vm.onMcpNewIdChange("demo")
+        vm.onMcpNewEndpointChange("https://example.test/mcp")
+        vm.addMcpServer()
+        withTimeout(10_000) { vm.uiState.first { st -> st.mcpServers.any { it.id == "demo" } } }
+        vm.setMcpServerEnabled("demo", true)
+        withTimeout(10_000) {
+            vm.uiState.first { st -> st.mcpServers.find { it.id == "demo" }.let { it != null && !it.busy } }
+        }
+    }
+
     @Test
-    fun connectRegistersBridgedToolsAsMcpCommands() = kotlinx.coroutines.runBlocking {
+    fun enableRegistersBridgedToolsAsMcpCommands() = kotlinx.coroutines.runBlocking {
         val secureStore = TestMarketplace.FakeSecureStore()
         val host = NetOverrideHost(StubHostServices(InMemoryFacade()), FakeMcpNetService())
         vm.attach(TestMarketplace.deps(secureStore = secureStore, hostServices = host))
 
-        vm.onMcpServerIdChange("demo")
-        vm.onMcpEndpointChange("https://example.test/mcp")
-        vm.connectMcp()
-
-        withTimeout(10_000) {
-            vm.uiState.first { !it.mcpConnecting && it.mcpStatus != null }
-        }
+        addAndEnableDemo()
 
         val state = vm.uiState.value
-        assertTrue(
-            "expected connected status, got ${state.mcpStatus}",
-            state.mcpStatus?.startsWith("connected") == true,
-        )
+        val demo = state.mcpServers.single { it.id == "demo" }
+        assertTrue("expected demo enabled, status=${demo.status}", demo.enabled)
         assertTrue(
             "expected mcp.demo.echo registered, got ${state.commandIds}",
             state.commandIds.contains("mcp.demo.echo"),
         )
-        // The single-server config persists (token-in-config, 10 §5.7).
-        assertEquals("demo", secureStore.get("mcp_server_id"))
-        assertEquals("https://example.test/mcp", secureStore.get("mcp_endpoint"))
+        // The list persists (id/endpoint/enabled) as JSON; the token is not here.
+        assertNotNull(secureStore.get("mcp_servers"))
+        assertTrue(secureStore.get("mcp_servers")!!.contains("demo"))
+    }
+
+    @Test
+    fun disableUnregistersBridgedCommands() = kotlinx.coroutines.runBlocking {
+        val secureStore = TestMarketplace.FakeSecureStore()
+        val host = NetOverrideHost(StubHostServices(InMemoryFacade()), FakeMcpNetService())
+        vm.attach(TestMarketplace.deps(secureStore = secureStore, hostServices = host))
+
+        addAndEnableDemo()
+        assertTrue(vm.uiState.value.commandIds.contains("mcp.demo.echo"))
+
+        vm.setMcpServerEnabled("demo", false)
+        withTimeout(10_000) {
+            vm.uiState.first { st -> st.mcpServers.find { it.id == "demo" }.let { it != null && !it.busy && !it.enabled } }
+        }
+
+        val state = vm.uiState.value
+        assertFalse(
+            "expected mcp.demo.echo unregistered, got ${state.commandIds}",
+            state.commandIds.contains("mcp.demo.echo"),
+        )
     }
 
     /** Delegates every capability to [base] except [net]. */
@@ -85,8 +109,7 @@ class McpShellWiringTest {
 
     /**
      * A one-tool MCP server over the [NetService] contract: `tools/list`
-     * advertises a mappable `echo` tool; `tools/call` echoes back a text
-     * content envelope. Enough to prove the discover→register path.
+     * advertises a mappable `echo` tool; `tools/call` echoes a text envelope.
      */
     private class FakeMcpNetService : NetService {
         override suspend fun request(

@@ -10,6 +10,15 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### MCP per-server enablement — multi-server management (2026-08-27)
+
+The shell moves from one hard-wired MCP server to a managed list (04 §10 per-server enablement, on the item-31 P3 adapter).
+
+- **Manage servers** — each configured server (id / endpoint / optional token) is a row with an enable/disable switch and a remove action. Enabling runs `McpAdapter.discover` + `runtime.loadPlugin` (builtin trust) to register its `mcp.<id>.*` commands; disabling calls `CommandRegistry.unregister("mcos.plugin.mcp.<id>")` to drop them live — no restart.
+- **Persistence** — the list (id/endpoint/enabled) is a JSON array under the `mcp_servers` SecureStore key; tokens stay under `mcp.secret.<id>` and never enter the list. The item-31 single-server keys are migrated into the list on first load. On attach, servers left enabled are reconnected best-effort with per-server status. Uses the runtime JSON API (no serialization compiler plugin in `mcos-android`).
+- **Tests** — `McpShellWiringTest` reworked to the add→enable→disable lifecycle (enable registers `mcp.demo.echo` + persists the list; disable unregisters it).
+- **Docs** — `11-implementation-status` item 32, module-table row.
+
 ### MCP production adapter — per-server secrets + reconnect (2026-08-27)
 
 The first P3 slice on the MCP spike, along the two axes that don't need process isolation (10 §6.2).
