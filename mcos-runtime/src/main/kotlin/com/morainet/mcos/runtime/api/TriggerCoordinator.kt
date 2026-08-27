@@ -3,12 +3,16 @@ package com.morainet.mcos.runtime.api
 import com.morainet.mcos.runtime.core.api.Source
 import com.morainet.mcos.runtime.core.events.EventBus
 import com.morainet.mcos.runtime.core.memory.MemoryStore
+import com.morainet.mcos.runtime.core.workflow.ArmedScheduleStore
 import com.morainet.mcos.runtime.core.workflow.EventTriggerManager
+import com.morainet.mcos.runtime.core.workflow.NullArmedScheduleStore
+import com.morainet.mcos.runtime.core.workflow.PersistedSchedule
 import com.morainet.mcos.runtime.core.workflow.ScheduleTriggerManager
 import com.morainet.mcos.runtime.core.workflow.Trigger
 import com.morainet.mcos.runtime.core.workflow.TriggerArmResult
 import com.morainet.mcos.runtime.core.workflow.WorkflowStore
 import com.morainet.mcos.security.audit.AuditLog
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.serialization.json.JsonObject
 
 /**
@@ -32,6 +36,7 @@ internal class TriggerCoordinator(
     memory: MemoryStore,
     auditLog: AuditLog,
     private val workflowStore: WorkflowStore,
+    private val scheduleStore: ArmedScheduleStore = NullArmedScheduleStore,
     private val fire: (workflowId: String, inputs: JsonObject, preAuthorized: Boolean, stepSource: String) -> Unit,
 ) {
     private val eventTriggers = EventTriggerManager(
@@ -42,6 +47,16 @@ internal class TriggerCoordinator(
     private val scheduleTriggers = ScheduleTriggerManager(
         auditLog = auditLog,
     )
+
+    // Which workflows have an armed *schedule*, and whether the user
+    // pre-authorized them — the durable subset persisted to [scheduleStore] so
+    // a fresh process can re-arm them ([rehydrate]). Event triggers are not
+    // persisted: their arming is re-driven by re-subscription, not a clock.
+    private val scheduledPreAuth = ConcurrentHashMap<String, Boolean>()
+
+    // Suppresses per-arm persistence while [rehydrate] replays the store, so a
+    // batch re-arm writes the file once at the end, not once per schedule.
+    private var rehydrating = false
 
     /**
      * Arm the registered workflow's trigger. Schedule specs route to the
@@ -64,14 +79,21 @@ internal class TriggerCoordinator(
                 // Cross-family hygiene: a spec re-registered with a different
                 // trigger type must not leave the other family's entry live.
                 eventTriggers.disarm(workflowId)
-                scheduleTriggers.arm(workflowId, trigger, preAuthorized) { id, inputs, pre ->
+                val result = scheduleTriggers.arm(workflowId, trigger, preAuthorized) { id, inputs, pre ->
                     fire(id, inputs, pre, Source.SCHEDULE.name)
                 }
+                if (result is TriggerArmResult.Armed) {
+                    scheduledPreAuth[workflowId] = preAuthorized
+                    persistSchedules()
+                }
+                result
             }
             // Event and Manual both route to the event manager: Event arms,
             // Manual is rejected there (manual_triggers_cannot_be_armed).
             else -> {
                 scheduleTriggers.disarm(workflowId)
+                // Re-registered as a non-schedule: drop it from the durable set.
+                if (scheduledPreAuth.remove(workflowId) != null) persistSchedules()
                 eventTriggers.arm(workflowId, trigger, preAuthorized) { id, inputs, pre ->
                     fire(id, inputs, pre, Source.EVENT.name)
                 }
@@ -80,8 +102,37 @@ internal class TriggerCoordinator(
     }
 
     /** Disarm a previously armed trigger (either family). `true` if [workflowId] was armed. */
-    fun disarm(workflowId: String): Boolean =
-        scheduleTriggers.disarm(workflowId) || eventTriggers.disarm(workflowId)
+    fun disarm(workflowId: String): Boolean {
+        val wasArmed = scheduleTriggers.disarm(workflowId) || eventTriggers.disarm(workflowId)
+        if (scheduledPreAuth.remove(workflowId) != null) persistSchedules()
+        return wasArmed
+    }
+
+    /**
+     * Re-arm the schedules a previous process persisted ([ArmedScheduleStore]).
+     * Each record's workflow must already be registered (e.g. rehydrated by the
+     * marketplace) — a record that no longer resolves is dropped. Returns the
+     * number re-armed. Call once at startup, after workflows are re-registered.
+     */
+    suspend fun rehydrate(): Int {
+        rehydrating = true
+        var armedCount = 0
+        try {
+            for (record in scheduleStore.load()) {
+                if (arm(record.workflowId, record.preAuthorized) is TriggerArmResult.Armed) armedCount++
+            }
+        } finally {
+            rehydrating = false
+        }
+        // Persist the survivors once (this also prunes records that no longer resolve).
+        persistSchedules()
+        return armedCount
+    }
+
+    private fun persistSchedules() {
+        if (rehydrating) return
+        scheduleStore.save(scheduledPreAuth.map { PersistedSchedule(it.key, it.value) })
+    }
 
     /** Currently armed trigger workflow ids across both families (05 §9.2-§9.3). */
     fun armed(): List<String> =

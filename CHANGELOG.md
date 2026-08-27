@@ -10,6 +10,17 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### Durable schedule hosting — armed-state persistence + rehydrate (2026-08-27)
+
+Scheduled workflows now survive process death and reboots (05 §9.3 / 10 §6, part 1 of 2). The in-runtime scheduler was process-lifetime only.
+
+- **Store** — new `ArmedScheduleStore` in runtime-core: interface + `NullArmedScheduleStore` (greppable lifetime-only default) + `FileArmedScheduleStore` (SnapshotFile-backed, single-line JSON + HMAC, fail-closed), mirroring `FileGrantStore`/`InstallRecordStore`. Only `(workflowId, preAuthorized)` is persisted — cron/tz/misfire live on the `WorkflowSpec` and are re-read on re-arm.
+- **Runtime** — `TriggerCoordinator` persists the armed *schedule* set on arm/disarm (event triggers are re-driven by re-subscription, not persisted). `McosRuntime.Builder.withArmedScheduleStore` + `suspend rehydrateSchedules(): Int` replays the store, prunes records that no longer resolve, and re-arms; batch re-arm writes once.
+- **Android** — `CompositionRoot` wires a `FileArmedScheduleStore` at `triggers/armed-schedules.json` under the shared state-HMAC seed; `MarketplaceViewModel.attach` calls `rehydrateSchedules()` after `rehydrateInstalled` re-registers recipe workflows.
+- **🟡 Part 2 (deferred)** — `AlarmManager` exact alarms + `BootReceiver` + manifest permissions to fire while the app is dead / in Doze (needs on-device testing); this persistence layer is its prerequisite.
+- **Tests** — +10: `FileArmedScheduleStoreTest` AS1-AS5, `McosRuntimeDurableScheduleTest` DS1-DS5.
+- **Docs** — `11-implementation-status` item 33.
+
 ### MCP per-server enablement — multi-server management (2026-08-27)
 
 The shell moves from one hard-wired MCP server to a managed list (04 §10 per-server enablement, on the item-31 P3 adapter).

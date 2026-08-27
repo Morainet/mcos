@@ -10,6 +10,7 @@ import com.morainet.mcos.plugin.files.FilesPlugin
 import com.morainet.mcos.plugin.hello.HelloPlugin
 import com.morainet.mcos.plugin.system.SystemPlugin
 import com.morainet.mcos.runtime.api.McosRuntime
+import com.morainet.mcos.runtime.core.workflow.FileArmedScheduleStore
 import com.morainet.mcos.runtime.core.executor.Executor
 import com.morainet.mcos.marketplace.BlocklistVerifier
 import com.morainet.mcos.marketplace.InstallProgress
@@ -231,6 +232,16 @@ object CompositionRoot {
         // both streams from a single subscription point.
         val eventBus = TypedEventBus()
 
+        // Durable schedule hosting (10 §6): armed schedules persist here
+        // (tamper-evident via the same device-bound state seed as grants/
+        // installs). MarketplaceViewModel.attach calls runtime.rehydrateSchedules
+        // after rehydrating installed recipes, so a re-registered scheduled
+        // workflow re-arms across process death and reboots.
+        val armedScheduleStore = FileArmedScheduleStore(
+            file = File(activity.filesDir, "triggers/armed-schedules.json"),
+            hmacKey = stateHmacKey,
+        )
+
         val runtime = McosRuntime.Builder()
             .withRegistry(registry)
             .withPermissionKernel(permissionKernel)
@@ -239,6 +250,7 @@ object CompositionRoot {
             .withPluginLoader(pluginLoader)
             .withPluginInstaller(installer)
             .withEventBus(eventBus)
+            .withArmedScheduleStore(armedScheduleStore)
             // Wires the default WorkflowEngine's audit sink; the injected
             // executor below carries the same log via its SecurityConfig.
             .withAuditLog(auditLog)

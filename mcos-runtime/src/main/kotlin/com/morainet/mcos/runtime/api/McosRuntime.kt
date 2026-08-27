@@ -46,6 +46,8 @@ import com.morainet.mcos.security.SlidingWindowCrashQuarantine
 import com.morainet.mcos.security.TokenBucketRateLimiter
 import com.morainet.mcos.security.audit.AuditLog
 import com.morainet.mcos.sdk.McosPlugin
+import com.morainet.mcos.runtime.core.workflow.ArmedScheduleStore
+import com.morainet.mcos.runtime.core.workflow.NullArmedScheduleStore
 import com.morainet.mcos.runtime.core.workflow.TriggerArmResult
 import com.morainet.mcos.runtime.core.workflow.WorkflowEngine
 import com.morainet.mcos.runtime.core.workflow.WorkflowJson
@@ -126,6 +128,7 @@ class McosRuntime internal constructor(
     private val pluginInstaller: PluginInstaller?,
     private val auditLog: AuditLog = NullAuditLog,
     private val permissionKernel: PermissionKernel = DefaultPermissionKernel(),
+    private val armedScheduleStore: ArmedScheduleStore = NullArmedScheduleStore,
 ) : RuntimeGateway {
     private val summarizer = RunSummarizer(episodicMemory)
 
@@ -139,6 +142,7 @@ class McosRuntime internal constructor(
         memory = memory,
         auditLog = auditLog,
         workflowStore = workflowStore,
+        scheduleStore = armedScheduleStore,
         fire = { id, inputs, pre, stepSource -> fireTriggeredWorkflow(id, inputs, pre, stepSource) },
     )
 
@@ -433,6 +437,16 @@ class McosRuntime internal constructor(
 
     /** Currently armed trigger workflow ids, both families (05 §9.2-§9.3). */
     fun armedTriggers(): List<String> = triggers.armed()
+
+    /**
+     * Re-arm the schedule triggers a previous process persisted (durable
+     * schedule hosting, [10-roadmap.md §6]). Call once at startup **after** the
+     * scheduled workflows are re-registered (e.g. marketplace rehydration), so
+     * each persisted `(workflowId, preAuthorized)` resolves to a live spec;
+     * unresolvable records are pruned. Returns the number re-armed. A runtime
+     * built without an [ArmedScheduleStore] re-arms nothing.
+     */
+    suspend fun rehydrateSchedules(): Int = triggers.rehydrate()
 
     /**
      * Launcher the trigger managers invoke on a match (event) or boundary
@@ -914,6 +928,7 @@ class McosRuntime internal constructor(
         private var eventBus: EventBus = TypedEventBus()
         private var workflowStore: WorkflowStore = WorkflowStore()
         private var workflowEngine: WorkflowEngine? = null
+        private var armedScheduleStore: ArmedScheduleStore = NullArmedScheduleStore
 
         // Signed stamps are enabled by default so the production path is
         // secure out of the box; pass TrustingAuthStampSigner to disable
@@ -1004,6 +1019,13 @@ class McosRuntime internal constructor(
          */
         fun withAuditLog(auditLog: AuditLog) = apply { this.auditLog = auditLog }
 
+        /**
+         * Make schedule triggers durable ([10-roadmap.md §6]): armed schedules
+         * persist here and [McosRuntime.rehydrateSchedules] re-arms them on a
+         * fresh process. Defaults to [NullArmedScheduleStore] (lifetime-only).
+         */
+        fun withArmedScheduleStore(store: ArmedScheduleStore) = apply { this.armedScheduleStore = store }
+
         fun build(): McosRuntime {
             val reg = registry ?: CommandRegistry()
             val perm = permissionKernel ?: DefaultPermissionKernel()
@@ -1075,6 +1097,7 @@ class McosRuntime internal constructor(
                 pluginInstaller = pluginInstaller,
                 auditLog = auditLog,
                 permissionKernel = perm,
+                armedScheduleStore = armedScheduleStore,
             )
         }
     }

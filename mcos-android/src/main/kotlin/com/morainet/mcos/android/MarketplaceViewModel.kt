@@ -159,6 +159,13 @@ class MarketplaceViewModel : ViewModel() {
                         )
                     }
                 }
+                // Durable schedule hosting (10 §6): now that recipe workflows are
+                // re-registered, re-arm the schedules a previous process left
+                // running so they survive process death / reboot.
+                val rearmed = deps.runtime.rehydrateSchedules()
+                if (rearmed > 0) {
+                    _uiState.update { it.copy(registryRevision = it.registryRevision + 1) }
+                }
             }
         }
         // Load the persisted index URL once per process.
