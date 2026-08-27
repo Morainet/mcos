@@ -49,6 +49,7 @@ import com.morainet.mcos.sdk.McosPlugin
 import com.morainet.mcos.runtime.core.workflow.ArmedScheduleStore
 import com.morainet.mcos.runtime.core.workflow.NullArmedScheduleStore
 import com.morainet.mcos.runtime.core.workflow.TriggerArmResult
+import com.morainet.mcos.runtime.core.workflow.WakeScheduler
 import com.morainet.mcos.runtime.core.workflow.WorkflowEngine
 import com.morainet.mcos.runtime.core.workflow.WorkflowJson
 import com.morainet.mcos.runtime.core.workflow.WorkflowOutcome
@@ -129,6 +130,7 @@ class McosRuntime internal constructor(
     private val auditLog: AuditLog = NullAuditLog,
     private val permissionKernel: PermissionKernel = DefaultPermissionKernel(),
     private val armedScheduleStore: ArmedScheduleStore = NullArmedScheduleStore,
+    private val wakeScheduler: WakeScheduler? = null,
 ) : RuntimeGateway {
     private val summarizer = RunSummarizer(episodicMemory)
 
@@ -143,6 +145,7 @@ class McosRuntime internal constructor(
         auditLog = auditLog,
         workflowStore = workflowStore,
         scheduleStore = armedScheduleStore,
+        wakeScheduler = wakeScheduler,
         fire = { id, inputs, pre, stepSource -> fireTriggeredWorkflow(id, inputs, pre, stepSource) },
     )
 
@@ -447,6 +450,14 @@ class McosRuntime internal constructor(
      * built without an [ArmedScheduleStore] re-arms nothing.
      */
     suspend fun rehydrateSchedules(): Int = triggers.rehydrate()
+
+    /**
+     * Drive one schedule tick — the callback for a host [WakeScheduler] wake
+     * (durable schedule hosting, [10-roadmap.md §6]). The Android host's
+     * `AlarmManager` alarm fires, invokes this, due boundaries run, and the
+     * next wake re-arms. A no-op when nothing is due.
+     */
+    suspend fun driveScheduleTick() = triggers.driveScheduleTick()
 
     /**
      * Launcher the trigger managers invoke on a match (event) or boundary
@@ -929,6 +940,7 @@ class McosRuntime internal constructor(
         private var workflowStore: WorkflowStore = WorkflowStore()
         private var workflowEngine: WorkflowEngine? = null
         private var armedScheduleStore: ArmedScheduleStore = NullArmedScheduleStore
+        private var wakeScheduler: WakeScheduler? = null
 
         // Signed stamps are enabled by default so the production path is
         // secure out of the box; pass TrustingAuthStampSigner to disable
@@ -1026,6 +1038,14 @@ class McosRuntime internal constructor(
          */
         fun withArmedScheduleStore(store: ArmedScheduleStore) = apply { this.armedScheduleStore = store }
 
+        /**
+         * Wake the process at cron boundaries via the host (durable schedule
+         * hosting, [10-roadmap.md §6]) — the Android host passes an
+         * `AlarmManager`-backed [WakeScheduler]. Defaults to null (in-process
+         * poll only, accurate while the process is alive).
+         */
+        fun withWakeScheduler(scheduler: WakeScheduler) = apply { this.wakeScheduler = scheduler }
+
         fun build(): McosRuntime {
             val reg = registry ?: CommandRegistry()
             val perm = permissionKernel ?: DefaultPermissionKernel()
@@ -1098,6 +1118,7 @@ class McosRuntime internal constructor(
                 auditLog = auditLog,
                 permissionKernel = perm,
                 armedScheduleStore = armedScheduleStore,
+                wakeScheduler = wakeScheduler,
             )
         }
     }

@@ -17,6 +17,13 @@
     <!-- Normal install-time permission: ConnectivityManager state for
          sys.device.wifi's connected check. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Durable schedule hosting (10 §6): exact AlarmManager wakes at cron
+         boundaries so schedules fire while backgrounded / in Doze. The
+         AlarmManagerWakeScheduler falls back to an inexact-while-idle alarm
+         when exact alarms aren't permitted. RECEIVE_BOOT_COMPLETED re-arms
+         after reboot (boot recovery is part-2 follow-up). -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
         android:allowBackup="true"
@@ -33,6 +40,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Durable schedule wake target (10 §6): the AlarmManager alarm fires
+             here and the receiver drives McosRuntime.driveScheduleTick(). Not
+             exported — only our own PendingIntent triggers it. -->
+        <receiver
+            android:name=".ScheduleAlarmReceiver"
+            android:exported="false" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

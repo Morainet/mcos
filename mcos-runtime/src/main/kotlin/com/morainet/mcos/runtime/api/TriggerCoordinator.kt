@@ -10,6 +10,7 @@ import com.morainet.mcos.runtime.core.workflow.PersistedSchedule
 import com.morainet.mcos.runtime.core.workflow.ScheduleTriggerManager
 import com.morainet.mcos.runtime.core.workflow.Trigger
 import com.morainet.mcos.runtime.core.workflow.TriggerArmResult
+import com.morainet.mcos.runtime.core.workflow.WakeScheduler
 import com.morainet.mcos.runtime.core.workflow.WorkflowStore
 import com.morainet.mcos.security.audit.AuditLog
 import java.util.concurrent.ConcurrentHashMap
@@ -37,6 +38,7 @@ internal class TriggerCoordinator(
     auditLog: AuditLog,
     private val workflowStore: WorkflowStore,
     private val scheduleStore: ArmedScheduleStore = NullArmedScheduleStore,
+    wakeScheduler: WakeScheduler? = null,
     private val fire: (workflowId: String, inputs: JsonObject, preAuthorized: Boolean, stepSource: String) -> Unit,
 ) {
     private val eventTriggers = EventTriggerManager(
@@ -46,6 +48,7 @@ internal class TriggerCoordinator(
     )
     private val scheduleTriggers = ScheduleTriggerManager(
         auditLog = auditLog,
+        wakeScheduler = wakeScheduler,
     )
 
     // Which workflows have an armed *schedule*, and whether the user
@@ -137,6 +140,14 @@ internal class TriggerCoordinator(
     /** Currently armed trigger workflow ids across both families (05 §9.2-§9.3). */
     fun armed(): List<String> =
         (scheduleTriggers.armed() + eventTriggers.armed()).distinct().sorted()
+
+    /**
+     * Drive one schedule tick now — the entry point for a host wake
+     * ([WakeScheduler]): an `AlarmManager` alarm fires, the host calls this, due
+     * boundaries run and the next wake is re-scheduled. Safe to call any time;
+     * with nothing due it is a no-op that just re-arms the next wake.
+     */
+    suspend fun driveScheduleTick() = scheduleTriggers.tick(System.currentTimeMillis())
 
     /**
      * Release every armed trigger. Schedules first — disarming them cancels

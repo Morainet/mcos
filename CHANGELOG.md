@@ -10,6 +10,17 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### Durable schedule hosting — AlarmManager wake seam (2026-08-27)
+
+Schedules now fire while the app is backgrounded or in Doze (05 §9.3 / 10 §6, part 2), building on the item-33 persistence layer.
+
+- **Seam (runtime-core)** — new `WakeScheduler` keeps runtime-core pure JVM. `ScheduleTriggerManager` computes the earliest armed cron boundary and calls `scheduleWakeAt(...)` on every arm/disarm/fire; the coroutine poll remains the alive-foreground default.
+- **Runtime** — `McosRuntime.Builder.withWakeScheduler` + `suspend driveScheduleTick()` (the wake callback: runs due boundaries, re-arms the next wake).
+- **Android** — `AlarmManagerWakeScheduler` sets one exact allow-while-idle alarm to `ScheduleAlarmReceiver`, which drives `driveScheduleTick()` via a process `McosRuntimeHolder`; degrades to inexact `setAndAllowWhileIdle` when exact-alarm access is revoked. Manifest: `SCHEDULE_EXACT_ALARM` + `RECEIVE_BOOT_COMPLETED` + the non-exported receiver; `CompositionRoot` wires it.
+- **🟡 Deferred (needs on-device testing)** — cold-start firing when the process was killed (needs an Application-scoped headless runtime) and `BootReceiver` re-arm after reboot.
+- **Tests** — +4: `WakeSchedulerTest` WS1-WS4 (deterministic, injected clock).
+- **Docs** — `11-implementation-status` item 34.
+
 ### Durable schedule hosting — armed-state persistence + rehydrate (2026-08-27)
 
 Scheduled workflows now survive process death and reboots (05 §9.3 / 10 §6, part 1 of 2). The in-runtime scheduler was process-lifetime only.

@@ -9,6 +9,7 @@ import com.morainet.mcos.plugin.camera.CameraPlugin
 import com.morainet.mcos.plugin.files.FilesPlugin
 import com.morainet.mcos.plugin.hello.HelloPlugin
 import com.morainet.mcos.plugin.system.SystemPlugin
+import com.morainet.mcos.android.host.AlarmManagerWakeScheduler
 import com.morainet.mcos.runtime.api.McosRuntime
 import com.morainet.mcos.runtime.core.workflow.FileArmedScheduleStore
 import com.morainet.mcos.runtime.core.executor.Executor
@@ -241,6 +242,9 @@ object CompositionRoot {
             file = File(activity.filesDir, "triggers/armed-schedules.json"),
             hmacKey = stateHmacKey,
         )
+        // Exact AlarmManager wakes at cron boundaries (10 §6): schedules fire
+        // while backgrounded / in Doze, not just while the poll driver runs.
+        val wakeScheduler = AlarmManagerWakeScheduler(activity.applicationContext)
 
         val runtime = McosRuntime.Builder()
             .withRegistry(registry)
@@ -251,6 +255,7 @@ object CompositionRoot {
             .withPluginInstaller(installer)
             .withEventBus(eventBus)
             .withArmedScheduleStore(armedScheduleStore)
+            .withWakeScheduler(wakeScheduler)
             // Wires the default WorkflowEngine's audit sink; the injected
             // executor below carries the same log via its SecurityConfig.
             .withAuditLog(auditLog)
@@ -271,6 +276,10 @@ object CompositionRoot {
                 )
             )
             .build()
+
+        // Let the schedule alarm receiver reach this runtime (10 §6). Rebuilt
+        // per Activity onCreate; the latest runtime wins.
+        McosRuntimeHolder.runtime = runtime
 
         return AppDeps(
             runtime = runtime,

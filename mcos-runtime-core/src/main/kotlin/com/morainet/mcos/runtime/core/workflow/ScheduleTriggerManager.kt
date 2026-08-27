@@ -89,6 +89,7 @@ class ScheduleTriggerManager(
     private val limits: TriggerLimits = TriggerLimits(),
     private val clock: () -> Long = System::currentTimeMillis,
     private val pollMs: Long? = DEFAULT_POLL_MS,
+    private val wakeScheduler: WakeScheduler? = null,
 ) {
 
     /** One armed schedule and its fire bookkeeping. */
@@ -161,12 +162,16 @@ class ScheduleTriggerManager(
             launcher = launcher,
         )
         ensureDriver()
+        rescheduleWake()
         return TriggerArmResult.Armed(workflowId)
     }
 
     /** Disarm [workflowId]; its boundaries no longer fire. `true` if it was armed. */
-    fun disarm(workflowId: String): Boolean =
-        armedSchedules.remove(workflowId) != null
+    fun disarm(workflowId: String): Boolean {
+        val removed = armedSchedules.remove(workflowId) != null
+        if (removed) rescheduleWake()
+        return removed
+    }
 
     /** Currently armed workflow ids (sorted for determinism). */
     fun armed(): List<String> = armedSchedules.keys.sorted()
@@ -220,6 +225,19 @@ class ScheduleTriggerManager(
                 }
             }
         }
+        // Boundaries advanced — tell the host when to wake next (durable
+        // scheduling, 10 §6). No-op when no WakeScheduler is wired.
+        rescheduleWake()
+    }
+
+    /**
+     * Ask the host to wake the process at the earliest armed boundary so a
+     * killed/Doze'd app still fires its schedules ([WakeScheduler], 10 §6).
+     */
+    private fun rescheduleWake() {
+        val ws = wakeScheduler ?: return
+        val earliest = armedSchedules.values.mapNotNull { it.nextBoundary }.minOrNull() ?: return
+        ws.scheduleWakeAt(earliest)
     }
 
     /** Rate-limit, audit, and launch one fire for [boundary]. */
