@@ -26,6 +26,7 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
+        android:name=".McosApplication"
         android:allowBackup="true"
         android:icon="@drawable/ic_launcher"
         android:label="MCOS Shell"
@@ -47,6 +48,17 @@
         <receiver
             android:name=".ScheduleAlarmReceiver"
             android:exported="false" />
+
+        <!-- Re-arm schedules after reboot (10 §6). Exported so the system can
+             deliver BOOT_COMPLETED; McosApplication.onCreate does the re-arm,
+             this receiver just holds the process alive until it finishes. -->
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
 
         <provider
             android:name="androidx.core.content.FileProvider"

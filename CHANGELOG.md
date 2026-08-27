@@ -10,6 +10,16 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### Durable schedule hosting — headless process runtime + boot re-arm (2026-08-27)
+
+A schedule alarm (or reboot) that cold-starts the process now fires with no Activity open (05 §9.3 / 10 §6, part 3).
+
+- **Process-scoped runtime** — `CompositionRoot.create(Context)` (was `ComponentActivity`) builds from the application context; new `McosApplication : Application` owns the one `AppDeps` for the process lifetime and `MainActivity` reuses it. The only Activity-bound capability (`ActivityResultBridge`) was already re-attached per-Activity and returns null/UNAVAILABLE while headless.
+- **Process-once rehydrate** — `RuntimeBootstrap.ensureRehydrated` (keyed on the `AppDeps` instance, so tests stay isolated) rehydrates installed recipes + `rehydrateSchedules()`; kicked by `McosApplication.onCreate` so a headless launch re-registers workflows, re-arms schedules, and sets the next exact alarm. `MarketplaceViewModel.attach` routes through it and refreshes the palette only when something was restored.
+- **Boot re-arm** — `BootReceiver` (`BOOT_COMPLETED`, exported) `goAsync`-awaits the bootstrap so the process survives until the next alarm is scheduled. Manifest gains `android:name=".McosApplication"` + the receiver.
+- **🟡 Honest boundary** — headless runs execute pre-authorized / no-UI steps; a step needing a confirmation dialog still can't prompt without the Activity. The AlarmManager/receiver/Application glue is **not JVM-unit-testable and needs on-device verification**; all existing JVM suites stay green.
+- **Docs** — `11-implementation-status` item 35.
+
 ### Durable schedule hosting — AlarmManager wake seam (2026-08-27)
 
 Schedules now fire while the app is backgrounded or in Doze (05 §9.3 / 10 §6, part 2), building on the item-33 persistence layer.

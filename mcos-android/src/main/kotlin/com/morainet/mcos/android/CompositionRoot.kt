@@ -1,6 +1,6 @@
 package com.morainet.mcos.android
 
-import androidx.activity.ComponentActivity
+import android.content.Context
 import com.morainet.mcos.android.host.ActivityResultBridge
 import com.morainet.mcos.android.host.AndroidHostServices
 import com.morainet.mcos.android.host.AndroidMarketplaceHttpTransport
@@ -48,23 +48,23 @@ import java.io.File
 import java.security.SecureRandom
 
 /**
- * Activity-scoped dependencies built once per [ComponentActivity] creation.
+ * Process-lifetime dependencies, built once by [McosApplication] from the
+ * application [Context] (durable schedule hosting, 10 §6): a broadcast receiver
+ * that cold-starts the process (an AlarmManager wake, or BOOT_COMPLETED) needs
+ * a live runtime with no Activity present. [AndroidHostServices] reaches Android
+ * APIs through the application context; the only Activity-bound capability,
+ * [ActivityResultBridge] (camera capture's activity-result launcher), is
+ * re-attached by the Compose layer on each Activity create and returns null
+ * (UNAVAILABLE) while no Activity is registered.
  *
- * The runtime is inherently activity-scoped: [ActivityResultBridge] forwards
- * through a Compose-registered activity-result launcher (camera capture), and
- * [AndroidHostServices] reaches Android APIs through the activity's context.
- * A configuration change therefore builds a fresh [AppDeps] and the
- * [McosViewModel] re-attaches via [McosViewModel.attach] — UI state survives
- * the change, the runtime does not (runs in flight keep using the previous
- * instance until their terminal event, bounded by the event-bus lifecycle).
+ * A configuration change reuses this same [AppDeps] (the [McosViewModel]
+ * re-attaches via [McosViewModel.attach]); the runtime and its registry now
+ * survive the change rather than being rebuilt.
  *
  * [secureStore] is typed as the sdk [SecureStore] interface (the production
  * instance is [AndroidSecureStore]) so tests can substitute an in-memory
- * fake without touching Android APIs.
- *
- * [auditLog] is the one dependency that outlives the activity scope: it is
- * file-backed (`audit/audit.jsonl`), so a fresh instance replays the same
- * trail after a configuration change or process death.
+ * fake without touching Android APIs. [auditLog] is file-backed
+ * (`audit/audit.jsonl`) and runs for the process lifetime.
  */
 class AppDeps(
     val runtime: McosRuntime,
@@ -116,10 +116,11 @@ object CompositionRoot {
     /** SecureStore key for the grant/install-record snapshot HMAC seed (separate domain). */
     private const val STATE_HMAC_SEED_KEY = "state_hmac_seed"
 
-    fun create(activity: ComponentActivity): AppDeps {
+    fun create(context: Context): AppDeps {
+        val appContext = context.applicationContext
         val resultBridge = ActivityResultBridge()
-        val hostServices = AndroidHostServices(activity, resultBridge)
-        val secureStore = AndroidSecureStore(activity.applicationContext)
+        val hostServices = AndroidHostServices(appContext, resultBridge)
+        val secureStore = AndroidSecureStore(appContext)
         val registry = CommandRegistry()
 
         // Audit trail (03-runtime.md §13): persistent JSONL under filesDir
@@ -129,7 +130,7 @@ object CompositionRoot {
         // once, then persisted via the SecureStore so signatures verify
         // across restarts.
         val auditLog = FileAuditLog(
-            file = File(activity.filesDir, "audit/audit.jsonl"),
+            file = File(appContext.filesDir, "audit/audit.jsonl"),
             hmacKey = deriveAuditHmacKey(persistedSeed(secureStore, AUDIT_HMAC_SEED_KEY)),
         ).apply { start() }
 
@@ -168,7 +169,7 @@ object CompositionRoot {
             persistedSeed(secureStore, STATE_HMAC_SEED_KEY),
         )
         val installRecordStore = InstallRecordStore(
-            file = File(activity.filesDir, "marketplace/install-records.json"),
+            file = File(appContext.filesDir, "marketplace/install-records.json"),
             hmacKey = stateHmacKey,
         )
         val installer = PluginInstaller(
@@ -177,7 +178,7 @@ object CompositionRoot {
             keyStore = publisherKeys,
             loader = pluginLoader,
             registry = registry,
-            downloadDir = File(activity.filesDir, "marketplace").apply { mkdirs() }.absolutePath,
+            downloadDir = File(appContext.filesDir, "marketplace").apply { mkdirs() }.absolutePath,
             onProgress = { installProgress.tryEmit(it) },
             installRecordStore = installRecordStore,
         )
@@ -197,7 +198,7 @@ object CompositionRoot {
             installer = installer,
             // Curated built-ins + dynamic .mcos loading (§16.3 DexClassLoader
             // isolation) for any other signed, verified package.
-            pluginFactory = MarketplacePluginFactory(dynamicLoader = DexPluginLoader(activity)),
+            pluginFactory = MarketplacePluginFactory(dynamicLoader = DexPluginLoader(appContext)),
             blocklistVerifier = blocklistVerifier,
             installProgress = installProgress,
             recipeInstaller = RecipeInstaller(recipeSignatureVerifier),
@@ -210,7 +211,7 @@ object CompositionRoot {
         // restarts, and a tampered/missing file fails closed (grants
         // nothing). Session grants never persist, by kernel design.
         val permissionKernel = DefaultPermissionKernel(
-            FileGrantStore(File(activity.filesDir, "permissions/grants.json"), stateHmacKey),
+            FileGrantStore(File(appContext.filesDir, "permissions/grants.json"), stateHmacKey),
         )
 
         // ONE signer shared by the confirmation coordinator (signs the
@@ -239,12 +240,12 @@ object CompositionRoot {
         // after rehydrating installed recipes, so a re-registered scheduled
         // workflow re-arms across process death and reboots.
         val armedScheduleStore = FileArmedScheduleStore(
-            file = File(activity.filesDir, "triggers/armed-schedules.json"),
+            file = File(appContext.filesDir, "triggers/armed-schedules.json"),
             hmacKey = stateHmacKey,
         )
         // Exact AlarmManager wakes at cron boundaries (10 §6): schedules fire
         // while backgrounded / in Doze, not just while the poll driver runs.
-        val wakeScheduler = AlarmManagerWakeScheduler(activity.applicationContext)
+        val wakeScheduler = AlarmManagerWakeScheduler(appContext)
 
         val runtime = McosRuntime.Builder()
             .withRegistry(registry)

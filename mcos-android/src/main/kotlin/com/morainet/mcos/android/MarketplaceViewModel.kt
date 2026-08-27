@@ -138,32 +138,15 @@ class MarketplaceViewModel : ViewModel() {
                     }
                 }
             }
-            // Rehydrate persisted installs asynchronously: each record is
-            // re-verified (Ed25519) against its pinned key before anything
-            // registers — CPU work that must not block cold start. Progress
-            // flows through installProgress above; restored plugins get
-            // onLoad and the palette refresh bumps with registryRevision.
+            // Rehydrate persisted installs + re-arm schedules once per process
+            // (durable schedule hosting, 10 §6): the same run may already have
+            // been kicked by McosApplication (headless launch) or the boot
+            // receiver, so route through the shared process-once bootstrap and
+            // just refresh the palette when it finishes. Install progress still
+            // streams through the installProgress collector above.
             viewModelScope.launch {
-                val outcomes = deps.marketplace.installer.rehydrateInstalled(
-                    pluginFactory = { pkg -> deps.marketplace.pluginFactory.factoryFor(pkg) },
-                    seedKey = { key -> deps.marketplace.keyStore.put(key) },
-                )
-                val restored = outcomes.filter { it.state == InstallState.INSTALLED }
-                if (restored.isNotEmpty()) {
-                    restored.forEach { it.plugin?.onLoad(deps.hostServices) }
-                    _uiState.update {
-                        it.copy(
-                            message = "Restored ${restored.size} marketplace plugin(s): " +
-                                restored.joinToString { o -> o.packageId },
-                            registryRevision = it.registryRevision + 1,
-                        )
-                    }
-                }
-                // Durable schedule hosting (10 §6): now that recipe workflows are
-                // re-registered, re-arm the schedules a previous process left
-                // running so they survive process death / reboot.
-                val rearmed = deps.runtime.rehydrateSchedules()
-                if (rearmed > 0) {
+                val restored = RuntimeBootstrap.ensureRehydrated(deps).await()
+                if (restored > 0) {
                     _uiState.update { it.copy(registryRevision = it.registryRevision + 1) }
                 }
             }

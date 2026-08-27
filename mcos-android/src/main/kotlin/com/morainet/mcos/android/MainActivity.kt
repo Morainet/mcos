@@ -5,32 +5,18 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 
 /**
- * Shell activity. All construction lives in [CompositionRoot] and all state
- * and orchestration live in [McosViewModel]; this class only wires them
- * together (architecture review #8).
- *
- * The activity owns its [AppDeps] lifecycle: [onDestroy] stops the audit
- * writer. The JSONL trail itself is file-backed, so the next instance
- * (configuration change or relaunch) replays and continues the same log.
+ * Shell activity. Construction lives in [CompositionRoot] (owned now by
+ * [McosApplication] for the process lifetime, so a schedule alarm can fire
+ * headlessly — 10 §6); state and orchestration live in [McosViewModel]. This
+ * class only binds the process-lifetime [AppDeps] into the Compose tree; the
+ * Compose layer re-attaches the activity-result launcher on each create.
  */
 class MainActivity : ComponentActivity() {
 
-    private var deps: AppDeps? = null
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        val built = CompositionRoot.create(this)
-        deps = built
-
         setContent {
-            MCOSApp(built)
+            MCOSApp((application as McosApplication).deps)
         }
-    }
-
-    override fun onDestroy() {
-        deps?.auditLog?.stop()
-        deps = null
-        super.onDestroy()
     }
 }
