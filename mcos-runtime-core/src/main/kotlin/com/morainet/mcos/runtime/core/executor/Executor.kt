@@ -68,6 +68,11 @@ import kotlin.coroutines.cancellation.CancellationException
  *        any domain-scope matching. Defaults to never-active.
  * @param debugMode When true, the egress policy allows non-HTTPS URLs
  *        (development only). Defaults to false.
+ * @param isolationHost Optional host seam ([08-security.md §8.1]) for running
+ *        non-`BUILTIN` plugins in a separate process. When null, non-builtin
+ *        commands run best-effort in-process (the MVP posture) and each such
+ *        plugin's first fallback is audited as `plugin.isolation_fallback`.
+ *        `BUILTIN` plugins always run in-process regardless. Defaults to null.
  */
 class Executor(
     private val registry: CommandRegistry,
@@ -75,9 +80,17 @@ class Executor(
     private val security: SecurityConfig,
     private val globalKillSwitch: () -> Boolean = { false },
     private val debugMode: Boolean = false,
+    private val isolationHost: IsolationHost? = null,
 ) {
 
     private val schemaValidator = SchemaValidator()
+
+    /**
+     * Plugin ids whose best-effort in-process fallback ([08-security.md §8.1])
+     * has already been audited, so the `plugin.isolation_fallback` record is
+     * emitted once per plugin per Executor rather than on every invocation.
+     */
+    private val isolationFallbackAudited = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     /**
      * Execute a single command by ID.
@@ -282,29 +295,64 @@ class Executor(
         val runId = UUID.randomUUID().toString()
         val timeoutMs = entry.descriptor.timeoutMs.coerceIn(1000, 600000)
         val startTime = System.currentTimeMillis()
+        val deadlineMs = startTime + timeoutMs
+        // Re-sign the stamp after the audit runId is bound so the isolated
+        // facade (and the in-process facades) verify a run-scoped stamp.
+        val boundAuth = effectiveAuth?.let { stamp -> security.signer.sign(stamp.copy(runId = runId)) }
 
-        val ctx = ExecutionContext(
-            runId = runId,
-            commandId = entry.descriptor.id,
-            args = args,
-            auth = effectiveAuth?.let { stamp ->
-                // Re-sign after runId is bound
-                security.signer.sign(stamp.copy(runId = runId))
-            },
-            deadline = System.currentTimeMillis() + timeoutMs,
-            progress = progress,
-            // Stage 4 (Expand) — `{{secret.*}}` templates (08-security.md §9.2)
-            // are resolved by the per-plugin NetService decorator; args keep
-            // the template form and values never enter the audit trail.
-            // The sandbox is namespaced per executing plugin (04 §6.1).
-            services = secretResolvingServices(entry.descriptor.pluginId)
-        )
+        // Stage 8 dispatch — isolation strategy by trust level (08 §7.2/§8).
+        // BUILTIN runs in-process; every other level targets a separate
+        // process. Without an [isolationHost] wired we degrade to a
+        // best-effort in-process invocation (the MVP posture) and audit it.
+        val isolationMode = IsolationPolicy.modeFor(entry.trustLevel)
+
+        // The in-process path builds the full ExecutionContext (with the
+        // per-plugin secret-resolving, sandbox-namespaced facade). The
+        // isolated path deliberately hands only identity + args + stamp across
+        // the boundary — the plugin process gets a Binder-stub facade instead.
+        suspend fun invokeInProcess(): CommandResult {
+            val ctx = ExecutionContext(
+                runId = runId,
+                commandId = entry.descriptor.id,
+                args = args,
+                auth = boundAuth,
+                deadline = deadlineMs,
+                progress = progress,
+                // Stage 4 (Expand) — `{{secret.*}}` templates (08-security.md §9.2)
+                // are resolved by the per-plugin NetService decorator; args keep
+                // the template form and values never enter the audit trail.
+                // The sandbox is namespaced per executing plugin (04 §6.1).
+                services = secretResolvingServices(entry.descriptor.pluginId),
+            )
+            return entry.handler.invoke(ctx)
+        }
 
         var result: CommandResult
         var outcome: RunOutcome
         try {
             result = withTimeout(timeoutMs) {
-                entry.handler.invoke(ctx)
+                when {
+                    isolationMode == IsolationMode.IN_PROCESS -> invokeInProcess()
+                    isolationHost != null -> isolationHost.invoke(
+                        IsolatedInvocation(
+                            pluginId = entry.descriptor.pluginId,
+                            pluginVersion = entry.pluginVersion,
+                            commandId = entry.descriptor.id,
+                            args = args,
+                            auth = boundAuth,
+                            runId = runId,
+                            deadlineMs = deadlineMs,
+                            source = source,
+                        )
+                    )
+                    else -> {
+                        // No isolation host: best-effort in-process fallback
+                        // (08 §8.1). Audited once per plugin so the weaker
+                        // boundary is visible without flooding the trail.
+                        recordIsolationFallback(entry, runId)
+                        invokeInProcess()
+                    }
+                }
             }
             outcome = RunOutcome.OK
         } catch (e: TimeoutCancellationException) {
@@ -501,6 +549,40 @@ class Executor(
             val resolvedBody = body?.let { SecretResolver.resolve(it) { store.get(it) } }
             return delegate.request(method, url, resolvedBody, resolvedHeaders)
         }
+    }
+
+    // ─── Process isolation (§8) ─────────────────────────────────────────
+
+    /**
+     * Record that a non-`BUILTIN` plugin ran best-effort in-process because no
+     * [IsolationHost] is wired ([08-security.md §8.1] / §7.2 MVP posture).
+     * Emitted once per plugin per Executor (deduped) as an informational
+     * `plugin.isolation_fallback` audit step, mirroring the `plugin.quarantined`
+     * security-event record shape.
+     */
+    private fun recordIsolationFallback(entry: RegistryEntry, runId: String) {
+        val pluginId = entry.descriptor.pluginId
+        if (!isolationFallbackAudited.add(pluginId)) return
+        security.auditLog.append(
+            RunRecord(
+                runId = runId,
+                timestamp = System.currentTimeMillis(),
+                source = "SECURITY",
+                commandId = entry.descriptor.id,
+                steps = listOf(
+                    StepRecord(
+                        commandId = entry.descriptor.id,
+                        pluginId = pluginId,
+                        ok = true,
+                        code = "plugin.isolation_fallback",
+                        message = "trustLevel=${entry.trustLevel.name} ran in-process; no isolation host wired",
+                        durationMs = 0,
+                    )
+                ),
+                totalDurationMs = 0,
+                outcome = RunOutcome.OK,
+            )
+        )
     }
 
     // ─── Crash-loop quarantine (§15.3) ──────────────────────────────────

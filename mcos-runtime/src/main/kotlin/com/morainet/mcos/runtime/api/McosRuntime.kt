@@ -49,6 +49,7 @@ import com.morainet.mcos.sdk.McosPlugin
 import com.morainet.mcos.runtime.core.workflow.ArmedScheduleStore
 import com.morainet.mcos.runtime.core.workflow.NullArmedScheduleStore
 import com.morainet.mcos.runtime.core.workflow.TriggerArmResult
+import com.morainet.mcos.runtime.core.executor.IsolationHost
 import com.morainet.mcos.runtime.core.workflow.WakeScheduler
 import com.morainet.mcos.runtime.core.workflow.WorkflowEngine
 import com.morainet.mcos.runtime.core.workflow.WorkflowJson
@@ -941,6 +942,7 @@ class McosRuntime internal constructor(
         private var workflowEngine: WorkflowEngine? = null
         private var armedScheduleStore: ArmedScheduleStore = NullArmedScheduleStore
         private var wakeScheduler: WakeScheduler? = null
+        private var isolationHost: IsolationHost? = null
 
         // Signed stamps are enabled by default so the production path is
         // secure out of the box; pass TrustingAuthStampSigner to disable
@@ -1046,6 +1048,17 @@ class McosRuntime internal constructor(
          */
         fun withWakeScheduler(scheduler: WakeScheduler) = apply { this.wakeScheduler = scheduler }
 
+        /**
+         * Run non-`BUILTIN` plugins in a separate process via the host
+         * ([08-security.md §8.1]) — the Android host passes a bound-service
+         * backed [IsolationHost]. Defaults to null (best-effort in-process for
+         * every trust level, the MVP posture; non-builtin fallbacks are
+         * audited as `plugin.isolation_fallback`). Only wires the *default*
+         * Executor; a host injecting its own via [withExecutor] passes the
+         * isolation host to that Executor directly.
+         */
+        fun withIsolationHost(host: IsolationHost) = apply { this.isolationHost = host }
+
         fun build(): McosRuntime {
             val reg = registry ?: CommandRegistry()
             val perm = permissionKernel ?: DefaultPermissionKernel()
@@ -1084,6 +1097,7 @@ class McosRuntime internal constructor(
                     }
                 },
                 security,
+                isolationHost = isolationHost,
             )
 
             // The workflow engine defaults to the same executor, so control
