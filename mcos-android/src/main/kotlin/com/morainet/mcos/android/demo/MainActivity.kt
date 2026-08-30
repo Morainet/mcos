@@ -1,8 +1,10 @@
-package com.morainet.mcos.android
+package com.morainet.mcos.android.demo
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import com.morainet.mcos.android.AppDeps
+import com.morainet.mcos.android.CompositionRoot
 
 /**
  * Shell activity. Construction lives in [CompositionRoot] (owned now by

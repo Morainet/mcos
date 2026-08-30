@@ -1,5 +1,6 @@
-package com.morainet.mcos.android
+package com.morainet.mcos.android.demo
 
+import com.morainet.mcos.android.PluginPermissionBootstrap
 import com.morainet.mcos.marketplace.InstallResult
 import com.morainet.mcos.marketplace.InstallState
 import com.morainet.mcos.plugin.camera.CameraPlugin

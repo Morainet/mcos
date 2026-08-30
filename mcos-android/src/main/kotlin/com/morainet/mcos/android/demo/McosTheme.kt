@@ -1,4 +1,4 @@
-package com.morainet.mcos.android
+package com.morainet.mcos.android.demo
 
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme

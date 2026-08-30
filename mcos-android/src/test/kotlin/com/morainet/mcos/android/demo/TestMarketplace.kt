@@ -1,5 +1,8 @@
-package com.morainet.mcos.android
+package com.morainet.mcos.android.demo
 
+import com.morainet.mcos.android.AppDeps
+import com.morainet.mcos.android.MarketplaceDeps
+import com.morainet.mcos.android.MarketplacePluginFactory
 import com.morainet.mcos.android.host.ActivityResultBridge
 import com.morainet.mcos.android.host.InMemoryFacade
 import com.morainet.mcos.android.host.RuntimePermissionBridge

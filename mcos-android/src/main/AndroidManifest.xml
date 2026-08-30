@@ -1,30 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Demo shell manifest — deliberately minimal. All host-runtime manifest
+     surface (uses-permissions, ScheduleAlarmReceiver, BootReceiver, the
+     FileProvider) is declared by the mcos-android-sdk library manifest and
+     merged in at build time, so an integrating app gets it for free and this
+     file only describes the demo UI itself. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
-    <uses-permission
-        android:name="android.permission.READ_EXTERNAL_STORAGE"
-        android:maxSdkVersion="32" />
-    <uses-permission android:name="android.permission.INTERNET" />
-    <!-- sys.vibrate / sys.device.* — normal or special-access permissions;
-         runtime grants are prompted in-app on demand (RuntimePermissionBridge,
-         04 §6.3) and WRITE_SETTINGS deep-links the special-access screen;
-         headless runs degrade honestly when ungranted. -->
-    <uses-permission android:name="android.permission.VIBRATE" />
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <uses-permission android:name="android.permission.WRITE_SETTINGS" />
-    <!-- Normal install-time permission: ConnectivityManager state for
-         sys.device.wifi's connected check. -->
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <!-- Durable schedule hosting (10 §6): exact AlarmManager wakes at cron
-         boundaries so schedules fire while backgrounded / in Doze. The
-         AlarmManagerWakeScheduler falls back to an inexact-while-idle alarm
-         when exact alarms aren't permitted. RECEIVE_BOOT_COMPLETED re-arms
-         after reboot (boot recovery is part-2 follow-up). -->
-    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
         android:name=".McosApplication"
@@ -42,34 +22,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-
-        <!-- Durable schedule wake target (10 §6): the AlarmManager alarm fires
-             here and the receiver drives McosRuntime.driveScheduleTick(). Not
-             exported — only our own PendingIntent triggers it. -->
-        <receiver
-            android:name=".ScheduleAlarmReceiver"
-            android:exported="false" />
-
-        <!-- Re-arm schedules after reboot (10 §6). Exported so the system can
-             deliver BOOT_COMPLETED; McosApplication.onCreate does the re-arm,
-             this receiver just holds the process alive until it finishes. -->
-        <receiver
-            android:name=".BootReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.BOOT_COMPLETED" />
-            </intent-filter>
-        </receiver>
-
-        <provider
-            android:name="androidx.core.content.FileProvider"
-            android:authorities="${applicationId}.fileprovider"
-            android:exported="false"
-            android:grantUriPermissions="true">
-            <meta-data
-                android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/file_paths" />
-        </provider>
     </application>
 
 </manifest>

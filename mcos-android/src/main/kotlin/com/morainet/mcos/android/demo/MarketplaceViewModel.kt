@@ -1,7 +1,11 @@
-package com.morainet.mcos.android
+package com.morainet.mcos.android.demo
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.morainet.mcos.android.AppDeps
+import com.morainet.mcos.android.MarketplacePluginFactory
+import com.morainet.mcos.android.PluginPermissionBootstrap
+import com.morainet.mcos.android.RuntimeBootstrap
 import com.morainet.mcos.marketplace.InstallProgress
 import com.morainet.mcos.marketplace.InstallResult
 import com.morainet.mcos.marketplace.InstallState

@@ -1,10 +1,10 @@
 # MCOS Repositories & Module Index
 
 > **Status:** Reference (as-built)  
-> **Last Updated:** 2026-08-24  
+> **Last Updated:** 2026-08-30  
 > **Authoritative for:** the module topology the implementation follows; boundary changes must update this doc together with [01-architecture.md](./01-architecture.md).
 
-MCOS is an **implemented** multi-module repository — the Gradle layout below is the *actual* structure (the P1 first-batch modules, the later `mcos-runtime` / `mcos-runtime-core` split with `mcos-security` / `mcos-llm` / `mcos-marketplace`, and `mcos-server`), not a proposal. This document remains the normative reference for module boundaries, the dependency graph, and naming conventions.
+MCOS is an **implemented** multi-module repository — the Gradle layout below is the *actual* structure (the P1 first-batch modules, the later `mcos-runtime` / `mcos-runtime-core` split with `mcos-security` / `mcos-llm` / `mcos-marketplace`, `mcos-server`, and the `mcos-android-sdk` / `mcos-android` host-SDK + demo-shell split), not a proposal. This document remains the normative reference for module boundaries, the dependency graph, and naming conventions.
 
 For per-subsystem implementation phasing, see [11-implementation-status.md](./11-implementation-status.md).
 
@@ -24,7 +24,9 @@ flowchart BT
     sys["plugins:mcos-plugin-system"]
     cam["plugins:mcos-plugin-camera"]
     files["plugins:mcos-plugin-files"]
-    app["mcos-android<br/>(Compose shell)"]
+    mcp["plugins:mcos-plugin-mcp"]
+    asdk["mcos-android-sdk<br/>(host SDK · UI-free)"]
+    app["mcos-android<br/>(Compose demo shell)"]
     srv["mcos-server<br/>(self-hosted sync)"]
 
     sec --> sdk
@@ -43,20 +45,29 @@ flowchart BT
     sys --> sdk
     cam --> sdk
     files --> sdk
+    mcp --> sdk
+    asdk --> sdk
+    asdk --> sec
+    asdk --> core
+    asdk --> rt
+    asdk --> llm
+    asdk --> mkt
+    asdk --> hello
+    asdk --> sys
+    asdk --> cam
+    asdk --> files
+    app --> asdk
     app --> sdk
     app --> sec
     app --> core
     app --> rt
     app --> llm
     app --> mkt
-    app --> hello
-    app --> sys
-    app --> cam
-    app --> files
+    app --> mcp
     srv -.->|"test-only"| core
 ```
 
-Read bottom-up: `mcos-sdk` is the leaf contract layer; everything depends on it. `mcos-runtime-core` (with `mcos-security`) holds the kernel subsystems; `mcos-runtime` is the facade that `api`-exports `sdk`/`security`/`runtime-core`/`marketplace`; `mcos-llm` deliberately depends **only** on `sdk` + `runtime-core` (never the facade — the Planner must be usable headless, see [01 §7](./01-architecture.md)); `mcos-server` has no compile-time project dependencies (runtime-core appears in tests only, dashed); `mcos-android` aggregates the facade, the SDK, llm, marketplace, and all plugins.
+Read bottom-up: `mcos-sdk` is the leaf contract layer; everything depends on it. `mcos-runtime-core` (with `mcos-security`) holds the kernel subsystems; `mcos-runtime` is the facade that `api`-exports `sdk`/`security`/`runtime-core`/`marketplace`; `mcos-llm` deliberately depends **only** on `sdk` + `runtime-core` (never the facade — the Planner must be usable headless, see [01 §7](./01-architecture.md)); `mcos-server` has no compile-time project dependencies (runtime-core appears in tests only, dashed); `mcos-android-sdk` aggregates the facade, llm, marketplace, and the reference built-in plugin set **without any UI code** — it is the library an integrating app embeds; `mcos-android` is the Compose demo shell built on top (it keeps its own direct edges to the modules its ViewModel/test code touches, plus the MCP adapter plugin).
 
 ---
 
@@ -128,15 +139,26 @@ Read bottom-up: `mcos-sdk` is the leaf contract layer; everything depends on it.
 | Stack | Kotlin/JVM · JDK 17 · kotlinx.serialization |
 | Spec | [09-marketplace.md](./09-marketplace.md) |
 
-### `mcos-android` — Compose client shell
+### `mcos-android-sdk` — Android host SDK (UI-free library)
+
+| | |
+|---|---|
+| Path | `mcos-android-sdk/` |
+| Package | `com.morainet.mcos.android` — root (`CompositionRoot`/`AppDeps`, `RuntimeBootstrap`, `ScheduleAlarmReceiver`, `BootReceiver`, `DynamicPluginLoader`, `MarketplacePluginFactory`, `PluginPermissionBootstrap`, `TrustAnchors`, `McosHostApp`) + `host` (`AndroidHostServices`, `ActivityResultBridge`, `RuntimePermissionBridge`, `AlarmManagerWakeScheduler`, `AndroidLlmHttpTransport`, `AndroidMarketplaceHttpTransport`) |
+| Role | Everything an Android app needs to host the MCOS runtime **with no UI attached**: the composition root (production security posture, injectable built-ins via `CompositionRoot.create(context, builtIns)`), headless process bootstrap + durable-schedule re-arm receivers, the `McosHostApp` seam receivers use to reach the host's `AppDeps`, activity-result / runtime-permission bridges, and the HTTP transport adapters. The library manifest carries all host permissions, receivers, and the FileProvider, merged into any integrating app. |
+| Depends on | `:mcos-sdk`, `:mcos-security`, `:mcos-runtime-core`, `:mcos-runtime`, `:mcos-llm`, `:mcos-marketplace`, the four built-in plugins; AndroidX core-ktx + activity-ktx (deliberately **no** Compose/ViewModel) |
+| Stack | Kotlin/Android library · compileSdk 35 / minSdk 26 · JDK 17 |
+| Spec | [01-architecture.md](./01-architecture.md) §6.1, [04-plugin-sdk.md](./04-plugin-sdk.md) §6.3, [10-roadmap.md](./10-roadmap.md) |
+
+### `mcos-android` — Compose demo shell
 
 | | |
 |---|---|
 | Path | `mcos-android/` |
-| Package | `com.morainet.mcos.android` |
-| Role | Jetpack Compose client: DSL/Chat input, plan preview, confirmation UX, plugin store, settings, audit viewer. |
-| Depends on | `:mcos-sdk`, `:mcos-security`, `:mcos-runtime-core`, `:mcos-runtime`, `:mcos-llm`, `:mcos-marketplace`, the four plugins; AndroidX (core-ktx, lifecycle, activity-compose), Compose BOM |
-| Stack | Kotlin/Android · Compose · compileSdk 35 / minSdk 26 · JDK 17 |
+| Package | `com.morainet.mcos.android.demo` (`applicationId` stays `com.morainet.mcos.android`) |
+| Role | The reference consumer of `mcos-android-sdk`: a replaceable Jetpack Compose shell (DSL/Chat input, plan preview, confirmation UX, plugin store, settings, audit viewer) plus its ViewModels. Any app can embed the SDK and ship entirely its own UI — this module exists to prove the seam, not to be reused as UI. |
+| Depends on | `:mcos-android-sdk` + direct edges its ViewModel/test code uses (`sdk`, `security`, `runtime-core`, `runtime`, `llm`, `marketplace`, `plugins:mcos-plugin-mcp`; the four built-in plugins as test fixtures); AndroidX (core-ktx, lifecycle, activity-compose), Compose BOM |
+| Stack | Kotlin/Android application · Compose · compileSdk 35 / minSdk 26 · JDK 17 |
 | Spec | [01-architecture.md](./01-architecture.md) §6.1, [10-roadmap.md](./10-roadmap.md) §4.1 |
 
 ### `plugins:mcos-plugin-hello` — Reference sample

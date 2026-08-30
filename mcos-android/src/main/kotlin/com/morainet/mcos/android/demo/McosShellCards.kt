@@ -1,4 +1,4 @@
-package com.morainet.mcos.android
+package com.morainet.mcos.android.demo
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box

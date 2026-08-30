@@ -10,6 +10,18 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### Android SDK split — `mcos-android-sdk` library + `mcos-android` demo shell (2026-08-30)
+
+Open-source readiness: `mcos-android` stops being "the app with the runtime inside" and becomes a replaceable Compose demo over a **UI-free host SDK** — an integrating app embeds the library and ships entirely its own UI.
+
+- **New module `mcos-android-sdk`** (Android library, namespace `com.morainet.mcos.android`, deliberately no Compose plugin) — everything host-shaped moves in: `CompositionRoot`/`AppDeps`, `RuntimeBootstrap`, `ScheduleAlarmReceiver` (+`McosRuntimeHolder`), `BootReceiver`, `McosPackage`/`DynamicPluginLoader`, `MarketplacePluginFactory`, `PluginPermissionBootstrap`, `TrustAnchors`, and all six `host/` classes; the only new external dep is `activity-ktx`. The **library manifest** carries every host permission, both receivers, and the FileProvider (`${applicationId}.fileprovider` resolves against the integrating app's id at merge time) — merged into any host app.
+- **Coupling breaks** — `BootReceiver`'s hard cast to `McosApplication` inverted into a `McosHostApp { val mcosDeps: AppDeps? }` seam (the SDK receiver reaches the host's deps through the interface; null before `onCreate`, an early broadcast skips); the built-in four-plugin hardcode became `CompositionRoot.create(context, builtIns = defaultBuiltIns())` so a host injects its own list.
+- **Demo shell** — moves to package `com.morainet.mcos.android.demo` (namespace follows; `applicationId` deliberately stays `com.morainet.mcos.android` — install identity and the CI APK path unchanged); keeps the Compose UI + both ViewModels + tests; depends on the SDK plus only the edges its own code touches (built-in plugins drop to test fixtures; `plugin-mcp` stays).
+- **Guard rails** — `PackageBoundariesTest` rules `…android` → `mcos-android-sdk`, `…android.demo` → `mcos-android`; CI adds `:mcos-android-sdk:testDebugUnitTest`.
+- **🟡 Honest boundary** — structural split only: the reusable host logic inside the two ViewModels (MCP server management, uninstall disarm-sweep, install-time permission grants, revocation refresh) still lives in the demo as a follow-up extraction; no behavior changed.
+- **Tests** — totals identical: 1201 (1264 executions incl. Android debug+release), 0 failures — redistributed SDK 26×2 + demo 37×2.
+- **Docs** — `REPOSITORIES` (en/zh) graph + new SDK section; `01-architecture` §3.1/§3.2/§6.1 (en/zh); `11-implementation-status` item 39 + module tree (en/zh); `mcos-dev-standards` topology/package list/Android gate.
+
 ### Host capability — in-app runtime-permission prompt flow (2026-08-30)
 
 The 🟡 gap 04 §6.8 documented ("no in-app `requestPermissions` flow — ungranted states point the user at system settings") closes for runtime grants: a command hitting a missing grant now prompts in-app instead of bouncing the user to settings.

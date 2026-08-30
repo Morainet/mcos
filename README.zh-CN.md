@@ -55,7 +55,8 @@ plugins/
   mcos-plugin-files     file.* / photo.*                      ✅
   mcos-plugin-iot       home.* / iot.*              (planned)
   mcos-plugin-mcp       mcp.* adapter               (planned)
-mcos-android      Compose CLI / Chat shell           ✅
+mcos-android-sdk  无 UI Android 宿主 SDK             ✅
+mcos-android      Compose 演示壳（基于 SDK）          ✅
 mcos-server       Sync endpoint (REST + Bearer auth) ✅
 mcos-server       marketplace index (host-side)     (planned, P3)
 ```
@@ -78,7 +79,8 @@ mcos-server       marketplace index (host-side)     (planned, P3)
 | `mcos-llm` | AI 规划/对话、多 Provider 注册中心、语法约束解码、提示注入防护 | ✅ |
 | `mcos-marketplace` | 索引客户端、安装流水线、封禁清单验证、配方商店、依赖解析、用户举报、遥测、安装向导 | ✅ |
 | `mcos-runtime` | 门面（`McosRuntime` builder、确认协调器、运行管理器），组装各子模块 | ✅ |
-| `mcos-android` | Compose CLI / Chat 外壳 | ✅ |
+| `mcos-android-sdk` | 无 UI Android 宿主 SDK：组合根、无头引导、调度/开机接收器、activity-result 与权限桥、动态 `.mcos` 加载——嵌入后自研你的 UI | ✅ |
+| `mcos-android` | 基于 SDK 的 Compose 演示壳（可替换的参考 UI） | ✅ |
 | `mcos-server` | 自托管同步端点：`SyncBlobTransport` REST 契约 + 强制 Bearer token 认证，不透明 blob 存储 | ✅ |
 
 插件在 `plugins/` 下独立构建：`mcos-plugin-hello`、`mcos-plugin-system`、`mcos-plugin-camera`、`mcos-plugin-files`（均带测试）。

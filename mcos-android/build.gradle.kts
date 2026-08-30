@@ -5,7 +5,10 @@ plugins {
 }
 
 android {
-    namespace = "com.morainet.mcos.android"
+    // The demo shell lives in the .demo package; the applicationId stays
+    // com.morainet.mcos.android so install identity and the CI artifact path
+    // are unchanged by the SDK split.
+    namespace = "com.morainet.mcos.android.demo"
     compileSdk = 35
 
     defaultConfig {
@@ -37,6 +40,10 @@ android {
 }
 
 dependencies {
+    // UI-free host runtime (composition root, receivers, host services,
+    // dynamic loading) — everything an integrating app needs; this demo
+    // shell is just one consumer of it.
+    implementation(project(":mcos-android-sdk"))
     // MCOS internal modules
     implementation(project(":mcos-sdk"))
     implementation(project(":mcos-runtime"))
@@ -53,10 +60,6 @@ dependencies {
     // directly; declare the edges instead of relying on transitive api leaks.
     implementation(project(":mcos-runtime-core"))
     implementation(project(":mcos-security"))
-    implementation(project(":plugins:mcos-plugin-hello"))
-    implementation(project(":plugins:mcos-plugin-system"))
-    implementation(project(":plugins:mcos-plugin-camera"))
-    implementation(project(":plugins:mcos-plugin-files"))
     // MCP bridge adapter (02 §12.4 spike): the shell discovers a user-configured
     // MCP server and registers its tools as mcp.* commands via the runtime.
     implementation(project(":plugins:mcos-plugin-mcp"))
@@ -81,4 +84,11 @@ dependencies {
     // Unit tests (McosViewModel — plain JVM, no Robolectric needed)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    // Test fixtures compose custom built-ins lists for CompositionRoot.create
+    // (TestMarketplace / MarketplaceViewModelTest); the demo's own default
+    // built-in set now lives in the SDK module.
+    testImplementation(project(":plugins:mcos-plugin-hello"))
+    testImplementation(project(":plugins:mcos-plugin-system"))
+    testImplementation(project(":plugins:mcos-plugin-camera"))
+    testImplementation(project(":plugins:mcos-plugin-files"))
 }

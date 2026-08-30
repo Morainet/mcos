@@ -1,7 +1,9 @@
-package com.morainet.mcos.android
+package com.morainet.mcos.android.demo
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.morainet.mcos.android.AppDeps
+import com.morainet.mcos.android.PluginPermissionBootstrap
 import com.morainet.mcos.android.host.AndroidLlmHttpTransport
 import com.morainet.mcos.runtime.api.McosRuntime
 import com.morainet.mcos.runtime.core.api.ConfirmationDecision

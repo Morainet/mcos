@@ -1,4 +1,4 @@
-package com.morainet.mcos.android
+package com.morainet.mcos.android.demo
 
 import androidx.lifecycle.viewModelScope
 import com.morainet.mcos.marketplace.RecipePlaceholder

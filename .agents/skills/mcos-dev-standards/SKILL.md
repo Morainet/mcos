@@ -41,7 +41,8 @@ mcos-sdk              叶子模块,无内部依赖
          ├─ mcos-runtime (facade) 依赖 sdk、security、core、marketplace
          ├─ mcos-llm             依赖 sdk、core(经 core.api 的 RuntimeGateway 端口驱动内核,不依赖门面)
          └─ plugins/*                各插件只依赖 sdk
-mcos-android          依赖 sdk、security、core、facade、llm、marketplace、plugins
+mcos-android-sdk      依赖 sdk、security、core、facade、llm、marketplace、内置插件（无 UI 库,禁止 Compose/ViewModel 依赖）
+mcos-android          依赖 android-sdk + sdk、security、core、facade、llm、marketplace、plugin-mcp（Compose 演示壳,包 …android.demo）
 mcos-server           依赖 core（仅 test）
 ```
 
@@ -53,7 +54,8 @@ mcos-server           依赖 core（仅 test）
 - `com.morainet.mcos.llm.*` — LLM 网关与编排
 - `com.morainet.mcos.marketplace.*` — 配方商店、遥测
 - `com.morainet.mcos.plugin.<name>` — 插件模块
-- `com.morainet.mcos.android` — Android 宿主
+- `com.morainet.mcos.android`（含 `host`）— Android 宿主 SDK（mcos-android-sdk）
+- `com.morainet.mcos.android.demo` — Compose 演示壳（mcos-android）
 - `com.morainet.mcos.server` — blob/索引服务
 - 跨模块 split-package 禁止;`runtime.` 前缀仅属运行时内核两模块;新模块必须显式注册根包
 
@@ -118,7 +120,7 @@ sh gradlew :mcos-sdk:test :mcos-security:test :mcos-runtime-core:test \
           :mcos-llm:test :mcos-marketplace:test :mcos-runtime:test
 
 # Android 改动
-sh gradlew :mcos-android:testDebugUnitTest :mcos-android:assembleDebug
+sh gradlew :mcos-android-sdk:testDebugUnitTest :mcos-android:testDebugUnitTest :mcos-android:assembleDebug
 
 # 全量门禁
 sh gradlew build

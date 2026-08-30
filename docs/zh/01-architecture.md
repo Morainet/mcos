@@ -124,7 +124,8 @@ marketplace 等其余模块各自以模块名为根（见 §3.3）。映射由
 | `com.morainet.mcos.llm` | `mcos-llm` | sdk、runtime-core |
 | `com.morainet.mcos.marketplace` | `mcos-marketplace` | sdk、security、runtime-core |
 | `com.morainet.mcos.runtime`（bare）· `com.morainet.mcos.runtime.api`（McosRuntime facade、ConfirmationCoordinator、RunManager） | `mcos-runtime` | sdk、security、runtime-core、marketplace |
-| `com.morainet.mcos.android`（含 `host`） | `mcos-android` | sdk、security、runtime-core、runtime（facade）、llm、marketplace、plugins |
+| `com.morainet.mcos.android`（含 `host`） | `mcos-android-sdk` | sdk、security、runtime-core、runtime（facade）、llm、marketplace、内置插件 |
+| `com.morainet.mcos.android.demo` | `mcos-android`（演示壳 App） | mcos-android-sdk + sdk/security/runtime-core/runtime/llm/marketplace/plugin-mcp 直接边 |
 | `com.morainet.mcos.server` | `mcos-server` | runtime-core（仅 test） |
 | `com.morainet.mcos.plugin.*` | `plugins:mcos-plugin-*` | sdk |
 
@@ -138,7 +139,8 @@ graph LR
   LLM[mcos-llm]
   MKT[mcos-marketplace]
   FACADE[mcos-runtime<br/>facade]
-  AND[mcos-android]
+  ASDK[mcos-android-sdk<br/>宿主 SDK，无 UI]
+  AND[mcos-android<br/>Compose 演示壳]
   SRV[mcos-server]
   PLUGINS[mcos-plugin-*]
 
@@ -154,13 +156,20 @@ graph LR
   FACADE --> SEC
   FACADE --> CORE
   FACADE --> MKT
+  ASDK --> SDK
+  ASDK --> SEC
+  ASDK --> CORE
+  ASDK --> FACADE
+  ASDK --> LLM
+  ASDK --> MKT
+  ASDK --> PLUGINS
+  AND --> ASDK
   AND --> SDK
   AND --> SEC
   AND --> CORE
   AND --> FACADE
   AND --> LLM
   AND --> MKT
-  AND --> PLUGINS
   SRV --> CORE
   PLUGINS --> SDK
 ```
@@ -171,9 +180,11 @@ graph LR
   的 `RuntimeGateway` 端口（`execute()` + `observe()`，门面 `McosRuntime`
   为规范实现）驱动内核——llm 与门面是内核的两个对等客户端，装配发生在
   消费侧（如 `McosViewModel`），模块层面单向无环。
-- `mcos-android` 声明了全部直接边（sdk、security、core、facade、llm、
-  marketplace、plugins），不依赖任何 `api` 透传；`mcos-server` 仅在
-  test 中依赖 core。
+- `mcos-android-sdk` 声明了全部直接边（sdk、security、core、facade、
+  llm、marketplace、内置插件），不依赖任何 `api` 透传；它**不含任何 UI
+  代码**——集成方 App 嵌入它并自研界面，`mcos-android` 是参考 Compose
+  演示壳（仅为其 ViewModel/测试代码用到的模块保留直接边，外加 MCP 适配
+  插件）；`mcos-server` 仅在 test 中依赖 core。
 
 ### 3.3 模块边界规则
 
@@ -298,7 +309,9 @@ EventBus(WiFiConnected{ssid:"Office"})
 
 ## 6. 组件目录
 
-### 6.1 表示层（`mcos-android`）
+### 6.1 表示层（`mcos-android` —— 构建在 `mcos-android-sdk` 上的 Compose 演示壳）
+
+宿主运行时本体位于无 UI 的 `mcos-android-sdk` 库（组合根、接收器、宿主服务）；下表是演示壳可整体替换的 UI 面——集成方 App 保留 SDK、换掉这里的全部实现。
 
 | 模块 | 职责 |
 |--------|----------------|

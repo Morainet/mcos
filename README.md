@@ -18,7 +18,8 @@ The repository now contains a working multi-module Gradle project:
 | `mcos-llm` | AI planner/chat, multi-provider registry, grammar-constrained decoding, prompt-injection guard | ✅ |
 | `mcos-marketplace` | Index client, install pipeline, blocklist verification, recipe store, dependency resolution, user reports, opt-in telemetry, install wizard | ✅ |
 | `mcos-runtime` | Facade (`McosRuntime` builder, confirmation coordinator, run manager) wiring all submodules | ✅ |
-| `mcos-android` | Compose CLI / Chat shell | ✅ |
+| `mcos-android-sdk` | UI-free Android host SDK: composition root, headless bootstrap, schedule/boot receivers, activity-result & permission bridges, dynamic `.mcos` loading — embed and ship your own UI | ✅ |
+| `mcos-android` | Compose demo shell built on the SDK (replaceable reference UI) | ✅ |
 | `mcos-server` | Self-hosted sync endpoint: `SyncBlobTransport` REST contract + mandatory Bearer-token auth, opaque blob store | ✅ |
 
 Plugins are independently buildable in `plugins/`: `mcos-plugin-hello`, `mcos-plugin-system`, `mcos-plugin-camera`, `mcos-plugin-files` (each with tests).
@@ -69,7 +70,8 @@ plugins/
   mcos-plugin-files     file.* / photo.*                      ✅
   mcos-plugin-iot       home.* / iot.*              (planned)
   mcos-plugin-mcp       mcp.* adapter               (planned)
-mcos-android      Compose CLI / Chat shell           ✅
+mcos-android-sdk  UI-free Android host SDK           ✅
+mcos-android      Compose demo shell (on the SDK)    ✅
 mcos-server       Sync endpoint (REST + Bearer auth) ✅
 mcos-server       marketplace index (host-side)     (planned, P3)
 ```

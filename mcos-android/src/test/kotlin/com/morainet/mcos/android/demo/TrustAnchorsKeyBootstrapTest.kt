@@ -1,6 +1,7 @@
-package com.morainet.mcos.android
+package com.morainet.mcos.android.demo
 
 import androidx.lifecycle.viewModelScope
+import com.morainet.mcos.android.TrustAnchors
 import com.morainet.mcos.marketplace.BlocklistVerifier
 import com.morainet.mcos.security.InMemoryPublisherKeyStore
 import com.morainet.mcos.security.KeyStatus

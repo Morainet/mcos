@@ -118,8 +118,9 @@ jobs:
           retention-days: 7
 
   # ── Android app compiles ─────────────────────────────────────────────────
-  # Validates the Compose shell (mcos-android) still builds against the runtime.
-  # Needs the Android SDK, so it is a separate, slower job.
+  # Validates the Android host SDK library (mcos-android-sdk) and the Compose
+  # demo shell (mcos-android) built on top of it. Needs the Android SDK, so it
+  # is a separate, slower job.
   android-build:
     name: Android build (assembleDebug)
     runs-on: ubuntu-latest
@@ -143,7 +144,7 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Unit tests + assemble debug APK
-        run: timeout -k 60s 25m ./gradlew :mcos-android:testDebugUnitTest :mcos-android:assembleDebug --console=plain --no-daemon
+        run: timeout -k 60s 25m ./gradlew :mcos-android-sdk:testDebugUnitTest :mcos-android:testDebugUnitTest :mcos-android:assembleDebug --console=plain --no-daemon
 
       - name: Upload debug APK
         if: ${{ !cancelled() }}

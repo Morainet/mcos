@@ -107,11 +107,13 @@ class MarketplaceDeps(
 )
 
 /**
- * Composition root for the Android demo shell: builds the host services,
+ * Composition root for the Android host runtime: builds the host services,
  * registry, enterprise policy, executor (full production security posture)
- * and the runtime, and collects the built-in plugins. Kept out of
- * [MainActivity] so the wiring is readable and the UI layer holds no
- * construction logic (architecture review #8).
+ * and the runtime, and collects the host's built-in plugins. UI-free by
+ * design — the reference demo shell (and any custom-host app) calls
+ * [create] from its Application and binds the Activity-bound bridges from
+ * its own UI layer (architecture review #8: the UI layer holds no
+ * construction logic).
  */
 object CompositionRoot {
 
@@ -121,7 +123,24 @@ object CompositionRoot {
     /** SecureStore key for the grant/install-record snapshot HMAC seed (separate domain). */
     private const val STATE_HMAC_SEED_KEY = "state_hmac_seed"
 
-    fun create(context: Context): AppDeps {
+    /**
+     * The reference host's default built-in plugin set (hello / system /
+     * camera / files). A custom host passes its own list to [create] — the
+     * marketplace factory dispatch (curated ids → local implementations) is
+     * built from whatever lands here.
+     */
+    fun defaultBuiltIns(): List<McosPlugin> = listOf(
+        HelloPlugin(), SystemPlugin(), CameraPlugin(), FilesPlugin(),
+    )
+
+    /**
+     * Build the process-lifetime [AppDeps].
+     *
+     * @param context any Context; the application context is extracted.
+     * @param builtIns plugins that ship inside the host app at BUILTIN trust
+     *   (defaults to the reference set — inject your own catalog instead).
+     */
+    fun create(context: Context, builtIns: List<McosPlugin> = defaultBuiltIns()): AppDeps {
         val appContext = context.applicationContext
         val resultBridge = ActivityResultBridge()
         // In-app runtime-permission prompts (04 §6.3): attached by the Compose
@@ -231,11 +250,12 @@ object CompositionRoot {
         val authStampSigner = HmacAuthStampSigner()
 
         // Built-in plugins ship with the app at BUILTIN trust level with no
-        // install step, so their declared permissions are granted up front
-        // (PluginPermissionBootstrap documents the consent-model trade-off).
-        // First-use confirmation dialogs still apply — this only clears the
-        // Stage-6 hard permission gate.
-        val plugins = listOf(HelloPlugin(), SystemPlugin(), CameraPlugin(), FilesPlugin())
+        // install step (the host-injected [builtIns] list — the reference
+        // default is the hello/system/camera/files set), so their declared
+        // permissions are granted up front (PluginPermissionBootstrap
+        // documents the consent-model trade-off). First-use confirmation
+        // dialogs still apply — this only clears the Stage-6 hard gate.
+        val plugins = builtIns
         plugins.forEach { PluginPermissionBootstrap.grantAll(permissionKernel, it) }
 
         // One system EventBus shared by the runtime (run events) and the

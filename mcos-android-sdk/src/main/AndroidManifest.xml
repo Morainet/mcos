@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Host-runtime permissions, merged into the consuming app. sys.vibrate /
+         sys.device.* are normal or special-access permissions; runtime grants
+         are prompted in-app on demand (RuntimePermissionBridge, 04 §6.3) and
+         WRITE_SETTINGS deep-links the special-access screen; headless runs
+         degrade honestly when ungranted. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.WRITE_SETTINGS" />
+    <!-- Normal install-time permission: ConnectivityManager state for
+         sys.device.wifi's connected check. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Durable schedule hosting (10 §6): exact AlarmManager wakes at cron
+         boundaries so schedules fire while backgrounded or in Doze. The
+         AlarmManagerWakeScheduler falls back to an inexact-while-idle alarm
+         when exact alarms aren't permitted. RECEIVE_BOOT_COMPLETED re-arms
+         after reboot. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <application>
+        <!-- Durable schedule wake target (10 §6): the AlarmManager alarm fires
+             here and the receiver drives McosRuntime.driveScheduleTick(). Not
+             exported — only our own PendingIntent triggers it. -->
+        <receiver
+            android:name=".ScheduleAlarmReceiver"
+            android:exported="false" />
+
+        <!-- Re-arm schedules after reboot (10 §6). Exported so the system can
+             deliver BOOT_COMPLETED; the host app's Application (implementing
+             McosHostApp) does the re-arm, this receiver just holds the process
+             alive until it finishes. -->
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Camera capture / media compress share URIs through the app's
+             FileProvider. The ${applicationId} placeholder resolves to the
+             CONSUMING app's id at manifest-merge time, matching the
+             runtime authority built from context.packageName in
+             AndroidHostServices. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+    </application>
+</manifest>

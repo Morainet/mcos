@@ -124,7 +124,8 @@ rest root at their module names (see §3.3). The mapping is enforced by
 | `com.morainet.mcos.llm` | `mcos-llm` | sdk, runtime-core |
 | `com.morainet.mcos.marketplace` | `mcos-marketplace` | sdk, security, runtime-core |
 | `com.morainet.mcos.runtime` (bare) · `com.morainet.mcos.runtime.api` (McosRuntime facade, ConfirmationCoordinator, RunManager) | `mcos-runtime` | sdk, security, runtime-core, marketplace |
-| `com.morainet.mcos.android` (+ `host`) | `mcos-android` | sdk, security, runtime-core, runtime (facade), llm, marketplace, plugins |
+| `com.morainet.mcos.android` (+ `host`) | `mcos-android-sdk` | sdk, security, runtime-core, runtime (facade), llm, marketplace, built-in plugins |
+| `com.morainet.mcos.android.demo` | `mcos-android` (demo shell app) | mcos-android-sdk + direct sdk/security/runtime-core/runtime/llm/marketplace/plugin-mcp edges |
 | `com.morainet.mcos.server` | `mcos-server` | runtime-core (test only) |
 | `com.morainet.mcos.plugin.*` | `plugins:mcos-plugin-*` | sdk |
 
@@ -138,7 +139,8 @@ graph LR
   LLM[mcos-llm]
   MKT[mcos-marketplace]
   FACADE[mcos-runtime<br/>facade]
-  AND[mcos-android]
+  ASDK[mcos-android-sdk<br/>host SDK, UI-free]
+  AND[mcos-android<br/>Compose demo shell]
   SRV[mcos-server]
   PLUGINS[mcos-plugin-*]
 
@@ -154,13 +156,20 @@ graph LR
   FACADE --> SEC
   FACADE --> CORE
   FACADE --> MKT
+  ASDK --> SDK
+  ASDK --> SEC
+  ASDK --> CORE
+  ASDK --> FACADE
+  ASDK --> LLM
+  ASDK --> MKT
+  ASDK --> PLUGINS
+  AND --> ASDK
   AND --> SDK
   AND --> SEC
   AND --> CORE
   AND --> FACADE
   AND --> LLM
   AND --> MKT
-  AND --> PLUGINS
   SRV --> CORE
   PLUGINS --> SDK
 ```
@@ -173,9 +182,12 @@ Notable edges:
   `McosRuntime`) — llm and the facade are sibling clients of the kernel, wired
   together at the consumer (e.g. `McosViewModel`). The module graph stays
   acyclic.
-- `mcos-android` declares every edge directly (sdk, security, core, facade,
-  llm, marketplace, plugins) and relies on no `api` re-exports; `mcos-server`
-  depends on core in tests only.
+- `mcos-android-sdk` declares every edge directly (sdk, security, core,
+  facade, llm, marketplace, built-in plugins) and relies on no `api`
+  re-exports; it contains **no UI code** — an integrating app embeds it and
+  ships its own interface, while `mcos-android` is the reference Compose demo
+  shell (direct edges only for what its ViewModel/test code touches, plus the
+  MCP adapter plugin); `mcos-server` depends on core in tests only.
 
 ### 3.3 Module-boundary rules
 
@@ -305,7 +317,9 @@ Events never bypass Permission Kernel. Event→action rules containing `control`
 
 ## 6. Component Catalog
 
-### 6.1 Presentation (`mcos-android`)
+### 6.1 Presentation (`mcos-android` — Compose demo shell on `mcos-android-sdk`)
+
+The host runtime itself lives in the UI-free `mcos-android-sdk` library (composition root, receivers, host services); the table below is the demo shell's replaceable UI surface — an integrating app keeps the SDK and swaps all of this.
 
 | Module | Responsibility |
 |--------|----------------|

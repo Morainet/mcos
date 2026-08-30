@@ -1,4 +1,4 @@
-package com.morainet.mcos.android
+package com.morainet.mcos.android.demo
 
 import com.morainet.mcos.android.host.InMemoryFacade
 import com.morainet.mcos.runtime.core.api.StubHostServices

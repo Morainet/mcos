@@ -1,4 +1,4 @@
-package com.morainet.mcos.android
+package com.morainet.mcos.android.demo
 
 import android.Manifest
 import android.os.Build
@@ -31,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.morainet.mcos.android.AppDeps
 import com.morainet.mcos.marketplace.PackageMetadata
 
 /**
