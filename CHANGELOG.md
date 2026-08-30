@@ -10,6 +10,18 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### Process isolation — AuthStamp facade scope gate (2026-08-30)
+
+The confused-deputy defense (08 §8.2, slice 2 of 3): Stage 6.5 egress only walks the command's *argument* tree, so a handler could otherwise open any connection from inside its own code through `ctx.services.net` — a read-class command exfiltrating data, invisible to the argument walk.
+
+- **Gate** — `executor/StampScopedNetService` wraps the Stage-4 `NetService` for every **non-`BUILTIN`** plugin (§8.2 governs calls arriving from plugin processes; `BUILTIN` is platform code per §7.2) and runs the JVM-enforceable §8.2 subset per call: stamp presence (`stamp_missing`) → signature verify via the configured signer (`stamp_signature_invalid`; only the named `TrustingAuthStampSigner` waives) → TTL (`stamp_expired`) → **scope match**: `grantsUsed` must contain a `network.<domain>` scope glob-matching the URL host (`stamp_scope_mismatch` — scope-based, not class-based). A denial throws `McosException(PERMISSION_DENIED, details.reason=…)` → mapped to `CommandResult.Err` + the Stage-10 audit step; the request never leaves the runtime.
+- **Single source of truth** — host→scope matching (`extractHost`/`globMatch`, incl. IDN/Punycode hardening) moved from `ScopeBasedEgressPolicy` internals to the public `security/DomainGlob`; the policy now delegates, so Stage 6.5 (argument URLs) and the facade gate (handler-internal URLs) can never drift.
+- **Wiring** — `Executor.stage4Services` builds the facade **lazily per member access** (a stub host whose `net` getter throws must only fail when a handler actually touches it) and layers the gate outermost — scope is judged before any `SecureStore` read, with `{{secret.*}}` resolution (§9.2) and sandbox namespacing (§6.1) composing inside it.
+- **Permissive posture holds** — `PermissivePermissionKernel` deliberately mints no `network.*` implicit scope, so even `SecurityConfig.permissive()` denies handler-internal egress at the gate — consistent with the egress default-deny.
+- **🟡 Honest boundary** — in-process, a plugin can still bypass the facade with its own HTTP client (the documented 08 §12 MVP limitation); the gate is the structural seam the Android slice-3 host reuses on the main-process side of the Binder facade. `command.*`-scope checks for file ops await grant-model extension; Binder caller-UID checks (§8.2 step 1) are the Android slice.
+- **Tests** — +13: `ScopedFacadeTest` SF1-SF13 (gate in isolation + through the Executor E2E). Total 1193 (1248 executions incl. Android debug+release), 0 failures.
+- **Docs** — `08-security` §8.2 as-built note (en/zh); `11-implementation-status` item 37 (en/zh), process-isolation matrix rows, test baseline re-measured.
+
 ### Durable schedule hosting — headless process runtime + boot re-arm (2026-08-27)
 
 A schedule alarm (or reboot) that cold-starts the process now fires with no Activity open (05 §9.3 / 10 §6, part 3).

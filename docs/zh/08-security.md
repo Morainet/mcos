@@ -681,6 +681,8 @@ flowchart TB
 2. **`AuthStamp` 存在性** ——调用携带当前 `ExecutionContext` 的 `AuthStamp`。门面验证戳的签名（运行时 Keystore 密钥）以及 `stamp.grantsUsed` 是否包含所请求 OS 调用所需的作用域。
 3. **作用域匹配** ——`NetService.connect(url)` 检查 `stamp.grantsUsed` 是否包含与 URL 主机匹配的 `network.<domain>` 作用域。`FileService.delete(uri)` 检查 `stamp.grantsUsed` 是否包含目标命令对应的作用域（如 `command.files.delete`）。检查是**基于作用域的，不是基于类别的**——授权模型（[§5.0](#50-normative-types)）中不存在"destructive 类授权"这种东西；授权始终是按命令/按作用域的。不匹配 → `PERMISSION_DENIED`，`details.reason = "stamp_scope_mismatch"`。
 
+> **As-built（item 37，切片 2/3）：** 检查 2–3 已在 JVM runtime 落地为 `StampScopedNetService`——交给每个非 `BUILTIN` 插件的 Stage-4 `NetService` 会在任何请求离开 runtime 之前校验 stamp 存在性、签名（经配置的 signer；仅具名的 `TrustingAuthStampSigner` 可豁免）、TTL 与 `network.<domain>` 作用域——匹配走共享的 `DomainGlob`，与 Stage 6.5 egress 匹配逐字节一致。拒绝以 `PERMISSION_DENIED` 呈现，`details.reason` 为 `stamp_scope_mismatch`（或 `stamp_missing` / `stamp_signature_invalid` / `stamp_expired` / `invalid_url`），并落入 Stage-10 审计步骤。检查 1（Binder 调用方 UID）待 Android bound-service 切片；`FileService` 的 `command.*` 作用域待授权模型扩展（内核目前不铸造 `command.*` 作用域）。在进程边界存在之前，进程内插件仍可用自己的 HTTP 客户端绕过门面（[§12](#12-network-egress-control) MVP 限制）——本门禁正是 Android 切片在 Binder 门面主进程侧复用的那条缝。
+
 ### 8.3 受限的 `HostServices`
 
 不可信插件永远不会收到原始的 `android.content.Context`。`HostServices` 接口（[04 §6](./04-plugin-sdk.md)）是一个 **狭窄的门面**，仅暴露：

@@ -12,6 +12,7 @@ import com.morainet.mcos.security.EgressDecision
 import com.morainet.mcos.security.RateLimitResult
 import com.morainet.mcos.security.SecurityConfig
 import com.morainet.mcos.security.SecretResolver
+import com.morainet.mcos.security.TrustLevel
 import com.morainet.mcos.security.validate.SchemaValidator
 import com.morainet.mcos.security.validate.ValidationError as ValError
 import com.morainet.mcos.security.validate.ValidationResult
@@ -321,8 +322,11 @@ class Executor(
                 // Stage 4 (Expand) — `{{secret.*}}` templates (08-security.md §9.2)
                 // are resolved by the per-plugin NetService decorator; args keep
                 // the template form and values never enter the audit trail.
-                // The sandbox is namespaced per executing plugin (04 §6.1).
-                services = secretResolvingServices(entry.descriptor.pluginId),
+                // The sandbox is namespaced per executing plugin (04 §6.1), and
+                // non-BUILTIN plugins additionally pass the AuthStamp scope
+                // gate on facade network calls (08 §8.2, confused-deputy
+                // defense) — see [stage4Services].
+                services = stage4Services(entry, boundAuth),
             )
             return entry.handler.invoke(ctx)
         }
@@ -445,19 +449,43 @@ class Executor(
     // ─── Secret resolution (§9.2) ───────────────────────────────────────
 
     /**
-     * Per-plugin [HostServices] facade whose [NetService] resolves
-     * `{{secret.<key>}}` templates (08-security.md §9.2) from the plugin's
-     * scoped [SecureStore] before the request leaves the runtime, and whose
-     * [SandboxFileService] is namespaced to the executing plugin
-     * (04-plugin-sdk.md 6.1 — one plugin cannot address another's files).
-     * All other services are delegated unchanged, and the resolved value is
-     * never written back into ExecutionContext.args.
+     * Per-plugin Stage-4 [HostServices] facade. Three decorations, innermost
+     * first:
+     *
+     * 1. **Secret resolution** — the [NetService] resolves `{{secret.<key>}}`
+     *    templates (08-security.md §9.2) from the plugin's scoped
+     *    [SecureStore] before the request leaves the runtime; the resolved
+     *    value is never written back into ExecutionContext.args.
+     * 2. **Sandbox namespacing** — [SandboxFileService] is rooted at the
+     *    executing plugin's namespace (04-plugin-sdk.md 6.1 — one plugin
+     *    cannot address another's files).
+     * 3. **AuthStamp scope gate** (non-`BUILTIN` only) — [StampScopedNetService]
+     *    sits outermost and verifies the run's stamp before any facade network
+     *    call: a handler-internal request is judged against
+     *    `stamp.grantsUsed`'s `network.<domain>` scopes, closing the
+     *    confused-deputy hole Stage 6.5's argument-tree walk cannot see
+     *    (08-security.md §8.2). `BUILTIN` plugins are platform code (§7.2)
+     *    and are not gated.
+     *
+     * All other services are delegated unchanged.
      */
-    private fun secretResolvingServices(pluginId: String): HostServices {
+    private fun stage4Services(entry: RegistryEntry, auth: AuthStamp?): HostServices {
         val original = hostServices
+        val pluginId = entry.descriptor.pluginId
         return object : HostServices {
+            // Built lazily per access — a host whose services are stubs that
+            // throw on property access (StubHostServices) must only fail when
+            // a handler actually touches the facade member.
+            override val net: NetService
+                get() {
+                    val resolving = SecretResolvingNetService(original.net, original.secureStore)
+                    return if (entry.trustLevel == TrustLevel.BUILTIN) {
+                        resolving
+                    } else {
+                        StampScopedNetService(resolving, auth, security.signer)
+                    }
+                }
             override val files: FileService get() = original.files
-            override val net: NetService get() = SecretResolvingNetService(original.net, original.secureStore)
             override val ui: UiService get() = original.ui
             override val secureStore: SecureStore get() = original.secureStore
             override val clock: Clock get() = original.clock
