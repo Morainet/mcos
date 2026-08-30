@@ -91,6 +91,15 @@ fun MCOSApp(deps: AppDeps) {
         permissionLauncher.launch(needed.toTypedArray())
     }
 
+    // On-demand runtime-permission prompts (04 §6.3): a handler that hits a
+    // missing runtime grant (e.g. sys.device.location) prompts in-app through
+    // the bridge instead of pointing the user at system settings. Headless
+    // runs never attach a prompter; the command degrades honestly.
+    val promptLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted -> deps.permissionBridge.onResult(granted) }
+    LaunchedEffect(promptLauncher) { deps.permissionBridge.attach { promptLauncher.launch(it) } }
+
     McosTheme {
         Scaffold(
             topBar = {

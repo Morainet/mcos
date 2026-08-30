@@ -31,6 +31,7 @@ import java.util.concurrent.atomic.AtomicInteger
 class AndroidHostServices(
     context: Context,
     private val resultBridge: ActivityResultBridge,
+    private val permissionBridge: RuntimePermissionBridge,
 ) : HostServices {
 
     override val files: FileService = AndroidFileService(context)
@@ -47,7 +48,8 @@ class AndroidHostServices(
     override val memory: MemoryFacade = InMemoryFacade()
     override val notifications: NotificationService = AndroidNotificationService(context)
     override val media: MediaService = AndroidMediaService(context)
-    override val deviceInfo: DeviceInfoService = AndroidDeviceInfoService(context)
+    override val deviceInfo: DeviceInfoService =
+        AndroidDeviceInfoService(context, permissionBridge, resultBridge)
     override val clipboard: ClipboardService = AndroidClipboardService(context)
     override val haptics: HapticsService = AndroidHapticsService(context)
 
@@ -394,7 +396,11 @@ class AndroidMediaService(private val context: Context) : MediaService {
  * states that are genuine device states (no location fix) surface as such
  * rather than as errors.
  */
-class AndroidDeviceInfoService(private val context: Context) : DeviceInfoService {
+class AndroidDeviceInfoService(
+    private val context: Context,
+    private val permissionBridge: RuntimePermissionBridge,
+    private val resultBridge: ActivityResultBridge,
+) : DeviceInfoService {
 
     private companion object {
         // Settings.System.BRIGHTNESS_MODE_OFF/AUTOMATIC are @hide in the
@@ -484,16 +490,25 @@ class AndroidDeviceInfoService(private val context: Context) : DeviceInfoService
     }
 
     override suspend fun location(): LocationInfo? {
-        // No runtime grant (the demo declares the permission but has no
-        // requestPermissions flow yet) — surface the real blocker instead
-        // of silently reporting "no fix".
         if (context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) !=
             PackageManager.PERMISSION_GRANTED
         ) {
-            throw com.morainet.mcos.sdk.McosException(
-                "PERMISSION_DENIED",
-                "Location requires the ACCESS_FINE_LOCATION runtime grant — grant it for MCOS in system settings"
-            )
+            // In-app runtime-permission prompt (04 §6.3): ask once instead of
+            // sending the user to system settings. null = no Activity (a
+            // headless schedule run) or another prompt in flight — surface
+            // the real blocker instead of silently reporting "no fix".
+            val granted = permissionBridge.request(Manifest.permission.ACCESS_FINE_LOCATION)
+            if (granted != true) {
+                throw com.morainet.mcos.sdk.McosException(
+                    "PERMISSION_DENIED",
+                    if (granted == false) {
+                        "Location permission was denied"
+                    } else {
+                        "Location requires the ACCESS_FINE_LOCATION runtime grant — no prompt " +
+                            "possible right now (headless run or dialog busy); grant it for MCOS in system settings"
+                    }
+                )
+            }
         }
         val lm = context.getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager
         val last = try {
@@ -521,14 +536,29 @@ class AndroidDeviceInfoService(private val context: Context) : DeviceInfoService
     }
 
     override suspend fun setBrightness(level: Int) {
-        // WRITE_SETTINGS is a special-access permission: the user must flip
-        // "Modify system settings" for the app. Without it the write would
-        // silently fail — surface the real blocker instead.
+        // WRITE_SETTINGS is special access: there is no requestPermissions
+        // dialog for it — the user must flip "Modify system settings" for
+        // the app. Deep-link the exact screen via the activity-result bridge
+        // and re-check on return; without the grant the write would
+        // silently fail, so surface the real blocker either way.
         if (!android.provider.Settings.System.canWrite(context)) {
-            throw com.morainet.mcos.sdk.McosException(
-                "PERMISSION_DENIED",
-                "Setting brightness requires WRITE_SETTINGS — enable 'Modify system settings' for MCOS in system settings"
+            val returned = resultBridge.launch(
+                Intent(
+                    android.provider.Settings.ACTION_MANAGE_WRITE_SETTINGS,
+                    Uri.parse("package:${context.packageName}"),
+                )
             )
+            if (returned == null || !android.provider.Settings.System.canWrite(context)) {
+                throw com.morainet.mcos.sdk.McosException(
+                    "PERMISSION_DENIED",
+                    if (returned == null) {
+                        "Setting brightness requires WRITE_SETTINGS — enable 'Modify system settings' for MCOS in system settings"
+                    } else {
+                        "Brightness is still not writable — flip 'Modify system settings' for MCOS " +
+                            "in the special-access screen and retry"
+                    }
+                )
+            }
         }
         android.provider.Settings.System.putInt(
             context.contentResolver,

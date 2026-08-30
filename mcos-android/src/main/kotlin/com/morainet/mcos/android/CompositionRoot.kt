@@ -5,6 +5,7 @@ import com.morainet.mcos.android.host.ActivityResultBridge
 import com.morainet.mcos.android.host.AndroidHostServices
 import com.morainet.mcos.android.host.AndroidMarketplaceHttpTransport
 import com.morainet.mcos.android.host.AndroidSecureStore
+import com.morainet.mcos.android.host.RuntimePermissionBridge
 import com.morainet.mcos.plugin.camera.CameraPlugin
 import com.morainet.mcos.plugin.files.FilesPlugin
 import com.morainet.mcos.plugin.hello.HelloPlugin
@@ -52,10 +53,12 @@ import java.security.SecureRandom
  * application [Context] (durable schedule hosting, 10 §6): a broadcast receiver
  * that cold-starts the process (an AlarmManager wake, or BOOT_COMPLETED) needs
  * a live runtime with no Activity present. [AndroidHostServices] reaches Android
- * APIs through the application context; the only Activity-bound capability,
- * [ActivityResultBridge] (camera capture's activity-result launcher), is
- * re-attached by the Compose layer on each Activity create and returns null
- * (UNAVAILABLE) while no Activity is registered.
+ * APIs through the application context; the Activity-bound capabilities,
+ * [ActivityResultBridge] (camera capture's activity-result launcher, and the
+ * WRITE_SETTINGS special-access deep-link) and [RuntimePermissionBridge]
+ * (in-app runtime-permission prompts, 04 §6.3), are re-attached by the Compose
+ * layer on each Activity create and return null / deny honestly while no
+ * Activity is registered.
  *
  * A configuration change reuses this same [AppDeps] (the [McosViewModel]
  * re-attaches via [McosViewModel.attach]); the runtime and its registry now
@@ -72,6 +75,8 @@ class AppDeps(
     val registry: CommandRegistry,
     val plugins: List<McosPlugin>,
     val resultBridge: ActivityResultBridge,
+    /** In-app runtime-permission prompts (04 §6.3); Activity-bound like the result bridge. */
+    val permissionBridge: RuntimePermissionBridge,
     val secureStore: SecureStore,
     val marketplace: MarketplaceDeps,
     val auditLog: AuditLog,
@@ -119,7 +124,11 @@ object CompositionRoot {
     fun create(context: Context): AppDeps {
         val appContext = context.applicationContext
         val resultBridge = ActivityResultBridge()
-        val hostServices = AndroidHostServices(appContext, resultBridge)
+        // In-app runtime-permission prompts (04 §6.3): attached by the Compose
+        // layer per Activity; a headless run (schedule alarm / boot) sees null
+        // from request() and the command degrades honestly.
+        val permissionBridge = RuntimePermissionBridge()
+        val hostServices = AndroidHostServices(appContext, resultBridge, permissionBridge)
         val secureStore = AndroidSecureStore(appContext)
         val registry = CommandRegistry()
 
@@ -288,6 +297,7 @@ object CompositionRoot {
             registry = registry,
             plugins = plugins,
             resultBridge = resultBridge,
+            permissionBridge = permissionBridge,
             secureStore = secureStore,
             marketplace = marketplace,
             auditLog = auditLog,

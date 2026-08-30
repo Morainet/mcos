@@ -10,6 +10,17 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### Host capability — in-app runtime-permission prompt flow (2026-08-30)
+
+The 🟡 gap 04 §6.8 documented ("no in-app `requestPermissions` flow — ungranted states point the user at system settings") closes for runtime grants: a command hitting a missing grant now prompts in-app instead of bouncing the user to settings.
+
+- **Seam** — `host/RuntimePermissionBridge` mirrors `ActivityResultBridge`: the Compose side attaches a `Prompter` (an adapter over a `RequestPermission()` launcher) and forwards the callback; the service side suspends in `request(permission)`. The launcher reaches the bridge only through the fun interface, so the bridge is pure Kotlin and JVM-unit-testable. One dialog at a time: a concurrent second `request` returns null immediately instead of clobbering the first awaiter.
+- **Wiring** — `CompositionRoot` builds the bridge next to `resultBridge` and passes it (plus the result bridge) into `AndroidDeviceInfoService`; `AppDeps` exposes it; `McosApp` registers the prompt launcher and re-attaches per Activity, exactly like the camera launcher.
+- **Behavior** — `location()`: first miss prompts; deny → `PERMISSION_DENIED "Location permission was denied"`; null (no Activity — headless schedule run, or dialog busy) → the old actionable message. `setBrightness()`: WRITE_SETTINGS is special access (no requestPermissions dialog exists) — deep-links the app's exact "Modify system settings" screen via the existing `ActivityResultBridge`, re-checks `canWrite` on return, and throws the honest `PERMISSION_DENIED` when still not writable or headless. The startup request for POST_NOTIFICATIONS/READ_MEDIA_IMAGES stays.
+- **🟡 Honest boundary** — headless runs can't prompt (same boundary as item 35) and still point at system settings; the framework calls in `AndroidDeviceInfoService` remain un-JVM-tested — the bridge is the tested seam, the actual dialogs need on-device verification.
+- **Tests** — +8: `RuntimePermissionBridgeTest` RP1-RP8. Total 1201 (1264 executions incl. Android debug+release), 0 failures.
+- **Docs** — `04-plugin-sdk` §6.8 Android-constraints paragraph (en/zh); `11-implementation-status` item 38 (en/zh) + baseline re-measured; manifest comment.
+
 ### Process isolation — AuthStamp facade scope gate (2026-08-30)
 
 The confused-deputy defense (08 §8.2, slice 2 of 3): Stage 6.5 egress only walks the command's *argument* tree, so a handler could otherwise open any connection from inside its own code through `ctx.services.net` — a read-class command exfiltrating data, invisible to the argument walk.

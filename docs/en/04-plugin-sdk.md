@@ -515,7 +515,7 @@ interface DeviceInfoService {
 }
 ```
 
-Android permission constraints and degradation semantics: SSID/RSSI require the `ACCESS_FINE_LOCATION` runtime grant — without it `wifi()` returns `connected=true, ssid=null, strength=null`; `location()` throws an actionable `PERMISSION_DENIED` without the grant, and returns `null` (→ `{"status":"no_fix","location":null}`) when granted but no fix exists; `setBrightness` requires the WRITE_SETTINGS special access ("Modify system settings" in system settings) and throws `PERMISSION_DENIED` without it. There is currently **no in-app `requestPermissions` flow** (🟡 see 11) — ungranted states are reported honestly and the user is pointed to system settings.
+Android permission constraints and degradation semantics: SSID/RSSI require the `ACCESS_FINE_LOCATION` runtime grant — without it `wifi()` returns `connected=true, ssid=null, strength=null`; `location()` prompts in-app for the grant on first miss (`RuntimePermissionBridge`, item 38) and throws an actionable `PERMISSION_DENIED` when the user denies or no Activity is registered (a headless schedule run), returning `null` (→ `{"status":"no_fix","location":null}`) when granted but no fix exists; `setBrightness` requires the WRITE_SETTINGS special access (there is no `requestPermissions` dialog for special-access grants) — on first miss it deep-links the app's "Modify system settings" screen via the activity-result bridge, re-checks on return, and throws `PERMISSION_DENIED` when still not writable or no Activity is registered. Ungranted states are always reported honestly; only headless runs point the user at system settings.
 
 ### 6.9 `ClipboardService` — Clipboard (added in v0.x)
 

@@ -517,7 +517,7 @@ interface DeviceInfoService {
 }
 ```
 
-Android 权限约束与降级语义：`wifi` 的 SSID/RSSI 需要 `ACCESS_FINE_LOCATION` 运行时授权，缺失时返回 `connected=true, ssid=null, strength=null`；`location` 需要 `ACCESS_FINE_LOCATION`，未授权时抛 `PERMISSION_DENIED`（附可操作的提示），授权但无定位结果返回 `null` → 命令输出 `{"status":"no_fix","location":null}`；`setBrightness` 需要 WRITE_SETTINGS 特殊授权（系统设置中「修改系统设置」开关），缺失时抛 `PERMISSION_DENIED`。本项目当前**没有应用内 `requestPermissions` 引导流**（🟡 见 11）——未授权状态由命令如实报错，引导用户去系统设置。
+Android 权限约束与降级语义：`wifi` 的 SSID/RSSI 需要 `ACCESS_FINE_LOCATION` 运行时授权，缺失时返回 `connected=true, ssid=null, strength=null`；`location` 需要 `ACCESS_FINE_LOCATION`，首次缺失时在应用内弹窗请求（`RuntimePermissionBridge`，item 38），用户拒绝或无 Activity（headless 调度运行）时抛 `PERMISSION_DENIED`（附可操作的提示），授权但无定位结果返回 `null` → 命令输出 `{"status":"no_fix","location":null}`；`setBrightness` 需要 WRITE_SETTINGS 特殊授权（特殊授权没有 `requestPermissions` 对话框）——首次缺失时经 activity-result 桥直接深链到本应用的「修改系统设置」页面，返回后复查，仍不可写或无 Activity 时抛 `PERMISSION_DENIED`。未授权状态始终如实报错；只有 headless 运行才引导用户去系统设置。
 
 ### 6.9 `ClipboardService` —— 剪贴板（v0.x 增补）
 

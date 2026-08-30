@@ -2,6 +2,7 @@ package com.morainet.mcos.android
 
 import com.morainet.mcos.android.host.ActivityResultBridge
 import com.morainet.mcos.android.host.InMemoryFacade
+import com.morainet.mcos.android.host.RuntimePermissionBridge
 import com.morainet.mcos.plugin.hello.HelloPlugin
 import com.morainet.mcos.runtime.api.McosRuntime
 import com.morainet.mcos.runtime.core.api.StubHostServices
@@ -277,6 +278,9 @@ object TestMarketplace {
             registry = registry,
             plugins = listOf(HelloPlugin()),
             resultBridge = ActivityResultBridge(),
+            // No prompter attached — commands degrade honestly, same as a
+            // headless run.
+            permissionBridge = RuntimePermissionBridge(),
             secureStore = secureStore,
             // Tests stay decoupled from the audit trail (demo-shell wiring
             // uses FileAuditLog; the fixture takes the named no-op).

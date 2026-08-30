@@ -7,9 +7,10 @@
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- sys.vibrate / sys.device.* — normal or special-access permissions; the
-         runtime grant is requested on-device (no in-app requestPermissions flow
-         yet, commands degrade honestly when ungranted). -->
+    <!-- sys.vibrate / sys.device.* — normal or special-access permissions;
+         runtime grants are prompted in-app on demand (RuntimePermissionBridge,
+         04 §6.3) and WRITE_SETTINGS deep-links the special-access screen;
+         headless runs degrade honestly when ungranted. -->
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
