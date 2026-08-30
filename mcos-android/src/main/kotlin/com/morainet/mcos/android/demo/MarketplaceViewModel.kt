@@ -4,8 +4,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.morainet.mcos.android.AppDeps
 import com.morainet.mcos.android.MarketplacePluginFactory
+import com.morainet.mcos.android.MarketplaceTrust
 import com.morainet.mcos.android.PluginPermissionBootstrap
 import com.morainet.mcos.android.RuntimeBootstrap
+import com.morainet.mcos.android.TriggerMaintenance
 import com.morainet.mcos.marketplace.InstallProgress
 import com.morainet.mcos.marketplace.InstallResult
 import com.morainet.mcos.marketplace.InstallState
@@ -18,11 +20,9 @@ import com.morainet.mcos.marketplace.RecipeInstallOutcome
 import com.morainet.mcos.marketplace.RecipeInstallPlan
 import com.morainet.mcos.marketplace.UninstallResult
 import com.morainet.mcos.marketplace.UpdateResult
-import com.morainet.mcos.runtime.core.registry.ResolveResult
 import com.morainet.mcos.runtime.core.workflow.Trigger
 import com.morainet.mcos.runtime.core.workflow.TriggerArmResult
 import com.morainet.mcos.runtime.core.workflow.WorkflowJson
-import com.morainet.mcos.runtime.core.workflow.WorkflowStep
 import com.morainet.mcos.sdk.McosPlugin
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -235,30 +235,24 @@ class MarketplaceViewModel : ViewModel() {
     // ── key trust (§6.3 revocation) ─────────────────────────────────────
 
     /**
-     * Best-effort §6.3 revocation refresh: pull `/v1/keys/revoked` and mark
-     * matching keys REVOKED in the shared publisher key store, so later
-     * installs (and restart rehydration re-verification) reject artifacts
-     * signed by a revoked key. The revoked list is process-cached by
-     * [MarketplaceIndex], so repeated calls are cheap. Fires from search;
-     * failures are swallowed — trust refresh must not block browsing.
+     * Best-effort §6.3 revocation refresh via the SDK helper: pull
+     * `/v1/keys/revoked` and mark matching keys REVOKED in the shared
+     * publisher key store, so later installs (and restart rehydration
+     * re-verification) reject artifacts signed by a revoked key. Fires from
+     * search; failures are swallowed inside the helper — trust refresh must
+     * not block browsing.
      */
     fun refreshKeyTrust() {
         val url = _uiState.value.baseUrl.trim().trimEnd('/')
         if (url.isBlank()) return
         viewModelScope.launch {
-            val d = deps()
-            val index = MarketplaceIndex(
+            val m = deps().marketplace
+            MarketplaceTrust.refreshRevokedKeys(
                 baseUrl = url,
-                transport = d.marketplace.transport,
-                blocklistVerifier = d.marketplace.blocklistVerifier,
+                transport = m.transport,
+                blocklistVerifier = m.blocklistVerifier,
+                keyStore = m.keyStore,
             )
-            try {
-                val revoked = index.fetchRevokedKeys()
-                if (revoked.isNotEmpty()) d.marketplace.keyStore.applyRevoked(revoked)
-            } catch (_: Exception) {
-                // Best-effort; the marketplace being unreachable must not block
-                // search. A cached revocation stays applied (stale-ok, §6.3).
-            }
         }
     }
 
@@ -583,47 +577,14 @@ class MarketplaceViewModel : ViewModel() {
 
     // ── helpers ──────────────────────────────────────────────────────────
 
-    /**
-     * Run onLoad and grant the plugin's declared permissions. The loader
-     * registers commands but does not call onLoad, and the consent moment
-     * (install dialog / update diff) already happened — so grant here so the
-     * commands clear the Stage-6 hard gate.
-     */
+    /** SDK helper: onLoad + grant declared permissions (consent already happened). */
     private suspend fun activatePlugin(d: AppDeps, instance: McosPlugin?) {
-        instance?.onLoad(d.hostServices)
-        instance?.let { PluginPermissionBootstrap.grantAll(d.permissionKernel, it) }
+        instance?.let { PluginPermissionBootstrap.activate(it, d.hostServices, d.permissionKernel) }
     }
 
-    /**
-     * Disarm armed triggers whose workflow depends on commands that no longer
-     * resolve in the registry (the uninstalled package provided them), or
-     * whose spec vanished from the store. Returns the disarmed workflow ids.
-     */
-    private fun disarmTriggersMissingCommands(d: AppDeps): List<String> {
-        val disarmed = mutableListOf<String>()
-        d.runtime.armedTriggers().forEach { workflowId ->
-            val spec = d.runtime.workflowStore().spec(workflowId)
-            val missing = spec == null || collectCommandIds(spec.step).any {
-                d.registry.resolve(it) !is ResolveResult.Found
-            }
-            if (missing && d.runtime.disarmTrigger(workflowId)) disarmed += workflowId
-        }
-        return disarmed
-    }
-
-    /** Every command id a step tree can reach (trigger-dependency sweep). */
-    private fun collectCommandIds(step: WorkflowStep): List<String> = when (step) {
-        is WorkflowStep.Command -> listOf(step.commandId)
-        is WorkflowStep.Sequential -> step.steps.flatMap(::collectCommandIds)
-        is WorkflowStep.Parallel -> step.steps.flatMap(::collectCommandIds)
-        is WorkflowStep.If ->
-            collectCommandIds(step.thenStep) +
-                (step.elseStep?.let(::collectCommandIds) ?: emptyList())
-        is WorkflowStep.Loop -> collectCommandIds(step.body)
-        is WorkflowStep.Retry -> collectCommandIds(step.step)
-        is WorkflowStep.Try ->
-            collectCommandIds(step.step) + step.compensation.flatMap(::collectCommandIds)
-    }
+    /** SDK helper: disarm armed triggers whose commands no longer resolve (uninstall sweep). */
+    private fun disarmTriggersMissingCommands(d: AppDeps): List<String> =
+        TriggerMaintenance.disarmTriggersMissingCommands(d.registry, d.runtime)
 
     private fun jsonToPlain(element: JsonElement?): String? = when (element) {
         null, JsonNull -> null

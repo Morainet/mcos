@@ -1,5 +1,6 @@
 package com.morainet.mcos.android
 
+import com.morainet.mcos.sdk.HostServices
 import com.morainet.mcos.sdk.McosPlugin
 import com.morainet.mcos.security.permission.PermissionKernel
 
@@ -38,5 +39,18 @@ object PluginPermissionBootstrap {
     /** Grant all [declaredPermissions] under the plugin's manifest id. */
     fun grantAll(kernel: PermissionKernel, plugin: McosPlugin) {
         declaredPermissions(plugin).forEach { kernel.grant(plugin.manifest.id, it) }
+    }
+
+    /**
+     * Post-install/update activation: run the plugin's `onLoad` (the loader
+     * registers commands but does not call it) and grant the declared
+     * permissions — the consent moment (install dialog / update permission
+     * diff) already happened, so the grant is unconditional here. The
+     * kernel's GrantStore persists it, so rehydrated installs keep their
+     * grants across restarts.
+     */
+    suspend fun activate(plugin: McosPlugin, hostServices: HostServices, kernel: PermissionKernel) {
+        plugin.onLoad(hostServices)
+        grantAll(kernel, plugin)
     }
 }

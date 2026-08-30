@@ -3,7 +3,14 @@ package com.morainet.mcos.android.demo
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.morainet.mcos.android.AppDeps
-import com.morainet.mcos.android.PluginPermissionBootstrap
+import com.morainet.mcos.android.BridgedMcpServer
+import com.morainet.mcos.android.McpAddResult
+import com.morainet.mcos.android.McpEnableResult
+import com.morainet.mcos.android.McpRemoveResult
+import com.morainet.mcos.android.McpServerBridge
+import com.morainet.mcos.android.McpServerController
+import com.morainet.mcos.android.McpServerRecord
+import com.morainet.mcos.android.SkippedBridgedTool
 import com.morainet.mcos.android.host.AndroidLlmHttpTransport
 import com.morainet.mcos.runtime.api.McosRuntime
 import com.morainet.mcos.runtime.core.api.ConfirmationDecision
@@ -33,39 +40,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.add
-import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.buildJsonArray
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.put
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 /** SharedPreferences key holding the LLM API key (managed via AndroidSecureStore). */
 private const val LLM_API_KEY = "llm_api_key"
-
-// User-configured MCP servers (04 §10 per-server enablement). The list
-// (id/endpoint/enabled) persists as JSON under MCP_SERVERS; each server's bearer
-// token is a secret kept under `mcp.secret.<id>` in the SecureStore the executor
-// reads, so the bridged config carries only the key name and the raw token never
-// enters the plugin manifest, the IR, or the audit trail (04 §11.1 / 10 §6.2).
-// MCP_SERVER_ID / MCP_ENDPOINT are the item-31 single-server keys, migrated into
-// the list on first load.
-private const val MCP_SERVERS = "mcp_servers"
-private const val MCP_SERVER_ID = "mcp_server_id"
-private const val MCP_ENDPOINT = "mcp_endpoint"
-private fun mcpSecretKey(serverId: String) = "mcp.secret.$serverId"
-
-/** Persisted per-server config; the token lives in SecureStore, not here. */
-private data class McpServerRecord(val id: String, val endpoint: String, val enabled: Boolean)
-
-private val mcpServersJson = Json { ignoreUnknownKeys = true }
 
 private const val DEFAULT_DSL = "hello.world(name=\"MCOS\")\ncamera.capture()"
 
@@ -146,6 +126,17 @@ class McosViewModel : ViewModel() {
     private var deps: AppDeps? = null
     private var persistedKeyLoaded = false
 
+    /**
+     * Activity-scoped MCP server controller (item 40: the management logic —
+     * persistence, secrets, enable/disable lifecycle — lives in the SDK; this
+     * shell only maps outcomes to UI). Rebuilt on every [attach], like [deps]:
+     * the SecureStore is the single source of truth, so a rebuild re-reads it.
+     */
+    private var mcpController: McpServerController? = null
+
+    private fun mcp(): McpServerController =
+        checkNotNull(mcpController) { "attach(deps) must be called before using the view model" }
+
     private val llmRegistry = LlmProviderRegistry()
     private var probeDebounce: Job? = null
     private var previewJob: Job? = null
@@ -156,6 +147,14 @@ class McosViewModel : ViewModel() {
     /** Bind the activity-scoped dependencies; call from every onCreate. */
     fun attach(deps: AppDeps) {
         this.deps = deps
+        mcpController = McpServerController(
+            secureStore = deps.secureStore,
+            runtime = deps.runtime,
+            registry = deps.registry,
+            hostServices = deps.hostServices,
+            permissionKernel = deps.permissionKernel,
+            bridge = DemoMcpBridge(deps),
+        )
         // Load the persisted API key once; onApiKeyChange's debounce then
         // probes with it, matching the previous startup behavior.
         if (!persistedKeyLoaded) {
@@ -273,33 +272,37 @@ class McosViewModel : ViewModel() {
         val token = s.mcpNewToken.trim().ifBlank { null }
         _uiState.update { it.copy(mcpBusy = true) }
         viewModelScope.launch {
-            if (token != null) deps().hostServices.secureStore.put(mcpSecretKey(id), token)
-            _uiState.update {
-                it.copy(
-                    mcpServers = it.mcpServers + McpServerUi(id, endpoint, enabled = false),
-                    mcpNewId = "",
-                    mcpNewEndpoint = "",
-                    mcpNewToken = "",
-                    mcpBusy = false,
-                )
+            when (mcp().addServer(id, endpoint, token)) {
+                is McpAddResult.Added -> {
+                    syncMcpServers()
+                    _uiState.update {
+                        it.copy(
+                            mcpNewId = "",
+                            mcpNewEndpoint = "",
+                            mcpNewToken = "",
+                            mcpBusy = false,
+                        )
+                    }
+                    log("[${now()}] MCP: added server '$id' ($endpoint)")
+                }
+                McpAddResult.Duplicate ->
+                    _uiState.update { it.copy(mcpBusy = false) } // raced a second add
+                McpAddResult.Invalid ->
+                    _uiState.update { it.copy(mcpBusy = false) }
             }
-            persistServers()
-            log("[${now()}] MCP: added server '$id' ($endpoint)")
         }
     }
 
     /** Remove a server: unregister its commands if enabled, drop its secret + record. */
     fun removeMcpServer(id: String) {
         viewModelScope.launch {
-            val d = deps()
-            if (_uiState.value.mcpServers.find { it.id == id }?.enabled == true) {
-                d.registry.unregister(McpAdapter.pluginId(id))
+            when (val result = mcp().removeServer(id)) {
+                is McpRemoveResult.Removed ->
+                    log("[${now()}] MCP: removed server '$id' (${result.commandsUnregistered} cmd unregistered)")
+                McpRemoveResult.Unknown -> return@launch
             }
-            d.hostServices.secureStore.remove(mcpSecretKey(id))
-            _uiState.update { it.copy(mcpServers = it.mcpServers.filterNot { s -> s.id == id }) }
+            syncMcpServers()
             refreshCommandList()
-            persistServers()
-            log("[${now()}] MCP: removed server '$id'")
         }
     }
 
@@ -309,132 +312,76 @@ class McosViewModel : ViewModel() {
         if (server.busy) return
         updateServer(id) { it.copy(busy = true, status = null) }
         viewModelScope.launch {
-            if (enabled) enableServer(server) else disableServer(server)
-            persistServers()
+            if (enabled) log("[${now()}] MCP: connecting to '${server.id}' (${server.endpoint})…")
+            applyMcpResult(server.id, mcp().setEnabled(id, enabled))
+            refreshCommandList()
         }
     }
 
-    /**
-     * Discover [server]'s tools and register them as `mcp.<id>.*` through the
-     * runtime install pipeline at builtin trust (the adapter is first-party
-     * bridging code; the bridged tools keep their `network`/`destructive`
-     * side-effect class, so the permission kernel and egress policy still
-     * govern every call). A configured token is referenced as `{{secret.*}}`,
-     * resolved per call by the executor — never into the registry/IR/audit.
-     */
-    private suspend fun enableServer(server: McpServerUi) {
-        val d = deps()
-        val secretStore = d.hostServices.secureStore
-        val hasToken = secretStore.get(mcpSecretKey(server.id)) != null
-        log("[${now()}] MCP: connecting to '${server.id}' (${server.endpoint})…")
-        try {
-            val discovery = McpAdapter.discover(
-                d.hostServices.net,
-                McpServerConfig(
-                    id = server.id,
-                    endpoint = server.endpoint,
-                    secretKey = if (hasToken) mcpSecretKey(server.id) else null,
-                ),
-                secretLookup = { key -> secretStore.get(key) },
-            )
-            val plugin = discovery.plugin
-            when (val result = runtime().loadPlugin(
-                packageId = plugin.manifest.id,
-                version = plugin.manifest.version,
-                builtin = true,
-                plugin = plugin,
-            )) {
-                is LoadResult.Installed -> {
-                    PluginPermissionBootstrap.grantAll(d.permissionKernel, plugin)
-                    plugin.onLoad(d.hostServices)
-                    discovery.skipped.forEach {
-                        log("[WARN]   └─ skipped '${it.toolName}': ${it.unmappedType} (${it.reason})")
-                    }
-                    log("[${now()}]   └─ OK (${result.commandsRegistered} cmd, ${discovery.skipped.size} skipped)")
-                    updateServer(server.id) {
-                        it.copy(
-                            enabled = true,
-                            busy = false,
-                            status = "on: ${result.commandsRegistered} cmd, ${discovery.skipped.size} skipped",
-                        )
-                    }
-                    refreshCommandList()
+    /** Map one SDK controller outcome onto the per-server UI status + console log. */
+    private fun applyMcpResult(id: String, result: McpEnableResult?) {
+        when (result) {
+            null -> updateServer(id) { it.copy(busy = false) }
+            is McpEnableResult.Enabled -> {
+                result.skipped.forEach {
+                    log("[WARN]   └─ skipped '${it.toolName}': ${it.unmappedType} (${it.reason})")
                 }
-                is LoadResult.Denied -> {
-                    log("[WARN]   └─ denied: ${result.code} — ${result.reason}")
-                    updateServer(server.id) { it.copy(enabled = false, busy = false, status = "denied: ${result.code}") }
-                }
-                is LoadResult.Failed -> {
-                    log("[WARN]   └─ failed: ${result.message}")
-                    updateServer(server.id) { it.copy(enabled = false, busy = false, status = "failed") }
+                log("[${now()}]   └─ OK (${result.commandsRegistered} cmd, ${result.skipped.size} skipped)")
+                updateServer(id) {
+                    it.copy(
+                        enabled = true,
+                        busy = false,
+                        status = "on: ${result.commandsRegistered} cmd, ${result.skipped.size} skipped",
+                    )
                 }
             }
-        } catch (e: Exception) {
-            log("[WARN] MCP: ${e.message}")
-            updateServer(server.id) { it.copy(enabled = false, busy = false, status = "error: ${e.message}") }
+            is McpEnableResult.Denied -> {
+                log("[WARN]   └─ denied: ${result.code} — ${result.reason}")
+                updateServer(id) { it.copy(enabled = false, busy = false, status = "denied: ${result.code}") }
+            }
+            is McpEnableResult.Failed -> {
+                log("[WARN]   └─ failed: ${result.message}")
+                updateServer(id) { it.copy(enabled = false, busy = false, status = "failed") }
+            }
+            is McpEnableResult.Error -> {
+                log("[WARN] MCP: ${result.message}")
+                updateServer(id) { it.copy(enabled = false, busy = false, status = "error: ${result.message}") }
+            }
+            is McpEnableResult.Disabled -> {
+                log("[${now()}] MCP: disabled '$id' (${result.commandsUnregistered} cmd unregistered)")
+                updateServer(id) { it.copy(enabled = false, busy = false, status = "off") }
+            }
         }
-    }
-
-    private fun disableServer(server: McpServerUi) {
-        val removed = deps().registry.unregister(McpAdapter.pluginId(server.id))
-        log("[${now()}] MCP: disabled '${server.id}' ($removed cmd unregistered)")
-        updateServer(server.id) { it.copy(enabled = false, busy = false, status = "off") }
-        refreshCommandList()
     }
 
     private fun updateServer(id: String, transform: (McpServerUi) -> McpServerUi) {
         _uiState.update { st -> st.copy(mcpServers = st.mcpServers.map { if (it.id == id) transform(it) else it }) }
     }
 
-    /** Restore the configured server list, migrating the item-31 single-server keys once. */
+    /** Re-read the persisted server list into the UI view (SDK controller owns it). */
+    private suspend fun syncMcpServers() {
+        val records = mcp().servers()
+        _uiState.update { st ->
+            st.copy(mcpServers = records.map { r -> McpServerUi(r.id, r.endpoint, enabled = r.enabled) })
+        }
+    }
+
+    /** Restore the configured list, reconnecting the servers the user left enabled. */
     private suspend fun restoreMcpServers() {
-        val records = loadServerRecords().toMutableList()
-        val legacyId = deps().secureStore.get(MCP_SERVER_ID)
-        if (legacyId != null) {
-            if (records.none { it.id == legacyId }) {
-                deps().secureStore.get(MCP_ENDPOINT)?.let { ep ->
-                    records += McpServerRecord(legacyId, ep, enabled = false)
-                }
-            }
-            deps().secureStore.remove(MCP_SERVER_ID)
-            deps().secureStore.remove(MCP_ENDPOINT)
-        }
+        val records = mcp().servers()
         if (records.isEmpty()) return
-        _uiState.update { it.copy(mcpServers = records.map { r -> McpServerUi(r.id, r.endpoint, enabled = r.enabled) }) }
-        persistServers()
-        // Best-effort reconnect of the servers the user left enabled; failures
-        // surface per-server status and leave the record for a manual retry.
-        records.filter { it.enabled }.forEach { r ->
+        syncMcpServers()
+        val toReconnect = records.filter { it.enabled }
+        if (toReconnect.isEmpty()) return
+        // Best-effort reconnect (one bad endpoint must not block the others);
+        // failures surface per-server status and leave the record for a retry.
+        toReconnect.forEach { r ->
             updateServer(r.id) { it.copy(busy = true) }
-            enableServer(McpServerUi(r.id, r.endpoint, enabled = true))
+            log("[${now()}] MCP: connecting to '${r.id}' (${r.endpoint})…")
         }
-    }
-
-    private suspend fun loadServerRecords(): List<McpServerRecord> {
-        val raw = deps().secureStore.get(MCP_SERVERS) ?: return emptyList()
-        return runCatching {
-            mcpServersJson.parseToJsonElement(raw).jsonArray.mapNotNull { el ->
-                val o = el.jsonObject
-                val id = o["id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
-                val endpoint = o["endpoint"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
-                McpServerRecord(id, endpoint, o["enabled"]?.jsonPrimitive?.booleanOrNull ?: false)
-            }
-        }.getOrDefault(emptyList())
-    }
-
-    private suspend fun persistServers() {
-        val arr = buildJsonArray {
-            _uiState.value.mcpServers.forEach { s ->
-                add(
-                    buildJsonObject {
-                        put("id", s.id)
-                        put("endpoint", s.endpoint)
-                        put("enabled", s.enabled)
-                    }
-                )
-            }
-        }
-        deps().secureStore.put(MCP_SERVERS, arr.toString())
+        val results = mcp().reconnectEnabled()
+        toReconnect.forEach { r -> applyMcpResult(r.id, results[r.id]) }
+        refreshCommandList()
     }
 
     fun clearInput() {
@@ -812,4 +759,36 @@ private fun RuntimeEvent.toLogLine(time: String): String = when (this) {
     is RuntimeEvent.RunSucceeded -> "[$time] ■ Done (${durationMs}ms)"
     is RuntimeEvent.RunFailed -> "[ERROR] Run failed: ${error}"
     is RuntimeEvent.RunCancelled -> "[$time] ■ Cancelled"
+}
+
+/**
+ * Demo wiring of the SDK's [McpServerBridge] seam onto plugins:mcos-plugin-mcp
+ * (item 40: the SDK module owns the management lifecycle and stays free of any
+ * MCP client dependency; the shell supplies the discovery adapter). The token
+ * stays a SecureStore *key name* across this seam — the adapter resolves it
+ * per call, so the raw token never enters the manifest, IR, or audit trail
+ * (04 §11.1 / 10 §6.2).
+ */
+private class DemoMcpBridge(private val deps: AppDeps) : McpServerBridge {
+
+    override suspend fun discover(record: McpServerRecord, secretKey: String?): BridgedMcpServer {
+        val discovery = McpAdapter.discover(
+            deps.hostServices.net,
+            McpServerConfig(
+                id = record.id,
+                endpoint = record.endpoint,
+                secretKey = secretKey,
+            ),
+            secretLookup = { key -> deps.hostServices.secureStore.get(key) },
+        )
+        return BridgedMcpServer(
+            plugin = discovery.plugin,
+            skippedTools = discovery.skipped.map {
+                SkippedBridgedTool(it.toolName, it.unmappedType, it.reason)
+            },
+        )
+    }
+
+    /** Mirrors McpAdapter's registry-id convention (legacy records without a persisted pluginId). */
+    override fun pluginIdFor(serverId: String): String = McpAdapter.pluginId(serverId)
 }

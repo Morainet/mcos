@@ -10,6 +10,19 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### Host controllers — reusable ViewModel logic moves into `mcos-android-sdk` (2026-08-30)
+
+Item 39 follow-up: the demo shell's last embedded runtime-management logic becomes SDK surface, so an integrating app gets identical host semantics behind its own UI.
+
+- **`McpServerController`** (04 §10/§11.1) — owns the configured MCP server list: persistence (JSON under the `mcp_servers` SecureStore key; tokens only under `mcp.secret.<id>`), the item-31 single-server-key migration, and the enable/disable lifecycle through `runtime.loadPlugin` at builtin trust (register → grant declared permissions → `onLoad`); `removeServer`/`disable` unregister live; `reconnectEnabled()` restores the servers the user left enabled best-effort with per-server failure isolation. All outcomes are sealed results (`Added`/`Duplicate`/`Invalid`, `Enabled`/`Denied`/`Failed`/`Error`/`Disabled`, `Removed`/`Unknown`) — never throws, a host UI just maps outcomes.
+- **Port/adapter** — discovery is injected via the new `McpServerBridge` interface (`discover(record, secretKey)` + a `pluginIdFor` legacy-id guess), keeping the SDK free of any MCP client dependency; the demo wires `DemoMcpBridge` over `McpAdapter.discover`. The controller persists the learned registry plugin id on each record (new optional `pluginId` JSON field, backward/forward compatible), so a fresh process can disable/unregister without re-running discovery.
+- **`TriggerMaintenance.disarmTriggersMissingCommands`** (05 §9) — the uninstall sweep: disarms armed triggers whose step tree references commands that no longer resolve or whose spec vanished from the store.
+- **`MarketplaceTrust.refreshRevokedKeys`** (09 §6.3) — best-effort `/v1/keys/revoked` pull marking matching keys REVOKED; failures return null and an applied revocation survives (stale-ok).
+- **`PluginPermissionBootstrap.activate`** — install-time `onLoad` + grant-declared-permissions as one call.
+- **Demo shell** — `McosViewModel` rebuilds an activity-scoped controller per `attach` and only maps controller outcomes to its UI rows/console; `MarketplaceViewModel` delegates the three helpers. Behavior preserved — `McpShellWiringTest` (add→enable→disable over the real facade + fake MCP `NetService`) passes unchanged against the controller.
+- **Tests** — +18 (`McpServerControllerTest` MC1-MC11 over the real facade + a fake bridge · `TriggerMaintenanceTest` 4 · `MarketplaceTrustTest` 3); baseline 1201/1264 → **1219/1300**, 0 failures.
+- **Docs** — `11-implementation-status` item 40 + baseline (en/zh); `REPOSITORIES` SDK package/role class list (en/zh).
+
 ### Android SDK split — `mcos-android-sdk` library + `mcos-android` demo shell (2026-08-30)
 
 Open-source readiness: `mcos-android` stops being "the app with the runtime inside" and becomes a replaceable Compose demo over a **UI-free host SDK** — an integrating app embeds the library and ships entirely its own UI.
