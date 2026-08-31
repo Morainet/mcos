@@ -146,6 +146,14 @@ jobs:
       - name: Unit tests + assemble debug APK
         run: timeout -k 60s 25m ./gradlew :mcos-android-sdk:testDebugUnitTest :mcos-android:testDebugUnitTest :mcos-android:assembleDebug --console=plain --no-daemon
 
+      # Exercises the publication task graph (maven-publish convention, BOM,
+      # AAR release variant) on every PR so config drift fails here, not at
+      # tag time. Unsigned — signing only activates with -PsigningKey, and no
+      # secrets exist on CI. Artifacts land in build/central-bundle and are
+      # discarded; the throwaway version never reaches any repository.
+      - name: Publish dry-run (unsigned)
+        run: timeout -k 60s 10m ./gradlew publish -PmcosVersion=0.0.0-ci --console=plain --no-daemon
+
       - name: Upload debug APK
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4

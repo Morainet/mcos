@@ -1,6 +1,12 @@
+import org.gradle.api.publish.maven.MavenPublication
+
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
+    // Publishes io.github.morainet:mcos-android-sdk (AAR). Shared POM
+    // metadata / staging repository / signing come from the root build's
+    // maven-publish convention block.
+    id("maven-publish")
 }
 
 android {
@@ -9,6 +15,12 @@ android {
 
     defaultConfig {
         minSdk = 26
+
+        // Applied to consumer apps that enable minification: keeps the
+        // runtime API surface intact and silences java.net.http warnings
+        // (the JDK transports in the JVM artifacts are never loaded on
+        // Android — hosts inject their own transport implementation).
+        consumerProguardFiles("consumer-rules.pro")
     }
 
     compileOptions {
@@ -18,6 +30,28 @@ android {
 
     kotlinOptions {
         jvmTarget = "17"
+    }
+
+    // Publish only the release variant. AGP generates the sources jar; the
+    // javadoc artifact is the root convention's stub jar instead of
+    // withJavadocJar(): AGP 8.7's bundled Dokka chokes on sealed classes
+    // ("PermittedSubclasses requires ASM9"), and Central only requires a
+    // valid javadoc zip anyway. Swap for real API docs when they exist.
+    publishing {
+        singleVariant("release") {
+            withSourcesJar()
+        }
+    }
+}
+
+afterEvaluate {
+    publishing {
+        publications {
+            register("maven", MavenPublication::class.java) {
+                from(components["release"])
+                artifact(tasks.named("stubJavadoc"))
+            }
+        }
     }
 }
 

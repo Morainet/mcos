@@ -1,0 +1,122 @@
+# Release pipeline: tag v<version> → build → sign → publish to Maven Central
+# (Central Portal bundle API) → GitHub Release with demo artifacts.
+#
+# One-time setup (repo Settings → Secrets and variables → Actions):
+#   CENTRAL_USERNAME  Central Portal token user (sonatype.com → Account → Generate User Token)
+#   CENTRAL_PASSWORD  Central Portal token password
+#   GPG_PRIVATE_KEY   Armored private key: gpg --armor --export-secret-key <keyId>
+#   GPG_PASSPHRASE    Passphrase of that key
+#
+# The Maven coordinates live in gradle.properties (mcosGroupId / mcosVersion);
+# the tag's version always wins (-PmcosVersion below), so gradle.properties
+# only carries the in-development SNAPSHOT.
+#
+# Local dry-run (no secrets needed, signing stays off):
+#   sh gradlew publish            # fills build/central-bundle with unsigned artifacts
+#   sh gradlew publishToMavenLocal
+#
+# Bundle layout requirement: the zip must contain the maven repository at its
+# ROOT (io/github/morainet/...), so we zip the CONTENTS of central-bundle/.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  release:
+    name: Publish to Maven Central
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the GitHub Release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # Fail fast if the scaffold marketplace key is still in place (09
+      # §6.3): shipping it would anchor every consumer's trust store to a key
+      # whose private half nobody controls — installs keep failing closed, but
+      # the marketplace chain is dead weight. Replace MARKETPLACE_PUBLIC_KEY_
+      # BASE64 + MARKETPLACE_FINGERPRINT in TrustAnchors.kt, then re-tag.
+      - name: "Guard: marketplace trust anchor must not be the placeholder"
+        run: |
+          if grep -q "e240f31a64691fce6bf20bea9b0a2bb72e192657960d34f1811d9104ba167982" \
+              mcos-android-sdk/src/main/kotlin/com/morainet/mcos/android/TrustAnchors.kt; then
+            echo "::error::TrustAnchors still carries the placeholder marketplace key — replace it with the operator's real key before releasing."
+            exit 1
+          fi
+
+      - name: Derive version from tag
+        run: |
+          echo "MCOS_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          case "${GITHUB_REF_NAME#v}" in
+            *SNAPSHOT*)
+              echo "::error::Maven Central only accepts release versions; tag without SNAPSHOT."
+              exit 1 ;;
+          esac
+
+      # Gate: the same build CI already runs, so a broken snapshot can't ship.
+      - name: Build & test
+        run: ./gradlew build -PmcosVersion="$MCOS_VERSION" --console=plain --no-daemon
+
+      # ORG_GRADLE_PROJECT_* maps to the matching project properties, so
+      # signingKey/signingPassword are picked up by the root build convention.
+      - name: Publish signed artifacts to staging repo
+        env:
+          ORG_GRADLE_PROJECT_signingKey: ${{ secrets.GPG_PRIVATE_KEY }}
+          ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.GPG_PASSPHRASE }}
+        run: ./gradlew publish -PmcosVersion="$MCOS_VERSION" --console=plain --no-daemon
+
+      - name: Bundle artifacts for Central
+        run: |
+          cd build/central-bundle
+          zip -r "../mcos-${MCOS_VERSION}-bundle.zip" .
+          cd -
+          unzip -l "build/mcos-${MCOS_VERSION}-bundle.zip" | head -30
+
+      # publishingType=AUTOMATIC → Central validates and releases without a
+      # manual "Publish" click. Switch to USER_MANAGED if you prefer reviewing
+      # in the Portal UI before artifacts go public.
+      - name: Upload to Maven Central (Central Portal)
+        env:
+          CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
+          CENTRAL_PASSWORD: ${{ secrets.CENTRAL_PASSWORD }}
+        run: |
+          if [ -z "$CENTRAL_USERNAME" ] || [ -z "$CENTRAL_PASSWORD" ]; then
+            echo "::warning::CENTRAL_USERNAME/CENTRAL_PASSWORD not set — skipping upload (dry run)."
+            exit 0
+          fi
+          response=$(curl -sS -f -X POST \
+            -u "$CENTRAL_USERNAME:$CENTRAL_PASSWORD" \
+            "https://central.sonatype.com/api/v1/publisher/upload?publishingType=AUTOMATIC" \
+            -F "bundle=@build/mcos-${MCOS_VERSION}-bundle.zip") || exit 1
+          echo "Central deployment ID: $response"
+          echo "Track status: https://central.sonatype.com/publishing/deployments"
+
+      - name: Build demo APK & server dist
+        run: |
+          ./gradlew :mcos-android:assembleDebug -PmcosVersion="$MCOS_VERSION" --console=plain --no-daemon
+          ./gradlew :mcos-server:installDist -PmcosVersion="$MCOS_VERSION" --console=plain --no-daemon
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p release-assets
+          cp mcos-android/build/outputs/apk/debug/*.apk release-assets/
+          cd mcos-server/build/install/mcos-server && zip -r \
+            "${GITHUB_WORKSPACE}/release-assets/mcos-server-${MCOS_VERSION}.zip" . && cd -
+          gh release create "$GITHUB_REF_NAME" \
+            --title "MCOS $MCOS_VERSION" \
+            --generate-notes \
+            release-assets/*
