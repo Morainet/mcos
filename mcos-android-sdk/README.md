@@ -24,7 +24,7 @@ com.morainet.mcos.android/
 ├── DynamicPluginLoader.kt       # DexClassLoader 隔离加载
 ├── MarketplacePluginFactory.kt  # curated id → 本地类；其余走 dex
 ├── MarketplaceTrust.kt          # 吊销密钥刷新
-├── TrustAnchors.kt              # 内置 Ed25519 信任锚（占位密钥，发布前需替换运营方真钥）
+├── TrustAnchors.kt              # 内置 Ed25519 信任锚（运营方真钥，私钥离线保管、从不入仓）
 ├── PluginPermissionBootstrap.kt # 内置插件权限预授
 ├── McpServerController.kt       # MCP 服务器列表/生命周期管理
 ├── TriggerMaintenance.kt        # 触发器卫生清扫
@@ -82,4 +82,5 @@ wire `plugin.json` 注册（`McosPackage.readPluginManifest`，未知 `sideEffec
   返回 PERMISSION_DENIED 并说明真实阻塞。
 - `setBrightness()` 走 `ACTION_MANAGE_WRITE_SETTINGS` 深链特殊权限。
 - WiFi SSID 无定位权限时诚实降级 null。
-- `TrustAnchors` 目前是结构合法的占位密钥——发布时必须替换为运营方真钥。
+- `TrustAnchors` 携带运营方真实签名钥（私钥离线保管，从未入库）；指纹与公钥由
+  `TrustAnchorsConsistencyTest` 钉死，发布守卫拒绝占位钥出仓。

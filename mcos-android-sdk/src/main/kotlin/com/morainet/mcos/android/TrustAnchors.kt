@@ -14,26 +14,26 @@ import com.morainet.mcos.security.PublisherKey
  * later revoked-keys refresh ([MarketplaceViewModel.refreshKeyTrust]) both
  * layer on top without clobbering these anchors.
  *
- * NOTE (scaffold): the key material below is a **structurally valid
- * placeholder** — a real Ed25519 public key whose private half is NOT held by
- * any live server (there is no marketplace operator yet). It makes the trust
- * pipeline concrete and fail-closed (real blocklist/artifact signatures simply
- * will not verify against it) instead of relying on an empty-string key. At
- * release, replace [MARKETPLACE_PUBLIC_KEY_BASE64] with the operator's
- * published well-known key and add curated publisher anchors to [bundled].
+ * [marketplaceKey] is the operator's real well-known key (generated
+ * 2026-08-31; the private half is held offline by the operator and has never
+ * been in this repository — the initial scaffold key was replaced before the
+ * first release). [MARKETPLACE_FINGERPRINT] is pinned to the key material by
+ * [TrustAnchorsConsistencyTest], so a paste error cannot silently ship a
+ * mismatched pair. Curated first-party publisher anchors belong in [bundled]
+ * as the marketplace onboards them.
  */
 object TrustAnchors {
 
     /**
      * X.509 SubjectPublicKeyInfo (base64) of the marketplace's well-known
-     * Ed25519 signing key. Replace with the operator's real key at release.
+     * Ed25519 signing key.
      */
     private const val MARKETPLACE_PUBLIC_KEY_BASE64 =
-        "MCowBQYDK2VwAyEA0C031h4QRcB7wrqTKGoyHP2syi7XQGhm4V0TG/SNdjU="
+        "MCowBQYDK2VwAyEAOMYGP7TWtPI7MoSVekPAypVjM7JuntUclVGwLDqCBHQ="
 
     /** SHA-256 (hex) of the DER public key above. */
     private const val MARKETPLACE_FINGERPRINT =
-        "e240f31a64691fce6bf20bea9b0a2bb72e192657960d34f1811d9104ba167982"
+        "3669aba4c6e24bb4c289586d125b4f1274d25f49c20fec976d9fbd6cd9095ec7"
 
     /** The marketplace's well-known key, used to verify the signed blocklist. */
     val marketplaceKey: PublisherKey = PublisherKey(
@@ -42,7 +42,7 @@ object TrustAnchors {
         publicKeyFingerprint = MARKETPLACE_FINGERPRINT,
         algorithm = "Ed25519",
         publicKeyEncoded = MARKETPLACE_PUBLIC_KEY_BASE64,
-        createdAt = "2026-01-01T00:00:00Z",
+        createdAt = "2026-08-31T00:00:00Z",
     )
 
     /**

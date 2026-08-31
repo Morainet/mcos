@@ -10,7 +10,7 @@
 
 > **灵感来源:** npm registry · PyPI · Homebrew · Apple App Store review process · Certificate Transparency · VS Code Marketplace · F-Droid
 
-> 🟡 **实现状态:** **客户端侧已交付**——信任级别、工件 / blocklist / 配方签名验证、端到端安装管线（更新同意、持久化 + 重启重验与再水合、DexClassLoader 动态加载 `.mcos`）、配方商店 + 安装向导、用户举报与 opt-in 遥测，以及 Android 应用内 UI。剩余：公共索引**服务端**部署与真实运营方签名密钥（`TrustAnchors` 目前是 fail-closed 占位密钥）。状态见 [11-implementation-status.md](./11-implementation-status.md) §3。
+> 🟡 **实现状态:** **客户端侧已交付**——信任级别、工件 / blocklist / 配方签名验证、端到端安装管线（更新同意、持久化 + 重启重验与再水合、DexClassLoader 动态加载 `.mcos`）、配方商店 + 安装向导、用户举报与 opt-in 遥测，以及 Android 应用内 UI。剩余：公共索引**服务端**部署（运营方 well-known 签名钥已落地 `TrustAnchors`，私钥离线保管；构建期一致性测试 + 发布守卫保证锚点可信）。状态见 [11-implementation-status.md](./11-implementation-status.md) §3。
 
 ---
 

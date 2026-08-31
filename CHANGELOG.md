@@ -10,6 +10,14 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### Marketplace trust — operator signing key replaces the scaffold anchor (2026-08-31)
+
+09 §6.3: `TrustAnchors` now carries the operator's **real** well-known Ed25519 key (generated 2026-08-31; private half lives outside the repository, held offline by the operator — verified the retired scaffold key's private half never existed in the repo either). The release guard added with the publication pipeline now has something real to protect.
+
+- **`TrustAnchorsConsistencyTest`** (android-sdk, 2 tests) — the anchor is hand-pasted source, so the declared fingerprint is pinned to the declared public key (SHA-256 of the SPKI DER) and the key must parse as a real Ed25519 SPKI; a transposed digit fails at build time instead of breaking signature verification at runtime. Cross-validates the openssl derivation against JCA.
+- Docs synchronized (`09`/`11` en+zh, android-sdk README): "fail-closed placeholder" framing retired everywhere; remaining marketplace gap is now solely the public index server deployment.
+- Test baseline 1322 → 1324 (release variant counted per module as before).
+
 ### Build & release — Maven Central publication pipeline (2026-08-31)
 
 Publishes 12 artifacts under `io.github.morainet` (namespace verified via the Morainet GitHub org; migrating to `com.morainet` later only changes `mcosGroupId`). Deliberately **no Sonatype Gradle plugin** — ordinary builds resolve nothing new, and the release workflow uploads via the Central Portal REST bundle API instead.

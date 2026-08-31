@@ -8,7 +8,7 @@
 
 > **Inspiration:** npm registry · PyPI · Homebrew · Apple App Store review process · Certificate Transparency · VS Code Marketplace · F-Droid
 
-> 🟡 **Implementation status:** the **client side is delivered** — trust levels, artifact / blocklist / recipe signature verification, the end-to-end install pipeline (update consent, persistence + restart re-verification & rehydration, dynamic `.mcos` loading via DexClassLoader), the recipe store + install wizard, reports & opt-in telemetry, and the Android in-app UI. Remaining: the public index **server** deployment and real operator signing keys (`TrustAnchors` ships a fail-closed placeholder). Status: [11-implementation-status.md](./11-implementation-status.md) §3.
+> 🟡 **Implementation status:** the **client side is delivered** — trust levels, artifact / blocklist / recipe signature verification, the end-to-end install pipeline (update consent, persistence + restart re-verification & rehydration, dynamic `.mcos` loading via DexClassLoader), the recipe store + install wizard, reports & opt-in telemetry, and the Android in-app UI. Remaining: the public index **server** deployment (the operator's well-known signing key is live in `TrustAnchors`; its private half is held offline, and a build-time consistency test plus a release guard keep the anchor honest). Status: [11-implementation-status.md](./11-implementation-status.md) §3.
 
 ---
 
