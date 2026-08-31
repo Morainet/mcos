@@ -1,6 +1,7 @@
 import org.gradle.api.artifacts.dsl.RepositoryHandler
 import org.gradle.api.publish.PublishingExtension
 import org.gradle.api.publish.maven.MavenPublication
+import org.gradle.api.tasks.SourceSetContainer
 import org.gradle.api.tasks.bundling.Jar
 import org.gradle.plugins.signing.SigningExtension
 import org.gradle.api.tasks.testing.logging.TestExceptionFormat
@@ -57,6 +58,18 @@ subprojects {
             archiveClassifier.set("javadoc")
         }
 
+        // Real sources jar for JVM modules: Central's validation requires a
+        // sources artifact per component ("Sources must be provided but not
+        // found in entries"). AGP modules register their own via
+        // publishing.singleVariant(...).withSourcesJar(); java-platform (BOM)
+        // modules are exempt — a BOM ships only its POM.
+        val sourcesJar = tasks.register("sourcesJar", Jar::class.java) {
+            group = "documentation"
+            description = "Sources jar (Central requires a sources artifact)."
+            archiveClassifier.set("sources")
+            from(project.the<SourceSetContainer>()["main"].allSource)
+        }
+
         extensions.configure(PublishingExtension::class.java) {
             repositories {
                 maven {
@@ -109,6 +122,7 @@ subprojects {
                             from(component)
                             if (plugins.hasPlugin("java") && !plugins.hasPlugin("java-platform")) {
                                 artifact(stubJavadoc.get())
+                                artifact(sourcesJar.get())
                             }
                         }
                     }
