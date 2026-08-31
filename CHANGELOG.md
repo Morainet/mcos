@@ -10,6 +10,19 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### Build & release — Maven Central publication pipeline (2026-08-31)
+
+Publishes 12 artifacts under `io.github.morainet` (namespace verified via the Morainet GitHub org; migrating to `com.morainet` later only changes `mcosGroupId`). Deliberately **no Sonatype Gradle plugin** — ordinary builds resolve nothing new, and the release workflow uploads via the Central Portal REST bundle API instead.
+
+- **Root `build.gradle.kts` publication convention** — every module applying `maven-publish` gets: shared POM (Apache-2.0, SCM, developer), sources jar, stub javadoc jar (valid zip, real API docs pending), a `McosCentralBundle` file repository that `gradlew publish` fills (`build/central-bundle`, maven-repo layout ready to zip for Central), and **opt-in** in-memory PGP signing (`-PsigningKey`/`-PsigningPassword`; absent → no signing tasks run, so local/PR builds need no secrets).
+- **Published set**: `mcos-sdk/-security/-runtime-core/-llm/-marketplace/-runtime`, built-ins `mcos-plugin-{hello,system,camera,files}` (mandatory — the android-sdk POM references them), `mcos-android-sdk` (release-variant AAR + sources + stub javadoc). Not published: `mcos-android` (demo), `mcos-server`, `mcos-plugin-mcp`.
+- **`mcos-bom`** (`java-platform`, no sources) — 11 constraints; all MCOS artifacts must stay version-aligned (shared AuthStamp/plugin-ABI/binder contracts fail at runtime, not compile time, on version drift).
+- **`consumer-rules.pro`** (android-sdk) — `-dontwarn java.net.http.**` (JDK transports are never class-loaded on Android; hosts inject their own) + conservative `-keep class com.morainet.mcos.**` until shrinker rules are proven on real apps.
+- **`.github/workflows/release.yml`** — tag `v<version>` (SNAPSHOT tags rejected: Central only accepts release versions) → `build` gate → signed `publish` → bundle zip (contents at zip root per Portal layout) → `publisher/upload?publishingType=AUTOMATIC` → GitHub Release with demo APK + server dist. Secrets: `CENTRAL_USERNAME`/`CENTRAL_PASSWORD` (Portal token), `GPG_PRIVATE_KEY`/`GPG_PASSPHRASE`.
+- Workaround note: AGP `withJavadocJar()` is unusable here — its bundled Dokka throws `PermittedSubclasses requires ASM9` on the SDK's sealed interfaces — so the AAR attaches the stub javadoc jar explicitly.
+- Verified locally: `publishToMavenLocal` + `publish` green; POM dependency edges map to `io.github.morainet` coordinates; AAR contains merged `proguard.txt`; BOM carries all 11 constraints.
+- Two guards keep the pipeline honest: CI runs an unsigned **publish dry-run** on every PR (task-graph drift fails there, not at tag time), and the release workflow **refuses to ship while `TrustAnchors` still carries the scaffold marketplace key** (09 §6.3 — confirmed its private half exists nowhere in the repo, so the placeholder is inert, but anchoring consumers to a key nobody controls would ship a dead marketplace chain).
+
 ### Manifest-only registration — the `.mcos` carries the full manifest (2026-08-30)
 
 Item 45 (08 §8): closes the boundary item 44 left open. Under `processIsolation = true` the **main** process registers plugins from the wire `plugin.json` alone — the plugin's dex loads only in `:mcos_plugin`; the main process carries none of the plugin's code. Spec 04 §4 always specified this schema; the gap was as-built (the installer decoded only `{id, entry, version}`).

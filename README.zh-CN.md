@@ -42,23 +42,23 @@ MCOS 是一个开源的**移动命令总线（Mobile Command Bus）**设计：�
 已实现的多模块 Gradle 项目拓扑：
 
 ```
-mcos-runtime-core Parser → IR · Registry · Executor (7-stage) · EventBus · Workflow · Memory
-mcos-security     Permission kernel · Audit · Signatures · Egress · Rate limit · Enterprise policy
-mcos-llm          AI planner · Multi-provider registry · GBNF / JSON-schema decoding
-mcos-marketplace  Index client · Install pipeline · Recipe store · Reports · Telemetry
-mcos-runtime      Facade: McosRuntime builder · Confirmation coordinator · Run manager
-mcos-sdk          Plugin contracts
+mcos-sdk          插件契约层（叶子模块，无内部依赖）
+mcos-security     权限内核 · AuthStamp · 审计 · 签名 · 出网 · 限流 · 企业策略
+mcos-runtime-core 解析 → IR · 注册中心（含 manifest-only）· 执行器（7 阶段 + 隔离路由）· 事件总线 · 工作流 · 记忆
+mcos-llm          AI 规划器 · 多 Provider 注册中心 · GBNF / JSON-schema 约束解码 · Agent 循环
+mcos-marketplace  索引客户端 · 安装流水线 · 配方商店 · 举报 · 遥测
+mcos-runtime      门面：McosRuntime builder · 确认协调器 · Run/触发器管理
 plugins/
-  mcos-plugin-hello     Reference sample (hello.world)        ✅
-  mcos-plugin-system    sys.* (notify, share)                 ✅
-  mcos-plugin-camera    camera.* (capture, scan)              ✅
-  mcos-plugin-files     file.* / photo.*                      ✅
-  mcos-plugin-iot       home.* / iot.*              (planned)
-  mcos-plugin-mcp       mcp.* adapter               (planned)
-mcos-android-sdk  无 UI Android 宿主 SDK             ✅
+  mcos-plugin-hello     参考示例（hello.world）             ✅
+  mcos-plugin-system    sys.*（13 个命令）                   ✅
+  mcos-plugin-camera    camera.*（capture, scan）            ✅
+  mcos-plugin-files     file.* / photo.*（8 个命令）         ✅
+  mcos-plugin-mcp       mcp.* 适配器（动态合成）              ✅
+  mcos-plugin-iot       home.* / iot.*              （规划中）
+mcos-android-sdk  无 UI Android 宿主 SDK（+ opt-in :mcos_plugin 进程隔离）✅
 mcos-android      Compose 演示壳（基于 SDK）          ✅
 mcos-server       Sync endpoint (REST + Bearer auth) ✅
-mcos-server       marketplace index (host-side)     (planned, P3)
+mcos-server       marketplace index (host-side)     （规划中，P3）
 ```
 
 完整的依赖图与各模块目标，见 [`docs/zh/REPOSITORIES.md`](./docs/zh/REPOSITORIES.md)。
@@ -67,23 +67,23 @@ mcos-server       marketplace index (host-side)     (planned, P3)
 
 ## 项目状态
 
-**Phase 1 — 核心运行时已实现（Draft v0.1.0）。Phase 2 — 工作流引擎、类型化事件总线、记忆增强、Android 外壳已实现。Phase 3 — 插件市场客户端（索引、安装流水线、配方商店、举报、遥测）已实现。**
+**Phase 1 — 核心运行时已实现（Draft v0.1.0）。Phase 2 — 工作流引擎、类型化事件总线、记忆增强、Android 外壳已实现。Phase 3 — 插件市场客户端（索引、安装流水线、配方商店、举报、遥测）与进程隔离（派发缝 + 信任级路由、AuthStamp facade 域门、隔离 RPC 纯层、隔离插件 runner、Binder 字节传输、manifest-only `.mcos` 注册——经 `processIsolation = true` 选择性开启）已实现。**
 
-仓库现在包含可构建的多模块 Gradle 工程：
+仓库现在包含可构建的多模块 Gradle 工程（每个模块均有自己的 README）：
 
 | 模块 | 内容 | 状态 |
 |------|------|------|
-| `mcos-sdk` | 插件契约（`McosPlugin`、`CommandHandler`、`HostServices`、`ExecutionContext`、`AuthStamp`） | ✅ |
-| `mcos-runtime-core` | DSL 解析器 → IR、命令注册中心、7 阶段执行器、事件总线、工作流引擎、记忆 | ✅ |
-| `mcos-security` | 权限内核、审计日志、工件签名、出站策略、限流器、崩溃隔离、企业策略 | ✅ |
-| `mcos-llm` | AI 规划/对话、多 Provider 注册中心、语法约束解码、提示注入防护 | ✅ |
-| `mcos-marketplace` | 索引客户端、安装流水线、封禁清单验证、配方商店、依赖解析、用户举报、遥测、安装向导 | ✅ |
-| `mcos-runtime` | 门面（`McosRuntime` builder、确认协调器、运行管理器），组装各子模块 | ✅ |
-| `mcos-android-sdk` | 无 UI Android 宿主 SDK：组合根、无头引导、调度/开机接收器、activity-result 与权限桥、动态 `.mcos` 加载——嵌入后自研你的 UI | ✅ |
-| `mcos-android` | 基于 SDK 的 Compose 演示壳（可替换的参考 UI） | ✅ |
-| `mcos-server` | 自托管同步端点：`SyncBlobTransport` REST 契约 + 强制 Bearer token 认证，不透明 blob 存储 | ✅ |
+| [`mcos-sdk`](./mcos-sdk/README.md) | 插件契约（`McosPlugin`、`CommandHandler`、`HostServices`、`ExecutionContext`、`AuthStamp`、`DirectorySandbox`） | ✅ |
+| [`mcos-security`](./mcos-security/README.md) | 权限内核（AuthStamp 铸造/签名）、限流、出网策略 + `DomainGlob`、企业策略、插件信任门、崩溃隔离、审计日志、Schema 校验 | ✅ |
+| [`mcos-runtime-core`](./mcos-runtime-core/README.md) | DSL 解析器 → IR、命令注册中心（含 manifest-only 注册）、7 阶段执行器、隔离派发缝 + stamp 域门、事件总线、工作流引擎、记忆 | ✅ |
+| [`mcos-llm`](./mcos-llm/README.md) | AI 规划/对话、多 Provider 注册中心、语法约束解码、提示注入防护、多轮 Agent 循环 | ✅ |
+| [`mcos-marketplace`](./mcos-marketplace/README.md) | 索引客户端、安装流水线（含 manifest-only）、封禁清单验证、配方商店、依赖解析、用户举报、遥测、安装向导 | ✅ |
+| [`mcos-runtime`](./mcos-runtime/README.md) | 门面（`McosRuntime` builder、确认协调器、运行管理器、触发器协调器），组装各子模块 | ✅ |
+| [`mcos-android-sdk`](./mcos-android-sdk/README.md) | 无 UI Android 宿主 SDK：组合根、无头引导、调度/开机接收器、activity-result 与权限桥、MCP 服务器管理、动态 `.mcos` 加载、opt-in `:mcos_plugin` 进程隔离 | ✅ |
+| [`mcos-android`](./mcos-android/README.md) | 基于 SDK 的 Compose 演示壳（可替换的参考 UI） | ✅ |
+| [`mcos-server`](./mcos-server/README.md) | 自托管同步端点：`SyncBlobTransport` REST 契约 + 强制 Bearer token 认证，不透明 blob 存储 | ✅ |
 
-插件在 `plugins/` 下独立构建：`mcos-plugin-hello`、`mcos-plugin-system`、`mcos-plugin-camera`、`mcos-plugin-files`（均带测试）。
+插件在 `plugins/` 下独立构建：`mcos-plugin-hello`、`mcos-plugin-system`、`mcos-plugin-camera`、`mcos-plugin-files`、`mcos-plugin-mcp`（均带测试与 README）。
 
 详见 [`docs/zh/11-implementation-status.md`](./docs/zh/11-implementation-status.md) 的详细状态矩阵。
 
@@ -91,11 +91,30 @@ mcos-server       marketplace index (host-side)     (planned, P3)
 
 ## 构建与下一步
 
-构建：
+构建（本仓库 `gradlew` 无执行位，统一用 `sh gradlew`）：
 
 ```bash
-./gradlew test assemble
+sh gradlew build                 # 全量门禁（JVM + Android + 测试）
+sh gradlew test                  # 仅 JVM 模块测试
+sh gradlew :mcos-android:assembleDebug   # 演示壳 APK
 ```
+
+## 制品与发布
+
+制品发布到 Maven Central，坐标 `io.github.morainet`（通过 [Morainet](https://github.com/Morainet) GitHub 组织验证；后续购买域名可迁移为 `com.morainet`）。推送 `v<版本>` 标签即触发 [`.github/workflows/release.yml`](./.github/workflows/release.yml)：构建门禁 → GPG 签名发布 → Central Portal 上传 → 附演示 APK 的 GitHub Release。
+
+首发版本可用后，建议通过 BOM 消费以保证各模块版本对齐：
+
+```kotlin
+dependencies {
+    implementation(platform("io.github.morainet:mcos-bom:<version>"))
+    implementation("io.github.morainet:mcos-android-sdk")   // Android 宿主
+    // JVM 宿主：implementation("io.github.morainet:mcos-runtime")
+    // 插件作者只需：implementation("io.github.morainet:mcos-sdk")
+}
+```
+
+本地演练：`sh gradlew publish` 填充 `build/central-bundle`（无签名、无需密钥）；`sh gradlew publishToMavenLocal` 安装到 `~/.m2`。
 
 下一步请阅读：
 

@@ -34,10 +34,11 @@ without a valid token receive `401` plus a `WWW-Authenticate: Bearer` challenge.
 
 ```bash
 # token via CLI flag or MCOS_SERVER_TOKEN env var (at least one is required)
-MCOS_SERVER_TOKEN=change-me ./gradlew :mcos-server:run --args="--port 8787 --data-dir ./data/blobs"
+# (gradlew in this repo has no exec bit — invoke it via `sh gradlew`)
+MCOS_SERVER_TOKEN=change-me sh gradlew :mcos-server:run --args="--port 8787 --data-dir ./data/blobs"
 
 # or a production-style fat jar
-./gradlew :mcos-server:installDist
+sh gradlew :mcos-server:installDist
 ./mcos-server/build/install/mcos-server/bin/mcos-server --port 8787 --data-dir /var/lib/mcos --token change-me
 ```
 
@@ -58,12 +59,12 @@ Blobs are persisted to disk under `{data-dir}/blobs/{id}` and survive restarts
 
 The device side uses `JdkSyncBlobTransport(baseUrl, token = "...")` (or the
 Android `HttpURLConnection` transport); see
-`mcos-runtime/.../memory/MemorySyncClient.kt`.
+`mcos-runtime-core/.../memory/MemorySyncClient.kt`.
 
 ## Tests
 
 ```bash
-./gradlew :mcos-server:test
+sh gradlew :mcos-server:test
 ```
 
 The suite starts a live server and drives it with the **real** device-side
