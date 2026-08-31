@@ -32,6 +32,9 @@ import kotlinx.serialization.json.put
  * `OP_SANDBOX_*`, `OP_CLOCK_NOW`, `OP_MEMORY_*` carry a
  * [call envelope][encodeCall] with the run's [AuthStamp]; the reply is either
  * an op-specific success payload or a shared [error envelope][encodeError].
+ *
+ * Byte-valued fields (`bodyB64`, `dataB64`, `valueB64`) are standard Base64 —
+ * net bodies and secrets cross the wire as raw bytes, never lossy text.
  */
 object IsolationOps {
     /** Main → plugin: execute one [IsolatedInvocation]; reply = [CommandResult]. */
@@ -43,6 +46,9 @@ object IsolationOps {
     const val OP_SECURE_GET = "secureStore.get"
     const val OP_SECURE_PUT = "secureStore.put"
     const val OP_SECURE_REMOVE = "secureStore.remove"
+
+    /** Plugin → main: [com.morainet.mcos.sdk.SecureStore.keys] (04 §6.4). */
+    const val OP_SECURE_KEYS = "secureStore.keys"
 
     const val OP_SANDBOX_READ = "sandbox.read"
     const val OP_SANDBOX_WRITE = "sandbox.write"

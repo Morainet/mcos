@@ -3,8 +3,9 @@ package com.morainet.mcos.plugin.iot
 import com.morainet.mcos.sdk.CommandResult
 import com.morainet.mcos.sdk.ExecutionContext
 import com.morainet.mcos.sdk.HostServices
+import com.morainet.mcos.sdk.HttpRequest
+import com.morainet.mcos.sdk.HttpResponse
 import com.morainet.mcos.sdk.McosException
-import com.morainet.mcos.sdk.NetResponse
 import com.morainet.mcos.sdk.NetService
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
@@ -34,20 +35,17 @@ import kotlin.test.assertTrue
 class IotPluginTest {
 
     /** Captures every request; answers from a scripted handler. */
-    private class FakeNet(private val respond: (method: String, url: String, body: String?) -> NetResponse) :
-        NetService {
+    private class FakeNet(
+        private val respond: (method: String, url: String, body: String?) -> HttpResponse,
+    ) : NetService {
         data class Call(val method: String, val url: String, val body: String?, val headers: Map<String, String>)
 
         val calls = mutableListOf<Call>()
 
-        override suspend fun request(
-            method: String,
-            url: String,
-            body: String?,
-            headers: Map<String, String>,
-        ): NetResponse {
-            calls.add(Call(method, url, body, headers))
-            return respond(method, url, body)
+        override suspend fun request(req: HttpRequest): HttpResponse {
+            val body = req.body?.decodeToString()
+            calls.add(Call(req.method, req.url, body, req.headers))
+            return respond(req.method, req.url, body)
         }
     }
 
@@ -78,7 +76,7 @@ class IotPluginTest {
 
     @BeforeTest
     fun setUp() = runBlocking {
-        net = FakeNet { _, _, _ -> NetResponse(200, "[]") }
+        net = FakeNet { _, _, _ -> HttpResponse(200, body = "[]".encodeToByteArray()) }
         services = FakeHostServices(net)
         plugin = IotPlugin(
             HomeAssistantConfig(
@@ -152,7 +150,7 @@ class IotPluginTest {
 
     @Test
     fun `I4-device list normalizes hub states`() = runBlocking {
-        reloadWith(FakeNet { _, _, _ -> NetResponse(200, haStatesBody) })
+        reloadWith(FakeNet { _, _, _ -> HttpResponse(200, body = haStatesBody.encodeToByteArray()) })
 
         val result = plugin.handlers()["home.device.list"]!!.invoke(ctx("home.device.list")) as CommandResult.Ok
 
@@ -172,7 +170,7 @@ class IotPluginTest {
 
     @Test
     fun `I5-device list domain filter keeps only matching domain`() = runBlocking {
-        reloadWith(FakeNet { _, _, _ -> NetResponse(200, haStatesBody) })
+        reloadWith(FakeNet { _, _, _ -> HttpResponse(200, body = haStatesBody.encodeToByteArray()) })
 
         val result = plugin.handlers()["home.device.list"]!!
             .invoke(ctx("home.device.list", argsOf("domain" to JsonPrimitive("climate")))) as CommandResult.Ok
@@ -187,7 +185,9 @@ class IotPluginTest {
 
     @Test
     fun `I6-device list hub 401 maps to PERMISSION_DENIED`() = runBlocking {
-        reloadWith(FakeNet { _, _, _ -> NetResponse(401, "{\"message\":\"Unauthorized\"}") })
+        reloadWith(
+            FakeNet { _, _, _ -> HttpResponse(401, body = "{\"message\":\"Unauthorized\"}".encodeToByteArray()) },
+        )
 
         val e = assertFailsWith<McosException> {
             plugin.handlers()["home.device.list"]!!.invoke(ctx("home.device.list"))
@@ -198,7 +198,7 @@ class IotPluginTest {
 
     @Test
     fun `I7-device list hub 503 maps to retryable UNAVAILABLE`() = runBlocking {
-        reloadWith(FakeNet { _, _, _ -> NetResponse(503, "upstream down") })
+        reloadWith(FakeNet { _, _, _ -> HttpResponse(503, body = "upstream down".encodeToByteArray()) })
 
         val e = assertFailsWith<McosException> {
             plugin.handlers()["home.device.list"]!!.invoke(ctx("home.device.list"))

@@ -1,6 +1,7 @@
 package com.morainet.mcos.sdk
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.datetime.Instant
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -290,9 +291,74 @@ interface FileService {
         .take(limit)
 }
 
+/**
+ * Policy-aware HTTP egress (04-plugin-sdk.md 6.2). Every call passes the
+ * kernel's per-call scope check before any connection is opened.
+ *
+ * `websocket()` from the spec sketch is P2 and deliberately absent — adding
+ * an unimplementable abstract member would force hosts into fake success,
+ * which this SDK never does (04-plugin-sdk.md 6 status note).
+ */
 interface NetService {
     /** Issue an HTTP request. Egress policy checked per-call. */
-    suspend fun request(method: String, url: String, body: String? = null, headers: Map<String, String> = emptyMap()): NetResponse
+    suspend fun request(req: HttpRequest): HttpResponse
+}
+
+/**
+ * One outbound HTTP request (04-plugin-sdk.md 6.2). [body] is raw bytes —
+ * binary payloads ride unchanged; text protocols pass encoded UTF-8.
+ * [timeoutMs] caps this single call (connect + read); the Executor's
+ * command deadline still applies on top of it.
+ */
+data class HttpRequest(
+    val method: String = "GET",
+    val url: String,
+    val headers: Map<String, String> = emptyMap(),
+    val body: ByteArray? = null,
+    val timeoutMs: Long = 30_000,
+) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is HttpRequest) return false
+        return method == other.method && url == other.url && headers == other.headers &&
+            body.contentEquals(other.body) && timeoutMs == other.timeoutMs
+    }
+
+    override fun hashCode(): Int {
+        var result = method.hashCode()
+        result = 31 * result + url.hashCode()
+        result = 31 * result + headers.hashCode()
+        result = 31 * result + (body?.contentHashCode() ?: 0)
+        result = 31 * result + timeoutMs.hashCode()
+        return result
+    }
+}
+
+/**
+ * An HTTP response (04-plugin-sdk.md 6.2). [headers] is a multi-map —
+ * repeated headers (e.g. `Set-Cookie`) are preserved as separate values.
+ * [body] is raw bytes (empty when the response carried none).
+ */
+data class HttpResponse(
+    val status: Int,
+    val headers: Map<String, List<String>> = emptyMap(),
+    val body: ByteArray = ByteArray(0),
+) {
+    /** UTF-8 view of [body] — the common case for MCOS's text protocols. */
+    val bodyText: String get() = body.decodeToString()
+
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is HttpResponse) return false
+        return status == other.status && headers == other.headers && body.contentEquals(other.body)
+    }
+
+    override fun hashCode(): Int {
+        var result = status
+        result = 31 * result + headers.hashCode()
+        result = 31 * result + body.contentHashCode()
+        return result
+    }
 }
 
 interface UiService {
@@ -311,18 +377,38 @@ interface UiService {
 
 interface SecureStore {
     /** Get a stored secret by key. Never returned to Planner—only plugins see it. */
-    suspend fun get(key: String): String?
+    suspend fun get(key: String): ByteArray?
 
     /** Store a secret by key. */
-    suspend fun put(key: String, value: String)
+    suspend fun put(key: String, value: ByteArray)
 
     /** Remove a secret by key. */
     suspend fun remove(key: String)
+
+    /**
+     * Every key in this plugin's namespace (04-plugin-sdk.md 6.4) — the
+     * enumeration secret hygiene needs: uninstall cleanup, rotation, and
+     * "what does this plugin hold?" disclosure.
+     */
+    suspend fun keys(): Set<String>
 }
 
 interface Clock {
-    /** Current time in epoch millis */
-    fun nowMs(): Long
+    /** Wall clock (04-plugin-sdk.md 6.5). */
+    fun now(): Instant
+
+    /**
+     * Monotonic source for elapsed-time measurement — immune to NTP steps,
+     * unlike [now]. Process-local by nature; never compared across processes.
+     */
+    fun monotonicMs(): Long
+
+    /**
+     * Epoch-millis convenience over [now] — epoch-ms remains the wire format
+     * of the IR, audit trail, and schedule store, so internal call sites keep
+     * this spelling instead of re-deriving it everywhere.
+     */
+    fun nowMs(): Long = now().toEpochMilliseconds()
 }
 
 interface JsonService {
@@ -400,11 +486,4 @@ data class FileEntry(
     val size: Long? = null,
     /** Last-modified / capture time in epoch millis, when the host can determine it. */
     val dateModifiedMs: Long? = null
-)
-
-@Serializable
-data class NetResponse(
-    val status: Int,
-    val body: String?,
-    val headers: Map<String, String> = emptyMap()
 )

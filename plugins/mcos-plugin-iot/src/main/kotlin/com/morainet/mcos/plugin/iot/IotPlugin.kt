@@ -132,7 +132,7 @@ class IotPlugin(private val config: HomeAssistantConfig? = null) : McosPlugin {
 
             val response = ha.states()
             HomeAssistantClient.ensureSuccess(response, "home.device.list")
-            val entities = HomeAssistantClient.parseArray(response.body)
+            val entities = HomeAssistantClient.parseArray(response.bodyText)
 
             val devices = entities.mapNotNull { entry ->
                 val obj = entry.jsonObject

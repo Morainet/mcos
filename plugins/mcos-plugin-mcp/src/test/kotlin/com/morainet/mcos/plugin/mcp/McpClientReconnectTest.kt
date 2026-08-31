@@ -1,6 +1,6 @@
 package com.morainet.mcos.plugin.mcp
 
-import com.morainet.mcos.sdk.NetResponse
+import com.morainet.mcos.sdk.HttpResponse
 import kotlinx.coroutines.runBlocking
 import java.io.IOException
 import kotlin.test.Test
@@ -47,7 +47,7 @@ class McpClientReconnectTest {
         var calls = 0
         val net = FakeNetService {
             calls++
-            NetResponse(status = 503, body = null)
+            HttpResponse(status = 503)
         }
         val client = McpClient(net, "https://mcp.example/rpc", maxConnectRetries = 2, backoffBaseMs = 1)
         val e = assertFailsWith<McpException> { client.listTools() }

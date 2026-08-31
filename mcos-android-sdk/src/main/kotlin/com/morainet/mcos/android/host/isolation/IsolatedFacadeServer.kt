@@ -5,13 +5,15 @@ import com.morainet.mcos.runtime.core.executor.NamespacedSandbox
 import com.morainet.mcos.runtime.core.executor.SecretResolvingNetService
 import com.morainet.mcos.runtime.core.executor.StampScopedNetService
 import com.morainet.mcos.sdk.AuthStamp
+import com.morainet.mcos.sdk.HttpRequest
+import com.morainet.mcos.sdk.HttpResponse
 import com.morainet.mcos.sdk.ResolveResult
 import com.morainet.mcos.sdk.SandboxFileService
 import com.morainet.mcos.security.AuthStampSigner
 import com.morainet.mcos.sdk.HostServices
 import com.morainet.mcos.sdk.McosException
-import com.morainet.mcos.sdk.NetResponse
 import com.morainet.mcos.sdk.SandboxEntry
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
@@ -19,6 +21,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import java.util.Base64
 
@@ -96,18 +99,30 @@ class IsolatedFacadeServer(
         when (op) {
             IsolationOps.OP_NET_REQUEST -> serveNet(args, stamp)
 
-            IsolationOps.OP_SECURE_GET -> buildJsonObject {
-                put("value", host.secureStore.get(args.str("key") ?: ""))
+            IsolationOps.OP_SECURE_GET -> {
+                val value = host.secureStore.get(args.str("key") ?: "")
+                if (value != null) {
+                    buildJsonObject { put("valueB64", Base64.getEncoder().encodeToString(value)) }
+                } else {
+                    JsonObject(emptyMap())
+                }
             }
 
             IsolationOps.OP_SECURE_PUT -> {
-                host.secureStore.put(args.str("key") ?: "", args.str("value") ?: "")
+                host.secureStore.put(args.str("key") ?: "", Base64.getDecoder().decode(args.str("valueB64") ?: ""))
                 JsonObject(emptyMap())
             }
 
             IsolationOps.OP_SECURE_REMOVE -> {
                 host.secureStore.remove(args.str("key") ?: "")
                 JsonObject(emptyMap())
+            }
+
+            IsolationOps.OP_SECURE_KEYS -> buildJsonObject {
+                put(
+                    "keys",
+                    buildJsonArray { host.secureStore.keys().sorted().forEach { add(JsonPrimitive(it)) } },
+                )
             }
 
             IsolationOps.OP_SANDBOX_READ -> {
@@ -204,19 +219,29 @@ class IsolatedFacadeServer(
             signer,
             nowMs,
         )
-        val response: NetResponse = gated.request(
-            method = args.str("method") ?: "GET",
-            url = args.str("url") ?: "",
-            body = args.str("body"),
-            headers = (args["headers"] as? JsonObject)
-                ?.mapValues { it.value.jsonPrimitive.contentOrNull ?: it.value.toString() }
-                ?: emptyMap(),
+        val response: HttpResponse = gated.request(
+            HttpRequest(
+                method = args.str("method") ?: "GET",
+                url = args.str("url") ?: "",
+                headers = (args["headers"] as? JsonObject)
+                    ?.mapValues { it.value.jsonPrimitive.contentOrNull ?: it.value.toString() }
+                    ?: emptyMap(),
+                body = args.str("bodyB64")?.let { Base64.getDecoder().decode(it) },
+                timeoutMs = args.longField("timeoutMs") ?: 30_000,
+            )
         )
         return buildJsonObject {
             put("status", response.status)
-            response.body?.let { put("body", it) }
+            put("bodyB64", Base64.getEncoder().encodeToString(response.body))
             if (response.headers.isNotEmpty()) {
-                put("headers", buildJsonObject { response.headers.forEach { (k, v) -> put(k, v) } })
+                put(
+                    "headers",
+                    buildJsonObject {
+                        response.headers.forEach { (k, values) ->
+                            put(k, buildJsonArray { values.forEach { add(JsonPrimitive(it)) } })
+                        }
+                    },
+                )
             }
         }
     }
@@ -237,4 +262,7 @@ class IsolatedFacadeServer(
 
     private fun JsonObject.str(key: String): String? =
         (this[key] as? JsonPrimitive)?.contentOrNull
+
+    private fun JsonObject.longField(key: String): Long? =
+        (this[key] as? JsonPrimitive)?.takeIf { it !is JsonNull }?.longOrNull
 }

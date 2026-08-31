@@ -2,6 +2,7 @@ package com.morainet.mcos.plugin.system
 
 import com.morainet.mcos.sdk.*
 import kotlinx.coroutines.runBlocking
+import kotlinx.datetime.Instant
 import kotlinx.serialization.json.*
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.test.*
@@ -153,7 +154,10 @@ class SystemPluginTest {
             override val net get() = error("x")
             override val ui get() = error("x")
             override val secureStore get() = error("x")
-            override val clock = object : Clock { override fun nowMs() = 0L }
+            override val clock = object : Clock {
+                override fun now(): Instant = Instant.fromEpochMilliseconds(0L)
+                override fun monotonicMs(): Long = 0L
+            }
             override val json get() = error("x")
             override val memory = object : MemoryFacade {
                 override suspend fun get(path: String): JsonElement? = null
@@ -798,7 +802,8 @@ open class StubSystemHostServices : HostServices {
 
     override val secureStore: SecureStore get() = error("SecureStore not available")
     override val clock: Clock = object : Clock {
-        override fun nowMs(): Long = System.currentTimeMillis()
+        override fun now(): Instant = Instant.fromEpochMilliseconds(System.currentTimeMillis())
+        override fun monotonicMs(): Long = System.currentTimeMillis()
     }
     override val json: JsonService get() = error("JsonService not available")
     override val notifications: NotificationService? = object : NotificationService {

@@ -159,7 +159,7 @@ class MarketplaceViewModel : ViewModel() {
         if (!baseUrlLoaded) {
             baseUrlLoaded = true
             viewModelScope.launch {
-                deps.secureStore.get(MARKETPLACE_URL)?.let { url ->
+                deps.secureStore.get(MARKETPLACE_URL)?.decodeToString()?.let { url ->
                     if (url.isNotBlank()) {
                         _uiState.update { it.copy(baseUrl = url) }
                         // §6.3 startup revocation refresh, once a target index is
@@ -201,7 +201,7 @@ class MarketplaceViewModel : ViewModel() {
         viewModelScope.launch {
             try {
                 val d = deps()
-                d.secureStore.put(MARKETPLACE_URL, url)
+                d.secureStore.put(MARKETPLACE_URL, url.encodeToByteArray())
                 // The index is cheap to construct; build one per search so the
                 // user can retarget the index URL without rebuilding deps.
                 val index = MarketplaceIndex(
@@ -362,7 +362,7 @@ class MarketplaceViewModel : ViewModel() {
         viewModelScope.launch {
             try {
                 val d = deps()
-                d.secureStore.put(MARKETPLACE_URL, url)
+                d.secureStore.put(MARKETPLACE_URL, url.encodeToByteArray())
                 val index = MarketplaceIndex(
                     baseUrl = url,
                     transport = d.marketplace.transport,

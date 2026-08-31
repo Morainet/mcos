@@ -15,11 +15,12 @@ import com.morainet.mcos.sdk.CommandResult
 import com.morainet.mcos.sdk.ExecutionContext
 import com.morainet.mcos.sdk.FileService
 import com.morainet.mcos.sdk.HostServices
+import com.morainet.mcos.sdk.HttpRequest
+import com.morainet.mcos.sdk.HttpResponse
 import com.morainet.mcos.sdk.JsonService
 import com.morainet.mcos.sdk.McosException
 import com.morainet.mcos.sdk.McosPlugin
 import com.morainet.mcos.sdk.MemoryFacade
-import com.morainet.mcos.sdk.NetResponse
 import com.morainet.mcos.sdk.NetService
 import com.morainet.mcos.sdk.PluginManifest
 import com.morainet.mcos.sdk.ProviderInfo
@@ -34,6 +35,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /**
  * AuthStamp facade scope gate (08-security.md §8.2, process-isolation
@@ -69,18 +71,17 @@ class ScopedFacadeTest {
         var lastUrl: String? = null
         var lastHeaders: Map<String, String> = emptyMap()
         var lastBody: String? = null
+        /** Raw bytes as received — the binary-passthrough assertion needs the
+         *  exact payload, not a lossy text view. */
+        var lastRawBody: ByteArray? = null
 
-        override suspend fun request(
-            method: String,
-            url: String,
-            body: String?,
-            headers: Map<String, String>,
-        ): NetResponse {
+        override suspend fun request(req: HttpRequest): HttpResponse {
             requestCount++
-            lastUrl = url
-            lastBody = body
-            lastHeaders = headers
-            return NetResponse(status = 200, body = "{}")
+            lastUrl = req.url
+            lastBody = req.body?.decodeToString()
+            lastRawBody = req.body
+            lastHeaders = req.headers
+            return HttpResponse(status = 200, body = "{}".encodeToByteArray())
         }
     }
 
@@ -96,7 +97,7 @@ class ScopedFacadeTest {
         val net = RecordingNetService()
         val gate = StampScopedNetService(net, stamp = null, signer = signer)
 
-        val e = assertFailsWith<McosException> { gate.request("GET", "https://api.example.com/v1") }
+        val e = assertFailsWith<McosException> { gate.request(HttpRequest(url = "https://api.example.com/v1")) }
         assertEquals(StampScopeGateReason.MISSING, denied(e))
         assertEquals(0, net.requestCount, "no request may leave the runtime on a denied call")
     }
@@ -107,7 +108,7 @@ class ScopedFacadeTest {
         val forged = stamp(setOf("network.*"), sign = false) // unsigned = attacker-forged
         val gate = StampScopedNetService(net, forged, signer)
 
-        val e = assertFailsWith<McosException> { gate.request("GET", "https://api.example.com/v1") }
+        val e = assertFailsWith<McosException> { gate.request(HttpRequest(url = "https://api.example.com/v1")) }
         assertEquals(StampScopeGateReason.SIGNATURE_INVALID, denied(e))
         assertEquals(0, net.requestCount)
     }
@@ -118,7 +119,7 @@ class ScopedFacadeTest {
         val expired = stamp(setOf("network.*"), issuedAt = 0, expiresAt = 5_000)
         val gate = StampScopedNetService(net, expired, signer, nowMs = { 5_000 })
 
-        val e = assertFailsWith<McosException> { gate.request("GET", "https://api.example.com/v1") }
+        val e = assertFailsWith<McosException> { gate.request(HttpRequest(url = "https://api.example.com/v1")) }
         assertEquals(StampScopeGateReason.EXPIRED, denied(e))
         assertEquals(0, net.requestCount)
     }
@@ -131,7 +132,7 @@ class ScopedFacadeTest {
         val readStamp = stamp(setOf("files.read"))
         val gate = StampScopedNetService(net, readStamp, signer)
 
-        val e = assertFailsWith<McosException> { gate.request("GET", "https://api.example.com/v1") }
+        val e = assertFailsWith<McosException> { gate.request(HttpRequest(url = "https://api.example.com/v1")) }
         assertEquals(StampScopeGateReason.SCOPE_MISMATCH, denied(e))
         assertEquals(0, net.requestCount)
     }
@@ -142,10 +143,12 @@ class ScopedFacadeTest {
         val gate = StampScopedNetService(net, stamp(setOf("network.*")), signer)
 
         val response = gate.request(
-            method = "POST",
-            url = "https://api.example.com/v1?x=1",
-            body = "payload",
-            headers = mapOf("Authorization" to "Bearer t"),
+            HttpRequest(
+                method = "POST",
+                url = "https://api.example.com/v1?x=1",
+                body = "payload".encodeToByteArray(),
+                headers = mapOf("Authorization" to "Bearer t"),
+            )
         )
 
         assertEquals(200, response.status)
@@ -160,10 +163,10 @@ class ScopedFacadeTest {
         val net = RecordingNetService()
         val gate = StampScopedNetService(net, stamp(setOf("network.api.example.com")), signer)
 
-        gate.request("GET", "https://api.example.com/v1")
+        gate.request(HttpRequest(url = "https://api.example.com/v1"))
         assertEquals(1, net.requestCount, "exact-granted host must pass")
 
-        val e = assertFailsWith<McosException> { gate.request("GET", "https://evil.example.org/exfil") }
+        val e = assertFailsWith<McosException> { gate.request(HttpRequest(url = "https://evil.example.org/exfil")) }
         assertEquals(StampScopeGateReason.SCOPE_MISMATCH, denied(e))
         assertEquals(1, net.requestCount, "the out-of-scope host must not reach the wire")
     }
@@ -173,15 +176,15 @@ class ScopedFacadeTest {
         val net = RecordingNetService()
         val gate = StampScopedNetService(net, stamp(setOf("network.*.example.com")), signer)
 
-        gate.request("GET", "https://sub.example.com/v1")
+        gate.request(HttpRequest(url = "https://sub.example.com/v1"))
         assertEquals(1, net.requestCount, "a label under the suffix must pass")
 
         // The apex itself is NOT covered by `*.example.com` (12.1 semantics).
-        val apex = assertFailsWith<McosException> { gate.request("GET", "https://example.com/") }
+        val apex = assertFailsWith<McosException> { gate.request(HttpRequest(url = "https://example.com/")) }
         assertEquals(StampScopeGateReason.SCOPE_MISMATCH, denied(apex))
 
         // Neither is a lookalike TLD.
-        val lookalike = assertFailsWith<McosException> { gate.request("GET", "https://sub.example.org/") }
+        val lookalike = assertFailsWith<McosException> { gate.request(HttpRequest(url = "https://sub.example.org/")) }
         assertEquals(StampScopeGateReason.SCOPE_MISMATCH, denied(lookalike))
         assertEquals(1, net.requestCount)
     }
@@ -191,7 +194,7 @@ class ScopedFacadeTest {
         val net = RecordingNetService()
         val gate = StampScopedNetService(net, stamp(setOf("network.*")), signer)
 
-        val e = assertFailsWith<McosException> { gate.request("GET", "not a url") }
+        val e = assertFailsWith<McosException> { gate.request(HttpRequest(url = "not a url")) }
         assertEquals(StampScopeGateReason.INVALID_URL, denied(e))
         assertEquals(0, net.requestCount)
     }
@@ -202,19 +205,54 @@ class ScopedFacadeTest {
         val unsigned = stamp(setOf("network.api.example.com"), sign = false)
         val gate = StampScopedNetService(net, unsigned, TrustingAuthStampSigner())
 
-        gate.request("GET", "https://api.example.com/v1")
+        gate.request(HttpRequest(url = "https://api.example.com/v1"))
         assertEquals(1, net.requestCount, "signature check waived by the named signer")
 
-        val e = assertFailsWith<McosException> { gate.request("GET", "https://other.example.org/") }
+        val e = assertFailsWith<McosException> { gate.request(HttpRequest(url = "https://other.example.org/")) }
         assertEquals(StampScopeGateReason.SCOPE_MISMATCH, denied(e))
+    }
+
+    @Test
+    fun `SF14-binary body without templates passes the secret resolver byte-identical`() = runBlocking {
+        val net = RecordingNetService()
+        val resolving = SecretResolvingNetService(net, MapSecureStore(mutableMapOf()))
+        // PNG magic plus bytes that are NOT valid UTF-8 — a lossy
+        // decode-then-reencode round trip would corrupt the payload.
+        val payload = byteArrayOf(
+            0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+            0xFF.toByte(), 0xFE.toByte(), 0x00, 0x80.toByte(),
+        )
+
+        resolving.request(HttpRequest(method = "POST", url = "https://api.example.com/upload", body = payload))
+
+        assertEquals(1, net.requestCount)
+        assertTrue(
+            payload.contentEquals(net.lastRawBody),
+            "template-free binary bodies must reach the delegate byte-identical",
+        )
+    }
+
+    @Test
+    fun `SF15-multi-value response headers survive the decorator stack`() = runBlocking {
+        val cookieHeaders = mapOf("set-cookie" to listOf("session=abc; Path=/", "tracker=xyz; Path=/"))
+        val net = object : NetService {
+            override suspend fun request(req: HttpRequest): HttpResponse =
+                HttpResponse(status = 200, headers = cookieHeaders, body = ByteArray(0))
+        }
+        val gate = StampScopedNetService(net, stamp(setOf("network.api.example.com")), signer)
+
+        val response = gate.request(HttpRequest(url = "https://api.example.com/v1"))
+
+        assertEquals(cookieHeaders, response.headers, "repeated headers must stay distinct values")
     }
 
     // ─── SF10–SF13: the gate through the Executor's Stage-4 facade ──────
 
-    private class MapSecureStore(private val entries: MutableMap<String, String>) : SecureStore {
-        override suspend fun get(key: String): String? = entries[key]
-        override suspend fun put(key: String, value: String) { entries[key] = value }
+    private class MapSecureStore(private val entries: MutableMap<String, ByteArray>) : SecureStore {
+        override suspend fun get(key: String): ByteArray? = entries[key]
+        override suspend fun put(key: String, value: ByteArray) { entries[key] = value }
         override suspend fun remove(key: String) { entries.remove(key) }
+        override suspend fun keys(): Set<String> = entries.keys
     }
 
     private class NetHostServices(
@@ -265,7 +303,7 @@ class ScopedFacadeTest {
     private fun netCallingHandler(url: String, headers: Map<String, String> = emptyMap()) =
         object : CommandHandler {
             override suspend fun invoke(ctx: ExecutionContext): CommandResult {
-                ctx.services.net.request("GET", url, headers = headers)
+                ctx.services.net.request(HttpRequest(url = url, headers = headers))
                 return CommandResult.Ok(JsonObject(emptyMap()))
             }
         }
@@ -359,7 +397,7 @@ class ScopedFacadeTest {
     @Test
     fun `SF13-gate composes with secret resolution on the non-BUILTIN path`() = runBlocking {
         val net = RecordingNetService()
-        val store = MapSecureStore(mutableMapOf("token" to "top-secret"))
+        val store = MapSecureStore(mutableMapOf("token" to "top-secret".encodeToByteArray()))
         val registry = CommandRegistry()
         val executor = Executor(
             registry,

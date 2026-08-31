@@ -185,14 +185,15 @@ class McosViewModelTest {
         TestMarketplace.deps(secureStore = secureStore)
 
     private class FakeSecureStore(initial: String? = null) : SecureStore {
-        private val entries = mutableMapOf<String, String>()
+        private val entries = mutableMapOf<String, ByteArray>()
         init {
-            initial?.let { entries[LLM_API_KEY_FOR_TEST] = it }
+            initial?.let { entries[LLM_API_KEY_FOR_TEST] = it.encodeToByteArray() }
         }
 
-        override suspend fun get(key: String): String? = entries[key]
-        override suspend fun put(key: String, value: String) { entries[key] = value }
+        override suspend fun get(key: String): ByteArray? = entries[key]
+        override suspend fun put(key: String, value: ByteArray) { entries[key] = value }
         override suspend fun remove(key: String) { entries.remove(key) }
+        override suspend fun keys(): Set<String> = entries.keys.toSet()
     }
 
     private companion object {

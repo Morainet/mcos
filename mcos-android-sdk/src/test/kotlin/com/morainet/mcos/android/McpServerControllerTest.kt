@@ -29,10 +29,11 @@ import org.junit.Test
 class McpServerControllerTest {
 
     private class FakeSecureStore : SecureStore {
-        val entries = mutableMapOf<String, String>()
-        override suspend fun get(key: String): String? = entries[key]
-        override suspend fun put(key: String, value: String) { entries[key] = value }
+        val entries = mutableMapOf<String, ByteArray>()
+        override suspend fun get(key: String): ByteArray? = entries[key]
+        override suspend fun put(key: String, value: ByteArray) { entries[key] = value }
         override suspend fun remove(key: String) { entries.remove(key) }
+        override suspend fun keys(): Set<String> = entries.keys.toSet()
     }
 
     /**
@@ -94,8 +95,8 @@ class McpServerControllerTest {
         val result = f.controller.addServer("demo", "https://mcp.example.com", "tok-1")
 
         assertTrue(result is McpAddResult.Added)
-        assertEquals("tok-1", f.store.entries[McpServerController.secretKeyOf("demo")])
-        val persisted = f.store.entries.getValue(McpServerController.SERVERS_KEY)
+        assertEquals("tok-1", f.store.entries[McpServerController.secretKeyOf("demo")]?.decodeToString())
+        val persisted = f.store.entries.getValue(McpServerController.SERVERS_KEY).decodeToString()
         assertTrue(persisted.contains("\"demo\""))
         assertTrue(persisted.contains("\"https://mcp.example.com\""))
         // The persisted list must never contain the bearer token itself (04 §11.1).
@@ -192,8 +193,8 @@ class McpServerControllerTest {
     @Test
     fun legacySingleServerKeysMigrateOnceIntoTheList() = runTest {
         val f = Fixture()
-        f.store.entries["mcp_server_id"] = "legacy"
-        f.store.entries["mcp_endpoint"] = "https://old.example.com"
+        f.store.entries["mcp_server_id"] = "legacy".toByteArray()
+        f.store.entries["mcp_endpoint"] = "https://old.example.com".toByteArray()
 
         val servers = f.controller.servers()
 
@@ -201,7 +202,9 @@ class McpServerControllerTest {
         // Migration consumes the item-31 keys so a fresh controller cannot duplicate.
         assertNull(f.store.entries["mcp_server_id"])
         assertNull(f.store.entries["mcp_endpoint"])
-        assertTrue(f.store.entries.getValue(McpServerController.SERVERS_KEY).contains("\"legacy\""))
+        assertTrue(
+            f.store.entries.getValue(McpServerController.SERVERS_KEY).decodeToString().contains("\"legacy\""),
+        )
         // Second controller over the same store: still exactly one record.
         val f2 = Fixture(store = f.store)
         assertEquals(1, f2.controller.servers().size)

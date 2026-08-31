@@ -341,7 +341,7 @@ The IR `meta` field ([02 §8.2](./02-command-protocol.md)) — `source`, `confid
 
 ## 6. HostServices (Plugin-Facing Facade)
 
-> ✅ **Implementation status:** `HostServices` and every §6.1–6.6 interface live in `mcos-sdk` (JVM stubs + real Android implementations in `mcos-android`). v0.x deltas: services are `val` properties (the spec sketch shows `fun`) and some signatures are leaner (`NetService.request(method, url, body, headers)`, `Clock.nowMs()`) — full-signature alignment is tracked as a 🟡 gap in [11-implementation-status.md](./11-implementation-status.md). §6.7–6.10 optional capabilities were added in v0.x, and §6.1's scoped storage shipped in v0.x as the optional `sandbox` capability (see §6.1's as-built note).
+> ✅ **Implementation status:** `HostServices` and every §6.1–6.6 interface live in `mcos-sdk` (JVM stubs + real Android implementations in `mcos-android`). **§6.2/§6.4/§6.5 are now full-signature aligned** (item 46): `NetService.request(HttpRequest): HttpResponse` (byte bodies, `timeoutMs`, multi-value response headers), a byte-valued `SecureStore` with `keys()`, and a `Clock` with `now(): Instant` + `monotonicMs()`. Remaining v0.x deltas: services are `val` properties (the spec sketch shows `fun`); `websocket()` is spec-marked P2 and deliberately absent (an honest absence, not a fake); `Clock.nowMs()` stays as a derived convenience (epoch-ms remains the IR/audit/schedule wire format). §6.7–6.10 optional capabilities were added in v0.x, and §6.1's scoped storage shipped in v0.x as the optional `sandbox` capability (see §6.1's as-built note).
 
 Plugins should depend on **facades**, not the entire Android framework.
 
@@ -398,7 +398,7 @@ data class SandboxEntry(val path: String, val isDir: Boolean, val size: Long?)
 
 Artifacts returned from handlers SHOULD use `tempFile(...)` or a stable sandbox path, then return the URI — never inline bytes in `CommandResult.Ok` (see §7.3). **Secrets MUST never live in the sandbox** — it is plaintext app-private storage; use `SecureStore` (§6.4, [08 §9](./08-security.md)).
 
-> 🟡 **v0.x deltas (honest):** the byte API above is leaner than the original streaming sketch (`openInput`/`openOutput` → `InputFlow`/`OutputFlow` — same drift family as `NetService`/`Clock`, tracked in [11-implementation-status.md](./11-implementation-status.md)); the "user grants access outside the sandbox via a system picker" flow is V1 host work; per-plugin storage quotas beyond the 1 MiB-per-write cap are not implemented.
+> 🟡 **v0.x deltas (honest):** the byte API above is leaner than the original streaming sketch (`openInput`/`openOutput` → `InputFlow`/`OutputFlow` — a drift this section records for itself; the same-family NetService/Clock drift was closed by item 46); the "user grants access outside the sandbox via a system picker" flow is V1 host work; per-plugin storage quotas beyond the 1 MiB-per-write cap are not implemented.
 
 ### 6.2 `NetService` — Policy-Aware HTTP
 
@@ -426,6 +426,8 @@ data class HttpResponse(
 ```
 
 HTTPS is enforced in production builds; HTTP is allowed only in debug. Secrets for `Authorization` headers MUST come from `SecureStore`, never hardcoded.
+
+> ✅ **As-built (post item-46 alignment):** the signatures above are the live `mcos-sdk` interface. Additions: `HttpResponse` carries a derived `bodyText` convenience (the UTF-8 view of `body` — MCOS's protocol surface is overwhelmingly textual); `websocket()` is spec-marked P2 and **deliberately absent** — an unimplementable abstract member would only force hosts into fake success. The Android implementation (`HttpURLConnection`) honors `timeoutMs` as connect/read timeout (the command-level deadline still applies on top), normalizes response headers to lowercase while preserving repeats (e.g. duplicate `Set-Cookie`), and maps transport failures to an honest `status = 0` response with the failure text as body.
 
 ### 6.3 `UiService` — Activity Bridging & Notifications
 
@@ -458,6 +460,8 @@ interface SecureStore {
 
 Use this for API tokens, OAuth refresh tokens, vendor credentials. **Never** store secrets in `FileService`, `Memory`, or the manifest. Secrets stored here are excluded from audit redaction walks (they never enter the IR) and from Memory sync.
 
+> ✅ **As-built (post item-46 alignment):** the signatures above are the live `mcos-sdk` interface — byte-valued `get`/`put` plus the `keys()` enumeration (the secret-hygiene surface uninstall cleanup and rotation need). Honest boundary: the Android host implementation (`AndroidSecureStore`) is today backed by app-private `SharedPreferences` with Base64 bytes and is **not yet** wrapped by a Keystore-held AES key — that hardening is tracked in [11-implementation-status.md](./11-implementation-status.md); the interface shape is fixed here so the hardening breaks no callers. `{{secret.*}}` template resolution ([08 §9.2](./08-security.md)) consumes the byte values textually.
+
 ### 6.5 `Clock` — Injectable Time
 
 ```kotlin
@@ -468,6 +472,8 @@ interface Clock {
 ```
 
 Always use `Clock` instead of `System.currentTimeMillis()` / `Instant.now()` directly — this makes handlers deterministic and testable. `mcos-sdk-testing` injects a `FakeClock` ([§14.1](#141-full-mcos-sdk-testing-api)) so tests can advance time without `Thread.sleep`.
+
+> ✅ **As-built (post item-46 alignment):** the signatures above are the live `mcos-sdk` interface (kotlinx-datetime 0.6.x), plus one derived convenience — `fun nowMs(): Long = now().toEpochMilliseconds()` — because epoch-ms remains the wire format of the IR, audit trail, and schedule store, so internal call sites keep that spelling instead of re-deriving it everywhere. `monotonicMs()` is process-local by nature (comparing monotonic clocks across processes is meaningless — the isolation facade reads it locally in the plugin process and never forwards it across the wire).
 
 ### 6.6 `MemoryFacade` — Read-Only Plugin View
 

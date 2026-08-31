@@ -10,6 +10,15 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### §6 host-capability alignment — `NetService`/`SecureStore`/`Clock` take the spec signatures (2026-08-31)
+
+04 §6: executed in the pre-0.2.0 window, where the breaking change is free (post-release it would be semver-major).
+
+- **`NetService.request(HttpRequest): HttpResponse`** — byte bodies, multi-value response headers, `timeoutMs`, derived `bodyText`, content-based equality; `NetResponse` deleted.
+- **`SecureStore`** byte-valued + `keys()`; **`Clock`** gains `now(): Instant` (kotlinx-datetime is now an sdk `api` dep) + `monotonicMs()`, with `nowMs()` kept as a derived default.
+- Binary-safe secret resolution (template-free bodies cross byte-identical); isolation wire adds `OP_SECURE_KEYS` + Base64 net bodies / multi-map headers, `monotonicMs()` deliberately process-local on the plugin side; `AndroidNetService` honest status-0 transport failures + lowercase multi-map headers; `AndroidSecureStore` = SharedPreferences + Base64 with the plaintext gap documented (Keystore wrapping is follow-up hardening).
+- Tests +11 (sdk contract HC1-HC7 · `ScopedFacadeTest` SF14-SF15 · isolation wire ×2); baseline 1342/1517 → 1353/1530.
+
 ### IoT / smart-home plugin — `mcos-plugin-iot` delivers `home.*` + `iot.*` (2026-08-31)
 
 04 §9 / 01 §module table: the last planned plugin slot. Talks to a **Home Assistant** hub — the open, local-first surface the spec names — purely over `HostServices.net`, so every request passes the kernel's per-call egress scope check; no vendor SDK anywhere.

@@ -134,7 +134,7 @@ class MarketplaceViewModelTest {
         assertEquals("example.hello", state.results.single().packageId)
         assertTrue(state.message.orEmpty().contains("1 result"))
         // Trailing slash trimmed; URL persisted for the next launch.
-        assertEquals("http://idx.test", store.entriesForTest()["marketplace_url"])
+        assertEquals("http://idx.test", store.entriesForTest()["marketplace_url"]?.decodeToString())
         assertTrue(transport.getJsonUrls.single().startsWith("http://idx.test/v1/plugins?"))
     }
 

@@ -5,8 +5,9 @@ import com.morainet.mcos.security.AuthStampSigner
 import com.morainet.mcos.security.DomainGlob
 import com.morainet.mcos.security.SecretResolver
 import com.morainet.mcos.sdk.AuthStamp
+import com.morainet.mcos.sdk.HttpRequest
+import com.morainet.mcos.sdk.HttpResponse
 import com.morainet.mcos.sdk.McosException
-import com.morainet.mcos.sdk.NetResponse
 import com.morainet.mcos.sdk.NetService
 import com.morainet.mcos.sdk.SandboxEntry
 import com.morainet.mcos.sdk.SandboxFileService
@@ -90,24 +91,19 @@ class StampScopedNetService(
     private val nowMs: () -> Long = System::currentTimeMillis,
 ) : NetService {
 
-    override suspend fun request(
-        method: String,
-        url: String,
-        body: String?,
-        headers: Map<String, String>,
-    ): NetResponse {
-        gate(url)?.let { failure ->
+    override suspend fun request(req: HttpRequest): HttpResponse {
+        gate(req.url)?.let { failure ->
             throw McosException(
                 code = McosErrorCode.PERMISSION_DENIED.name,
                 message = "NetService call denied by AuthStamp scope gate: ${failure.second}",
                 retryable = false,
                 details = buildJsonObject {
                     put("reason", JsonPrimitive(failure.first))
-                    DomainGlob.extractHost(url)?.let { put("host", JsonPrimitive(it)) }
+                    DomainGlob.extractHost(req.url)?.let { put("host", JsonPrimitive(it)) }
                 }
             )
         }
-        return delegate.request(method, url, body, headers)
+        return delegate.request(req)
     }
 
     /**
@@ -216,14 +212,23 @@ class SecretResolvingNetService(
     private val delegate: NetService,
     private val store: SecureStore,
 ) : NetService {
-    override suspend fun request(
-        method: String,
-        url: String,
-        body: String?,
-        headers: Map<String, String>,
-    ): NetResponse {
-        val resolvedHeaders = headers.mapValues { (_, v) -> SecretResolver.resolve(v) { store.get(it) } }
-        val resolvedBody = body?.let { SecretResolver.resolve(it) { store.get(it) } }
-        return delegate.request(method, url, resolvedBody, resolvedHeaders)
+    override suspend fun request(req: HttpRequest): HttpResponse {
+        val resolvedHeaders = req.headers.mapValues { (_, v) -> resolveText(v) }
+        // A body carrying no template passes through byte-identical — binary
+        // payloads never round-trip through a lossy UTF-8 decode.
+        val resolvedBody = req.body?.let { bytes ->
+            val text = bytes.decodeToString()
+            if (SecretResolver.containsTemplate(text)) resolveText(text).encodeToByteArray() else bytes
+        }
+        return delegate.request(req.copy(headers = resolvedHeaders, body = resolvedBody))
     }
+
+    /**
+     * Resolve `{{secret.<key>}}` templates against the plugin-scoped store.
+     * Templates are textual by construction (they live in String headers and
+     * bodies), so the byte-valued store decodes to text here — keys that
+     * resolve to nothing stay inert.
+     */
+    private suspend fun resolveText(value: String): String =
+        SecretResolver.resolve(value) { store.get(it)?.decodeToString() }
 }

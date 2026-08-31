@@ -153,7 +153,7 @@ class McpServerController(
         val cleanEndpoint = endpoint.trim()
         if (cleanId.isBlank() || cleanEndpoint.isBlank()) return McpAddResult.Invalid
         if (records.any { it.id == cleanId }) return McpAddResult.Duplicate
-        if (token != null) secureStore.put(secretKeyOf(cleanId), token)
+        if (token != null) putText(secretKeyOf(cleanId), token)
         val record = McpServerRecord(cleanId, cleanEndpoint, enabled = false)
         records += record
         persist()
@@ -256,9 +256,9 @@ class McpServerController(
         if (loaded) return
         loaded = true
         records = loadRecords().toMutableList()
-        val legacyId = secureStore.get(LEGACY_SERVER_ID)
+        val legacyId = getText(LEGACY_SERVER_ID)
         if (legacyId != null) {
-            val legacyEndpoint = secureStore.get(LEGACY_ENDPOINT)
+            val legacyEndpoint = getText(LEGACY_ENDPOINT)
             if (legacyEndpoint != null && records.none { it.id == legacyId }) {
                 records += McpServerRecord(legacyId, legacyEndpoint, enabled = false)
             }
@@ -269,7 +269,7 @@ class McpServerController(
     }
 
     private suspend fun loadRecords(): List<McpServerRecord> {
-        val raw = secureStore.get(SERVERS_KEY) ?: return emptyList()
+        val raw = getText(SERVERS_KEY) ?: return emptyList()
         // Lenient parse (rule: hosts persist with the runtime JSON API — this
         // module has no serialization compiler plugin): a malformed entry is
         // skipped, never fatal; unknown fields (future) are ignored.
@@ -301,8 +301,15 @@ class McpServerController(
                 )
             }
         }
-        secureStore.put(SERVERS_KEY, arr.toString())
+        putText(SERVERS_KEY, arr.toString())
     }
+
+    // [SecureStore] is byte-valued (04-plugin-sdk.md 6.4); every record this
+    // controller persists is text, so the UTF-8 hop lives in these two seams.
+    private suspend fun putText(key: String, value: String) =
+        secureStore.put(key, value.encodeToByteArray())
+
+    private suspend fun getText(key: String): String? = secureStore.get(key)?.decodeToString()
 
     companion object {
         /** SecureStore key holding the server list (id/endpoint/enabled/pluginId — never tokens). */

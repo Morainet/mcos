@@ -10,11 +10,12 @@ import com.morainet.mcos.sdk.FileEntry
 import com.morainet.mcos.sdk.FileService
 import com.morainet.mcos.sdk.HapticsService
 import com.morainet.mcos.sdk.HostServices
+import com.morainet.mcos.sdk.HttpRequest
+import com.morainet.mcos.sdk.HttpResponse
 import com.morainet.mcos.sdk.JsonService
 import com.morainet.mcos.sdk.MediaService
 import com.morainet.mcos.sdk.McosException
 import com.morainet.mcos.sdk.MemoryFacade
-import com.morainet.mcos.sdk.NetResponse
 import com.morainet.mcos.sdk.NetService
 import com.morainet.mcos.sdk.NotificationService
 import com.morainet.mcos.sdk.ResolveResult
@@ -23,7 +24,9 @@ import com.morainet.mcos.sdk.SandboxFileService
 import com.morainet.mcos.sdk.SecureStore
 import com.morainet.mcos.sdk.UiService
 import kotlinx.coroutines.runBlocking
+import kotlinx.datetime.Instant
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -100,45 +103,54 @@ class IsolatedHostServicesProxy(
     }
 
     override val net: NetService = object : NetService {
-        override suspend fun request(
-            method: String,
-            url: String,
-            body: String?,
-            headers: Map<String, String>,
-        ): NetResponse {
+        override suspend fun request(req: HttpRequest): HttpResponse {
             val reply = call(
                 IsolationOps.OP_NET_REQUEST,
                 buildJsonObject {
-                    put("method", method)
-                    put("url", url)
-                    body?.let { put("body", it) }
-                    if (headers.isNotEmpty()) {
-                        put("headers", buildJsonObject { headers.forEach { (k, v) -> put(k, v) } })
+                    put("method", req.method)
+                    put("url", req.url)
+                    req.body?.let { put("bodyB64", Base64.getEncoder().encodeToString(it)) }
+                    if (req.headers.isNotEmpty()) {
+                        put("headers", buildJsonObject { req.headers.forEach { (k, v) -> put(k, v) } })
                     }
+                    put("timeoutMs", req.timeoutMs)
                 },
             )
-            return NetResponse(
+            return HttpResponse(
                 status = reply.intOrNull("status") ?: 0,
-                body = reply.stringOrNull("body"),
-                headers = (reply["headers"] as? JsonObject)?.mapValues {
-                    it.value.jsonPrimitive.contentOrNull ?: it.value.toString()
+                headers = (reply["headers"] as? JsonObject)?.mapValues { (_, values) ->
+                    (values as? JsonArray)
+                        ?.mapNotNull { it.jsonPrimitive.contentOrNull }
+                        ?: emptyList()
                 } ?: emptyMap(),
+                body = reply.stringOrNull("bodyB64")?.let { Base64.getDecoder().decode(it) } ?: ByteArray(0),
             )
         }
     }
 
     override val secureStore: SecureStore = object : SecureStore {
-        override suspend fun get(key: String): String? =
+        override suspend fun get(key: String): ByteArray? =
             call(IsolationOps.OP_SECURE_GET, buildJsonObject { put("key", key) })
-                .stringOrNull("value")
+                .stringOrNull("valueB64")?.let { Base64.getDecoder().decode(it) }
 
-        override suspend fun put(key: String, value: String) {
-            call(IsolationOps.OP_SECURE_PUT, buildJsonObject { put("key", key); put("value", value) })
+        override suspend fun put(key: String, value: ByteArray) {
+            call(
+                IsolationOps.OP_SECURE_PUT,
+                buildJsonObject {
+                    put("key", key)
+                    put("valueB64", Base64.getEncoder().encodeToString(value))
+                },
+            )
         }
 
         override suspend fun remove(key: String) {
             call(IsolationOps.OP_SECURE_REMOVE, buildJsonObject { put("key", key) })
         }
+
+        override suspend fun keys(): Set<String> =
+            call(IsolationOps.OP_SECURE_KEYS, JsonObject(emptyMap()))["keys"]?.jsonArray
+                ?.mapNotNull { it.jsonPrimitive.contentOrNull }?.toSet()
+                ?: emptySet()
     }
 
     override val sandbox: SandboxFileService = object : SandboxFileService {
@@ -182,7 +194,16 @@ class IsolatedHostServicesProxy(
          * serves one invocation at a time, so a blocking bridge over the
          * suspend channel call is the honest implementation.
          */
-        override fun nowMs(): Long = runBlocking {
+        override fun now(): Instant = Instant.fromEpochMilliseconds(nowMsOverWire())
+
+        /**
+         * Elapsed-time measurement is process-local by nature — a monotonic
+         * source from the main process says nothing about this process's
+         * timeline, so it is read locally and never crosses the wire.
+         */
+        override fun monotonicMs(): Long = System.nanoTime() / 1_000_000
+
+        private fun nowMsOverWire(): Long = runBlocking {
             call(IsolationOps.OP_CLOCK_NOW, JsonObject(emptyMap())).longOrNullField("nowMs") ?: 0L
         }
     }

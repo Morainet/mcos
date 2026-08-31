@@ -6,6 +6,7 @@ import com.morainet.mcos.runtime.core.registry.CommandRegistry
 import com.morainet.mcos.security.SecurityConfig
 import com.morainet.mcos.sdk.*
 import kotlinx.coroutines.*
+import kotlinx.datetime.Instant
 import kotlinx.serialization.json.*
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -749,19 +750,21 @@ class WorkflowEngineTest {
             override suspend fun list(uri: String, mimeType: String?): List<FileEntry> = emptyList()
         }
         override val net = object : NetService {
-            override suspend fun request(method: String, url: String, body: String?, headers: Map<String, String>): NetResponse =
-                NetResponse(200, "{}")
+            override suspend fun request(req: HttpRequest): HttpResponse =
+                HttpResponse(200, body = "{}".encodeToByteArray())
         }
         override val ui = object : UiService {
             override suspend fun startActivityForResult(intent: Map<String, String>): Map<String, String>? = null
         }
         override val secureStore = object : SecureStore {
-            override suspend fun get(key: String): String? = null
-            override suspend fun put(key: String, value: String) {}
+            override suspend fun get(key: String): ByteArray? = null
+            override suspend fun put(key: String, value: ByteArray) {}
             override suspend fun remove(key: String) {}
+            override suspend fun keys(): Set<String> = emptySet()
         }
         override val clock = object : Clock {
-            override fun nowMs(): Long = System.currentTimeMillis()
+            override fun now(): Instant = Instant.fromEpochMilliseconds(System.currentTimeMillis())
+            override fun monotonicMs(): Long = System.currentTimeMillis()
         }
         override val json = object : JsonService {
             override fun parse(json: String): JsonElement = Json.parseToJsonElement(json)

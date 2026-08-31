@@ -89,14 +89,17 @@ class IsolatedFacadeServerTest {
 
     @Test
     fun netRequestWithValidStampReachesHostAndResolvesSecretTemplates() = runTest {
-        secureStore.put("apiToken", "tok-123")
+        secureStore.put("apiToken", "tok-123".toByteArray())
         val reply = server.handle(
             IsolationOps.OP_NET_REQUEST,
             IsolationCodec.encodeCall(
                 buildJsonObject {
                     put("method", "POST")
                     put("url", "https://api.example.test/v1")
-                    put("body", "{\"token\":\"{{secret.apiToken}}\"}")
+                    put(
+                        "bodyB64",
+                        Base64.getEncoder().encodeToString("{\"token\":\"{{secret.apiToken}}\"}".toByteArray()),
+                    )
                     put("headers", buildJsonObject { put("Authorization", "Bearer {{secret.apiToken}}") })
                 },
                 signedStamp(),
@@ -104,7 +107,7 @@ class IsolatedFacadeServerTest {
             callingUid = admittedUid,
         )
         assertEquals(200L, reply["status"]!!.jsonPrimitive.longOrNull)
-        assertEquals("net-ok", reply["body"]!!.jsonPrimitive.content)
+        assertEquals("net-ok", String(Base64.getDecoder().decode(reply["bodyB64"]!!.jsonPrimitive.content)))
         assertEquals("Bearer tok-123", net.lastHeaders["Authorization"])
         assertEquals("{\"token\":\"tok-123\"}", net.lastBody)
     }
@@ -204,16 +207,22 @@ class IsolatedFacadeServerTest {
     fun secureStoreRoundTripForwardsToHost() = runTest {
         server.handle(
             IsolationOps.OP_SECURE_PUT,
-            IsolationCodec.encodeCall(buildJsonObject { put("key", "k"); put("value", "v1") }, null),
+            IsolationCodec.encodeCall(
+                buildJsonObject {
+                    put("key", "k")
+                    put("valueB64", Base64.getEncoder().encodeToString("v1".toByteArray()))
+                },
+                null,
+            ),
             callingUid = admittedUid,
         )
-        assertEquals("v1", secureStore.values["k"])
+        assertEquals("v1", secureStore.values["k"]?.decodeToString())
         val get = server.handle(
             IsolationOps.OP_SECURE_GET,
             IsolationCodec.encodeCall(buildJsonObject { put("key", "k") }, null),
             callingUid = admittedUid,
         )
-        assertEquals("v1", get["value"]!!.jsonPrimitive.content)
+        assertEquals("v1", String(Base64.getDecoder().decode(get["valueB64"]!!.jsonPrimitive.content)))
         server.handle(
             IsolationOps.OP_SECURE_REMOVE,
             IsolationCodec.encodeCall(buildJsonObject { put("key", "k") }, null),

@@ -2,6 +2,7 @@ package com.morainet.mcos.plugin.files
 
 import com.morainet.mcos.sdk.*
 import kotlinx.coroutines.runBlocking
+import kotlinx.datetime.Instant as KxInstant
 import kotlinx.serialization.json.*
 import kotlin.test.*
 import java.time.Instant
@@ -530,7 +531,8 @@ class StubFilesHostServices : HostServices {
     }
     override val secureStore: SecureStore get() = error("SecureStore not available")
     override val clock: Clock = object : Clock {
-        override fun nowMs(): Long = System.currentTimeMillis()
+        override fun now(): KxInstant = KxInstant.fromEpochMilliseconds(System.currentTimeMillis())
+        override fun monotonicMs(): Long = System.currentTimeMillis()
     }
     override val json: JsonService get() = error("JsonService not available")
 }

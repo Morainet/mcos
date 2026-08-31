@@ -34,10 +34,12 @@ import android.view.WindowManager
 import android.widget.Toast
 import androidx.core.content.FileProvider
 import com.morainet.mcos.sdk.*
+import kotlinx.datetime.Instant
 import kotlinx.serialization.json.*
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.Base64
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -58,7 +60,8 @@ class AndroidHostServices(
     override val ui: UiService = AndroidUiService(context, resultBridge)
     override val secureStore: SecureStore = AndroidSecureStore(context)
     override val clock: Clock = object : Clock {
-        override fun nowMs(): Long = System.currentTimeMillis()
+        override fun now(): Instant = Instant.fromEpochMilliseconds(System.currentTimeMillis())
+        override fun monotonicMs(): Long = System.nanoTime() / 1_000_000
     }
     override val json: JsonService = object : JsonService {
         private val j = Json { ignoreUnknownKeys = true }
@@ -191,27 +194,33 @@ class AndroidFileService(private val context: Context) : FileService {
 // ── NetService ──────────────────────────────────────────────────────────────
 
 class AndroidNetService : NetService {
-    override suspend fun request(
-        method: String, url: String, body: String?, headers: Map<String, String>,
-    ): NetResponse {
+    override suspend fun request(req: HttpRequest): HttpResponse {
         return try {
-            val conn = URL(url).openConnection() as HttpURLConnection
-            conn.requestMethod = method.uppercase()
-            conn.connectTimeout = 10_000
-            conn.readTimeout = 10_000
-            headers.forEach { (k, v) -> conn.setRequestProperty(k, v) }
+            val conn = URL(req.url).openConnection() as HttpURLConnection
+            conn.requestMethod = req.method.uppercase()
+            conn.connectTimeout = req.timeoutMs.coerceAtLeast(1_000).toInt()
+            conn.readTimeout = req.timeoutMs.coerceAtLeast(1_000).toInt()
+            req.headers.forEach { (k, v) -> conn.setRequestProperty(k, v) }
 
-            if (body != null && method.uppercase() in setOf("POST", "PUT", "PATCH")) {
+            if (req.body != null && req.method.uppercase() in setOf("POST", "PUT", "PATCH")) {
                 conn.doOutput = true
-                conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+                conn.outputStream.use { it.write(req.body) }
             }
 
             val code = conn.responseCode
             val stream = if (code in 200..299) conn.inputStream else conn.errorStream
-            val text = stream?.bufferedReader()?.use { it.readText() } ?: ""
-            NetResponse(status = code, body = text)
+            val bytes = stream?.use { it.readBytes() } ?: ByteArray(0)
+            HttpResponse(
+                status = code,
+                // headerFields keys the status line with null — drop it; the
+                // multi-map keeps repeated headers (Set-Cookie, …) distinct.
+                headers = conn.headerFields.orEmpty()
+                    .filterKeys { it != null }
+                    .mapKeys { it.key.lowercase() },
+                body = bytes,
+            )
         } catch (e: Exception) {
-            NetResponse(status = 0, body = e.message ?: "Unknown network error")
+            HttpResponse(status = 0, body = (e.message ?: "Unknown network error").encodeToByteArray())
         }
     }
 }
@@ -634,16 +643,28 @@ class AndroidHapticsService(private val context: Context) : HapticsService {
 
 // ── SecureStore ─────────────────────────────────────────────────────────────
 
+/**
+ * SecureStore over app-private SharedPreferences: values are Base64-encoded
+ * bytes (04-plugin-sdk.md 6.4 — secrets are byte-valued), namespaced by the
+ * caller's key scheme. Honest boundary: the backing store is app-private
+ * plaintext on disk today; wrapping values with a Keystore-held AES key is
+ * the tracked hardening item (11-implementation-status).
+ */
 class AndroidSecureStore(private val context: Context) : SecureStore {
     private val prefs = context.getSharedPreferences("mcos_secure", Context.MODE_PRIVATE)
 
-    override suspend fun get(key: String): String? = prefs.getString(key, null)
-    override suspend fun put(key: String, value: String) {
-        prefs.edit().putString(key, value).apply()
+    override suspend fun get(key: String): ByteArray? =
+        prefs.getString(key, null)?.let { runCatching { Base64.getDecoder().decode(it) }.getOrNull() }
+
+    override suspend fun put(key: String, value: ByteArray) {
+        prefs.edit().putString(key, Base64.getEncoder().encodeToString(value)).apply()
     }
+
     override suspend fun remove(key: String) {
         prefs.edit().remove(key).apply()
     }
+
+    override suspend fun keys(): Set<String> = prefs.all.keys
 }
 
 // ── MemoryFacade ────────────────────────────────────────────────────────────

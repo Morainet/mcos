@@ -4,15 +4,17 @@ import com.morainet.mcos.sdk.Clock
 import com.morainet.mcos.sdk.FileEntry
 import com.morainet.mcos.sdk.FileService
 import com.morainet.mcos.sdk.HostServices
+import com.morainet.mcos.sdk.HttpRequest
+import com.morainet.mcos.sdk.HttpResponse
 import com.morainet.mcos.sdk.JsonService
 import com.morainet.mcos.sdk.MemoryFacade
-import com.morainet.mcos.sdk.NetResponse
 import com.morainet.mcos.sdk.NetService
 import com.morainet.mcos.sdk.ResolveResult
 import com.morainet.mcos.sdk.SandboxEntry
 import com.morainet.mcos.sdk.SandboxFileService
 import com.morainet.mcos.sdk.SecureStore
 import com.morainet.mcos.sdk.UiService
+import kotlinx.datetime.Instant
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -49,35 +51,41 @@ class FakeFlatSandbox : SandboxFileService {
     }
 }
 
-class CapturingNetService(var response: NetResponse = NetResponse(200, "net-ok", emptyMap())) : NetService {
+class CapturingNetService(
+    var response: HttpResponse = HttpResponse(200, body = "net-ok".encodeToByteArray()),
+) : NetService {
     var lastMethod: String? = null
         private set
     var lastUrl: String? = null
         private set
     var lastBody: String? = null
         private set
+    /** Raw request bytes as received — binary-passthrough assertions need
+     *  the exact payload, not a lossy text view. */
+    var lastRawBody: ByteArray? = null
+        private set
     var lastHeaders: Map<String, String> = emptyMap()
         private set
     var calls = 0
         private set
 
-    override suspend fun request(
-        method: String, url: String, body: String?, headers: Map<String, String>,
-    ): NetResponse {
+    override suspend fun request(req: HttpRequest): HttpResponse {
         calls++
-        lastMethod = method
-        lastUrl = url
-        lastBody = body
-        lastHeaders = headers
+        lastMethod = req.method
+        lastUrl = req.url
+        lastBody = req.body?.decodeToString()
+        lastRawBody = req.body
+        lastHeaders = req.headers
         return response
     }
 }
 
 class MapSecureStore : SecureStore {
-    val values = LinkedHashMap<String, String>()
-    override suspend fun get(key: String): String? = values[key]
-    override suspend fun put(key: String, value: String) { values[key] = value }
+    val values = LinkedHashMap<String, ByteArray>()
+    override suspend fun get(key: String): ByteArray? = values[key]
+    override suspend fun put(key: String, value: ByteArray) { values[key] = value }
     override suspend fun remove(key: String) { values.remove(key) }
+    override suspend fun keys(): Set<String> = values.keys.toSet()
 }
 
 class CannedMemory(
@@ -105,7 +113,8 @@ class FakeHostServices(
             throw IllegalStateException("ui not served in isolation tests")
     }
     override val clock: Clock = object : Clock {
-        override fun nowMs(): Long = now()
+        override fun now(): Instant = Instant.fromEpochMilliseconds(this@FakeHostServices.now())
+        override fun monotonicMs(): Long = this@FakeHostServices.now()
     }
     override val json: JsonService = object : JsonService {
         override fun parse(jsonStr: String): JsonElement = Json.parseToJsonElement(jsonStr)

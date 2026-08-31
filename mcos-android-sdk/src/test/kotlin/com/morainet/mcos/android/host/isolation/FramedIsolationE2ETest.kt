@@ -11,6 +11,7 @@ import com.morainet.mcos.sdk.CommandManifestEntry
 import com.morainet.mcos.sdk.CommandResult
 import com.morainet.mcos.sdk.ExecutionContext
 import com.morainet.mcos.sdk.HostServices
+import com.morainet.mcos.sdk.HttpRequest
 import com.morainet.mcos.sdk.McosPlugin
 import com.morainet.mcos.sdk.PluginManifest
 import com.morainet.mcos.sdk.ProviderInfo
@@ -144,15 +145,17 @@ class FramedIsolationE2ETest {
         val h = harness(handler = object : CommandHandler {
             override suspend fun invoke(ctx: ExecutionContext): CommandResult {
                 val resp = ctx.services.net.request(
-                    method = "POST",
-                    url = "https://api.example.test/v1/framed",
-                    body = "{{secret.framedToken}}",
+                    HttpRequest(
+                        method = "POST",
+                        url = "https://api.example.test/v1/framed",
+                        body = "{{secret.framedToken}}".toByteArray(),
+                    ),
                 )
                 ctx.services.sandbox!!.write("out/framed.txt", "framed-ok".toByteArray())
-                return CommandResult.Ok(JsonPrimitive(resp.body ?: "null"))
+                return CommandResult.Ok(JsonPrimitive(resp.bodyText))
             }
         })
-        h.secureStore.put("framedToken", "tok-framed")
+        h.secureStore.put("framedToken", "tok-framed".toByteArray())
 
         val result = h.executor.execute(commandId, auth = networkStamp(), source = "CHAT")
 

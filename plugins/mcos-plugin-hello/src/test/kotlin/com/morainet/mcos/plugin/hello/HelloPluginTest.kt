@@ -2,6 +2,7 @@ package com.morainet.mcos.plugin.hello
 
 import com.morainet.mcos.sdk.*
 import kotlinx.coroutines.runBlocking
+import kotlinx.datetime.Instant
 import kotlinx.serialization.json.*
 import kotlin.test.*
 
@@ -107,7 +108,8 @@ class StubHelloHostServices : HostServices {
     }
     override val secureStore: SecureStore get() = error("not available")
     override val clock: Clock = object : Clock {
-        override fun nowMs(): Long = System.currentTimeMillis()
+        override fun now(): Instant = Instant.fromEpochMilliseconds(System.currentTimeMillis())
+        override fun monotonicMs(): Long = System.currentTimeMillis()
     }
     override val json: JsonService get() = error("not available")
 }

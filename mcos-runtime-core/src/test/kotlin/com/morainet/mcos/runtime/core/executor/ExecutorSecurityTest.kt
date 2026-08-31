@@ -15,11 +15,12 @@ import com.morainet.mcos.sdk.CommandResult
 import com.morainet.mcos.sdk.ExecutionContext
 import com.morainet.mcos.sdk.FileService
 import com.morainet.mcos.sdk.HostServices
+import com.morainet.mcos.sdk.HttpRequest
+import com.morainet.mcos.sdk.HttpResponse
 import com.morainet.mcos.sdk.JsonService
 import com.morainet.mcos.sdk.McosPlugin
 import com.morainet.mcos.sdk.MemoryFacade
 import com.morainet.mcos.sdk.NetService
-import com.morainet.mcos.sdk.NetResponse
 import com.morainet.mcos.sdk.PluginManifest
 import com.morainet.mcos.sdk.ProviderInfo
 import com.morainet.mcos.sdk.SecureStore
@@ -49,7 +50,7 @@ class ExecutorSecurityTest {
         quarantine: CrashQuarantine = NoopCrashQuarantine,
     ): Triple<Executor, CommandRegistry, RecordingNetService> {
         val net = RecordingNetService()
-        val store = MapSecureStore(mutableMapOf("token" to "top-secret"))
+        val store = MapSecureStore(mutableMapOf("token" to "top-secret".encodeToByteArray()))
         val registry = CommandRegistry()
         val executor = Executor(
             registry,
@@ -69,9 +70,11 @@ class ExecutorSecurityTest {
         val (executor, registry, net) = newExecutor()
         registry.register(createPlugin("sec.plugin", "net.auth") { ctx ->
             ctx.services.net.request(
-                method = "GET",
-                url = "https://api.example.com/v1",
-                headers = mapOf("Authorization" to "Bearer {{secret.token}}"),
+                HttpRequest(
+                    method = "GET",
+                    url = "https://api.example.com/v1",
+                    headers = mapOf("Authorization" to "Bearer {{secret.token}}"),
+                )
             )
             CommandResult.Ok(JsonPrimitive("done"))
         })
@@ -87,9 +90,11 @@ class ExecutorSecurityTest {
         val (executor, registry, net) = newExecutor()
         registry.register(createPlugin("sec.plugin", "net.post") { ctx ->
             ctx.services.net.request(
-                method = "POST",
-                url = "https://api.example.com/v1",
-                body = """{"token":"{{secret.token}}"}""",
+                HttpRequest(
+                    method = "POST",
+                    url = "https://api.example.com/v1",
+                    body = """{"token":"{{secret.token}}"}""".encodeToByteArray(),
+                )
             )
             CommandResult.Ok(JsonPrimitive("done"))
         })
@@ -105,9 +110,11 @@ class ExecutorSecurityTest {
         registry.register(createPlugin("sec.plugin", "echo.auth") { ctx ->
             seenArgs = ctx.args
             ctx.services.net.request(
-                method = "GET",
-                url = "https://api.example.com",
-                headers = mapOf("Authorization" to "Bearer {{secret.token}}"),
+                HttpRequest(
+                    method = "GET",
+                    url = "https://api.example.com",
+                    headers = mapOf("Authorization" to "Bearer {{secret.token}}"),
+                )
             )
             CommandResult.Ok(JsonPrimitive("done"))
         })
@@ -125,9 +132,11 @@ class ExecutorSecurityTest {
         val (executor, registry, net) = newExecutor()
         registry.register(createPlugin("sec.plugin", "net.missing") { ctx ->
             ctx.services.net.request(
-                method = "GET",
-                url = "https://api.example.com",
-                headers = mapOf("Authorization" to "Bearer {{secret.missingKey}}"),
+                HttpRequest(
+                    method = "GET",
+                    url = "https://api.example.com",
+                    headers = mapOf("Authorization" to "Bearer {{secret.missingKey}}"),
+                )
             )
             CommandResult.Ok(JsonPrimitive("done"))
         })
@@ -261,28 +270,24 @@ class ExecutorSecurityTest {
         var lastHeaders: Map<String, String> = emptyMap()
         var requestCount: Int = 0
 
-        override suspend fun request(
-            method: String,
-            url: String,
-            body: String?,
-            headers: Map<String, String>,
-        ): NetResponse {
-            lastMethod = method
-            lastUrl = url
-            lastBody = body
-            lastHeaders = headers
+        override suspend fun request(req: HttpRequest): HttpResponse {
+            lastMethod = req.method
+            lastUrl = req.url
+            lastBody = req.body?.decodeToString()
+            lastHeaders = req.headers
             requestCount++
-            return NetResponse(status = 200, body = "{}")
+            return HttpResponse(status = 200, body = "{}".encodeToByteArray())
         }
     }
 
     /** In-memory SecureStore backed by a mutable map. */
     private class MapSecureStore(
-        private val entries: MutableMap<String, String> = mutableMapOf(),
+        private val entries: MutableMap<String, ByteArray> = mutableMapOf(),
     ) : SecureStore {
-        override suspend fun get(key: String): String? = entries[key]
-        override suspend fun put(key: String, value: String) { entries[key] = value }
+        override suspend fun get(key: String): ByteArray? = entries[key]
+        override suspend fun put(key: String, value: ByteArray) { entries[key] = value }
         override suspend fun remove(key: String) { entries.remove(key) }
+        override suspend fun keys(): Set<String> = entries.keys
     }
 
     /** Minimal HostServices stub backed by the injected net/secureStore. */

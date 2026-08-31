@@ -4,6 +4,7 @@ kotlin = "2.0.21"
 composeBom = "2024.12.01"
 coroutines = "1.9.0"
 serialization = "1.7.3"
+datetime = "0.6.2"
 androidx-core = "1.15.0"
 androidx-lifecycle = "2.8.7"
 androidx-activity = "1.9.3"
@@ -12,6 +13,9 @@ androidx-activity = "1.9.3"
 # Kotlin
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
+# Clock.now(): Instant — the spec-named type (04-plugin-sdk.md 6.5); 0.6.x is
+# the line compatible with this repo's Kotlin 2.0.21 toolchain.
+kotlinx-datetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.ref = "datetime" }
 
 # AndroidX
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidx-core" }

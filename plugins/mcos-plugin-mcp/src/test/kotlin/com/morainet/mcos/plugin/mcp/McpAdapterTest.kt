@@ -1,7 +1,7 @@
 package com.morainet.mcos.plugin.mcp
 
 import com.morainet.mcos.sdk.CommandResult
-import com.morainet.mcos.sdk.NetResponse
+import com.morainet.mcos.sdk.HttpResponse
 import com.morainet.mcos.sdk.SideEffectClass
 import java.io.IOException
 import kotlinx.coroutines.runBlocking
@@ -36,14 +36,14 @@ class McpAdapterTest {
     """.trimIndent()
 
     private fun routing(
-        onList: () -> NetResponse = { rpcOk("""{"tools":[]}""") },
-        onCall: (RecordedRequest) -> NetResponse = { rpcOk("""{"content":[],"isError":false}""") },
+        onList: () -> HttpResponse = { rpcOk("""{"tools":[]}""") },
+        onCall: (RecordedRequest) -> HttpResponse = { rpcOk("""{"content":[],"isError":false}""") },
     ): FakeNetService = FakeNetService { req ->
         val method = Json.parseToJsonElement(req.body!!).jsonObject["method"]!!.jsonPrimitive.content
         when (method) {
             "tools/list" -> onList()
             "tools/call" -> onCall(req)
-            else -> NetResponse(404, null)
+            else -> HttpResponse(404)
         }
     }
 
@@ -146,7 +146,7 @@ class McpAdapterTest {
     @Test fun `AD10 HTTP 401 on a tool call maps to PERMISSION_DENIED`() = runBlocking {
         val net = routing(
             onList = { rpcOk("""{"tools":[{"name":"echo","inputSchema":{"type":"object"}}]}""") },
-            onCall = { NetResponse(401, null) },
+            onCall = { HttpResponse(401) },
         )
         val discovery = McpAdapter.discover(McpClient(net, config.endpoint), config)
         val result = discovery.plugin.handlers()["mcp.demo.echo"]!!.invoke(
@@ -172,7 +172,8 @@ class McpAdapterTest {
         val net = routing(
             onList = { rpcOk("""{"tools":[{"name":"echo","inputSchema":{"type":"object"}}]}""") },
             onCall = {
-                NetResponse(200, """{"jsonrpc":"2.0","id":2,"error":{"code":-32602,"message":"bad args"}}""")
+                val err = """{"jsonrpc":"2.0","id":2,"error":{"code":-32602,"message":"bad args"}}"""
+                HttpResponse(200, body = err.encodeToByteArray())
             },
         )
         val discovery = McpAdapter.discover(McpClient(net, config.endpoint), config)

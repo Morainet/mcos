@@ -2,6 +2,8 @@ package com.morainet.mcos.android.host.isolation
 
 import com.morainet.mcos.security.HmacAuthStampSigner
 import com.morainet.mcos.sdk.AuthStamp
+import com.morainet.mcos.sdk.HttpRequest
+import com.morainet.mcos.sdk.HttpResponse
 import com.morainet.mcos.sdk.McosException
 import com.morainet.mcos.sdk.ResolveResult
 import kotlinx.coroutines.test.runTest
@@ -52,16 +54,18 @@ class IsolatedHostServicesProxyTest {
 
     @Test
     fun netForwardsThroughTheStampScopeGate() = runTest {
-        secureStore.put("apiToken", "tok-9")
+        secureStore.put("apiToken", "tok-9".toByteArray())
         val proxy = IsolatedHostServicesProxy(loopback(), stamp())
         val response = proxy.net.request(
-            method = "POST",
-            url = "https://api.example.test/v1/thing",
-            body = "{{secret.apiToken}}",
-            headers = mapOf("Authorization" to "Bearer {{secret.apiToken}}"),
+            HttpRequest(
+                method = "POST",
+                url = "https://api.example.test/v1/thing",
+                body = "{{secret.apiToken}}".toByteArray(),
+                headers = mapOf("Authorization" to "Bearer {{secret.apiToken}}"),
+            ),
         )
         assertEquals(200, response.status)
-        assertEquals("net-ok", response.body)
+        assertEquals("net-ok", response.bodyText)
         assertEquals("Bearer tok-9", net.lastHeaders["Authorization"])
         assertEquals("tok-9", net.lastBody)
     }
@@ -72,7 +76,7 @@ class IsolatedHostServicesProxyTest {
         val proxy = IsolatedHostServicesProxy(loopback(), null)
         val e = assertThrows(McosException::class.java) {
             kotlinx.coroutines.runBlocking {
-                proxy.net.request("GET", "https://api.example.test/")
+                proxy.net.request(HttpRequest(url = "https://api.example.test/"))
             }
         }
         assertEquals("PERMISSION_DENIED", e.code)
@@ -94,11 +98,40 @@ class IsolatedHostServicesProxyTest {
     @Test
     fun secureStoreMembersForwardLosslessly() = runTest {
         val proxy = IsolatedHostServicesProxy(loopback(), stamp())
-        proxy.secureStore.put("apiKey", "v-1")
-        assertEquals("v-1", secureStore.values["apiKey"])
-        assertEquals("v-1", proxy.secureStore.get("apiKey"))
+        proxy.secureStore.put("apiKey", "v-1".toByteArray())
+        assertEquals("v-1", secureStore.values["apiKey"]?.decodeToString())
+        assertEquals("v-1", proxy.secureStore.get("apiKey")?.decodeToString())
         proxy.secureStore.remove("apiKey")
         assertEquals(null, secureStore.values["apiKey"])
+    }
+
+    @Test
+    fun secureStoreKeysEnumeratesAcrossTheWire() = runTest {
+        val proxy = IsolatedHostServicesProxy(loopback(), stamp())
+        proxy.secureStore.put("mcp.secret.alpha", "a".toByteArray())
+        proxy.secureStore.put("mcp.secret.beta", byteArrayOf(0x00, 0xFF.toByte(), 0x80.toByte()))
+        assertEquals(setOf("mcp.secret.alpha", "mcp.secret.beta"), proxy.secureStore.keys())
+        proxy.secureStore.remove("mcp.secret.alpha")
+        assertEquals(setOf("mcp.secret.beta"), proxy.secureStore.keys())
+    }
+
+    @Test
+    fun netBinaryBodyAndMultiValueHeadersSurviveTheWire() = runTest {
+        // Bytes that are NOT valid UTF-8 plus repeated response headers —
+        // exactly the payload shapes the item-46 byte wire must not flatten.
+        val payload = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0xFF.toByte(), 0xFE.toByte(), 0x00, 0x80.toByte())
+        val replyBytes = byteArrayOf(0x01, 0x02, 0xFF.toByte())
+        val cookies = mapOf("set-cookie" to listOf("session=abc; Path=/", "tracker=xyz; Path=/"))
+        net.response = HttpResponse(status = 200, headers = cookies, body = replyBytes)
+        val proxy = IsolatedHostServicesProxy(loopback(), stamp())
+
+        val response = proxy.net.request(
+            HttpRequest(method = "POST", url = "https://api.example.test/upload", body = payload),
+        )
+
+        assertTrue("binary request body must cross the wire byte-identical", payload.contentEquals(net.lastRawBody))
+        assertEquals(cookies, response.headers)
+        assertTrue("binary response body must not be text-flattened", replyBytes.contentEquals(response.body))
     }
 
     @Test

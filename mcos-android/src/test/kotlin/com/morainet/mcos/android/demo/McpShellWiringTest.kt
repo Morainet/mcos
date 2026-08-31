@@ -3,8 +3,9 @@ package com.morainet.mcos.android.demo
 import com.morainet.mcos.android.host.InMemoryFacade
 import com.morainet.mcos.runtime.core.api.StubHostServices
 import com.morainet.mcos.sdk.HostServices
+import com.morainet.mcos.sdk.HttpRequest
+import com.morainet.mcos.sdk.HttpResponse
 import com.morainet.mcos.sdk.NetService
-import com.morainet.mcos.sdk.NetResponse
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -78,7 +79,7 @@ class McpShellWiringTest {
         )
         // The list persists (id/endpoint/enabled) as JSON; the token is not here.
         assertNotNull(secureStore.get("mcp_servers"))
-        assertTrue(secureStore.get("mcp_servers")!!.contains("demo"))
+        assertTrue(secureStore.get("mcp_servers")!!.decodeToString().contains("demo"))
     }
 
     @Test
@@ -113,19 +114,17 @@ class McpShellWiringTest {
      * advertises a mappable `echo` tool; `tools/call` echoes a text envelope.
      */
     private class FakeMcpNetService : NetService {
-        override suspend fun request(
-            method: String,
-            url: String,
-            body: String?,
-            headers: Map<String, String>,
-        ): NetResponse {
-            val result = if (body?.contains("\"tools/list\"") == true) {
+        override suspend fun request(req: HttpRequest): HttpResponse {
+            val result = if (req.body?.decodeToString()?.contains("\"tools/list\"") == true) {
                 """{"tools":[{"name":"echo","description":"Echo text",""" +
                     """"inputSchema":{"type":"object","properties":{"text":{"type":"string"}}}}]}"""
             } else {
                 """{"content":[{"type":"text","text":"ok"}],"isError":false}"""
             }
-            return NetResponse(status = 200, body = """{"jsonrpc":"2.0","id":1,"result":$result}""")
+            return HttpResponse(
+                status = 200,
+                body = """{"jsonrpc":"2.0","id":1,"result":$result}""".encodeToByteArray(),
+            )
         }
     }
 }

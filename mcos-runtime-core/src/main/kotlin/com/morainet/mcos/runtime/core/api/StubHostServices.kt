@@ -8,6 +8,7 @@ import com.morainet.mcos.sdk.MemoryFacade
 import com.morainet.mcos.sdk.NetService
 import com.morainet.mcos.sdk.SecureStore
 import com.morainet.mcos.sdk.UiService
+import kotlinx.datetime.Instant
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -18,10 +19,11 @@ class StubHostServices(
     override val memory: MemoryFacade,
 ) : HostServices {
     private val stubSecureStore = object : SecureStore {
-        private val entries = ConcurrentHashMap<String, String>()
-        override suspend fun get(key: String): String? = entries[key]
-        override suspend fun put(key: String, value: String) { entries[key] = value }
+        private val entries = ConcurrentHashMap<String, ByteArray>()
+        override suspend fun get(key: String): ByteArray? = entries[key]
+        override suspend fun put(key: String, value: ByteArray) { entries[key] = value }
         override suspend fun remove(key: String) { entries.remove(key) }
+        override suspend fun keys(): Set<String> = entries.keys.toSet()
     }
 
     override val files: FileService get() = error("FileService not available in stub")
@@ -29,7 +31,8 @@ class StubHostServices(
     override val ui: UiService get() = error("UiService not available in stub")
     override val secureStore: SecureStore get() = stubSecureStore
     override val clock: Clock get() = object : Clock {
-        override fun nowMs(): Long = System.currentTimeMillis()
+        override fun now(): Instant = Instant.fromEpochMilliseconds(System.currentTimeMillis())
+        override fun monotonicMs(): Long = System.nanoTime() / 1_000_000
     }
     override val json: JsonService get() = error("JsonService not available in stub")
 }

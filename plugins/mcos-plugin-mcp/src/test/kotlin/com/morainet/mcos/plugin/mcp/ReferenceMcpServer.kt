@@ -1,6 +1,7 @@
 package com.morainet.mcos.plugin.mcp
 
-import com.morainet.mcos.sdk.NetResponse
+import com.morainet.mcos.sdk.HttpRequest
+import com.morainet.mcos.sdk.HttpResponse
 import com.morainet.mcos.sdk.NetService
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
@@ -12,8 +13,8 @@ import kotlinx.serialization.json.jsonPrimitive
 import java.net.InetSocketAddress
 import java.net.URI
 import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
+import java.net.http.HttpRequest as JdkHttpRequest
+import java.net.http.HttpResponse as JdkHttpResponse
 import java.time.Duration
 
 /**
@@ -101,19 +102,14 @@ class ReferenceMcpServer(
 class JdkNetService : NetService {
     private val http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build()
 
-    override suspend fun request(
-        method: String,
-        url: String,
-        body: String?,
-        headers: Map<String, String>,
-    ): NetResponse {
-        val builder = HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofSeconds(5))
-        headers.forEach { (k, v) -> builder.header(k, v) }
-        when (method.uppercase()) {
-            "POST" -> builder.POST(HttpRequest.BodyPublishers.ofString(body ?: ""))
+    override suspend fun request(req: HttpRequest): HttpResponse {
+        val builder = JdkHttpRequest.newBuilder(URI.create(req.url)).timeout(Duration.ofSeconds(5))
+        req.headers.forEach { (k, v) -> builder.header(k, v) }
+        when (req.method.uppercase()) {
+            "POST" -> builder.POST(JdkHttpRequest.BodyPublishers.ofByteArray(req.body ?: ByteArray(0)))
             else -> builder.GET()
         }
-        val resp = http.send(builder.build(), HttpResponse.BodyHandlers.ofString())
-        return NetResponse(status = resp.statusCode(), body = resp.body())
+        val resp = http.send(builder.build(), JdkHttpResponse.BodyHandlers.ofByteArray())
+        return HttpResponse(status = resp.statusCode(), body = resp.body())
     }
 }

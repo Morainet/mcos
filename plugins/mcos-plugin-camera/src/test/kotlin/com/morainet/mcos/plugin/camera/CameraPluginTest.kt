@@ -2,6 +2,7 @@ package com.morainet.mcos.plugin.camera
 
 import com.morainet.mcos.sdk.*
 import kotlinx.coroutines.runBlocking
+import kotlinx.datetime.Instant
 import kotlinx.serialization.json.*
 import kotlin.test.*
 
@@ -236,7 +237,8 @@ class StubHostServices : HostServices {
 
     override val secureStore: SecureStore get() = error("SecureStore not available")
     override val clock: Clock = object : Clock {
-        override fun nowMs(): Long = System.currentTimeMillis()
+        override fun now(): Instant = Instant.fromEpochMilliseconds(System.currentTimeMillis())
+        override fun monotonicMs(): Long = System.currentTimeMillis()
     }
     override val json: JsonService get() = error("JsonService not available")
 }

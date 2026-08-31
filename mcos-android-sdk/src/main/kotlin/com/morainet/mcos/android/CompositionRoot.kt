@@ -382,13 +382,16 @@ object CompositionRoot {
     /**
      * Return the persisted seed for [key], generating and storing it on
      * first use. One short runBlocking over the SharedPreferences-backed
-     * [AndroidSecureStore]; kept narrow so only this read blocks. Same
-     * construction as the audit export seed — separate keys per purpose.
+     * [AndroidSecureStore]; kept narrow so only this read blocks. The raw
+     * 32 bytes live in the store (04 §6.4 byte-valued secrets); the Base64
+     * rendering is only the in-memory key-material form. Same construction
+     * as the audit export seed — separate keys per purpose.
      */
     private fun persistedSeed(store: SecureStore, key: String): String = runBlocking {
-        store.get(key) ?: Base64.encodeToString(
-            ByteArray(32).also { SecureRandom().nextBytes(it) },
-            Base64.NO_WRAP,
-        ).also { store.put(key, it) }
+        val existing = store.get(key)
+        val seed = existing ?: ByteArray(32)
+            .also { random -> SecureRandom().nextBytes(random) }
+            .also { generated -> store.put(key, generated) }
+        Base64.encodeToString(seed, Base64.NO_WRAP)
     }
 }

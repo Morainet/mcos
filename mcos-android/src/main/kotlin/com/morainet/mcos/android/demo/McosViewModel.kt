@@ -160,7 +160,7 @@ class McosViewModel : ViewModel() {
         if (!persistedKeyLoaded) {
             persistedKeyLoaded = true
             viewModelScope.launch {
-                deps.secureStore.get(LLM_API_KEY)?.let { onApiKeyChange(it) }
+                deps.secureStore.get(LLM_API_KEY)?.decodeToString()?.let { onApiKeyChange(it) }
                 restoreMcpServers()
             }
         }
@@ -535,7 +535,7 @@ class McosViewModel : ViewModel() {
         viewModelScope.launch {
             try {
                 // Persist the key so it survives restarts.
-                deps().secureStore.put(LLM_API_KEY, key)
+                deps().secureStore.put(LLM_API_KEY, key.encodeToByteArray())
                 loadPlugins()
 
                 log("[${now()}] Planning “${s.nlText.take(60)}”…")
@@ -620,7 +620,7 @@ class McosViewModel : ViewModel() {
         viewModelScope.launch {
             try {
                 // Persist the key so it survives restarts.
-                deps().secureStore.put(LLM_API_KEY, key)
+                deps().secureStore.put(LLM_API_KEY, key.encodeToByteArray())
                 loadPlugins()
 
                 val bridge = agentBridgeOverride ?: bridgeFor(key)
@@ -779,7 +779,7 @@ private class DemoMcpBridge(private val deps: AppDeps) : McpServerBridge {
                 endpoint = record.endpoint,
                 secretKey = secretKey,
             ),
-            secretLookup = { key -> deps.hostServices.secureStore.get(key) },
+            secretLookup = { key -> deps.hostServices.secureStore.get(key)?.decodeToString() },
         )
         return BridgedMcpServer(
             plugin = discovery.plugin,

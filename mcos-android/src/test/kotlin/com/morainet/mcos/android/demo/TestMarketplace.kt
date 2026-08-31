@@ -303,12 +303,17 @@ object TestMarketplace {
         )
     }
 
-    /** In-memory [SecureStore] with optional pre-seeded entries. */
+    /** In-memory [SecureStore] with optional pre-seeded entries (UTF-8 text). */
     class FakeSecureStore(initial: Map<String, String> = emptyMap()) : SecureStore {
-        private val entries = mutableMapOf<String, String>().apply { putAll(initial) }
-        override suspend fun get(key: String): String? = entries[key]
-        override suspend fun put(key: String, value: String) { entries[key] = value }
+        private val entries = mutableMapOf<String, ByteArray>()
+        init {
+            initial.forEach { (k, v) -> entries[k] = v.encodeToByteArray() }
+        }
+
+        override suspend fun get(key: String): ByteArray? = entries[key]
+        override suspend fun put(key: String, value: ByteArray) { entries[key] = value }
         override suspend fun remove(key: String) { entries.remove(key) }
-        fun entriesForTest(): Map<String, String> = entries.toMap()
+        override suspend fun keys(): Set<String> = entries.keys.toSet()
+        fun entriesForTest(): Map<String, ByteArray> = entries.toMap()
     }
 }

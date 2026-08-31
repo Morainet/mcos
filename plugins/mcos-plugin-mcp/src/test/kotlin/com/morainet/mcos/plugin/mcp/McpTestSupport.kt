@@ -5,13 +5,15 @@ import com.morainet.mcos.sdk.ExecutionContext
 import com.morainet.mcos.sdk.FileEntry
 import com.morainet.mcos.sdk.FileService
 import com.morainet.mcos.sdk.HostServices
+import com.morainet.mcos.sdk.HttpRequest
+import com.morainet.mcos.sdk.HttpResponse
 import com.morainet.mcos.sdk.JsonService
 import com.morainet.mcos.sdk.MemoryFacade
-import com.morainet.mcos.sdk.NetResponse
 import com.morainet.mcos.sdk.NetService
 import com.morainet.mcos.sdk.ResolveResult
 import com.morainet.mcos.sdk.SecureStore
 import com.morainet.mcos.sdk.UiService
+import kotlinx.datetime.Instant
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -28,23 +30,18 @@ data class RecordedRequest(
 
 /**
  * A [NetService] driven by a caller-supplied handler. The handler may inspect
- * the JSON-RPC body and return a canned [NetResponse], or throw to simulate a
+ * the JSON-RPC body and return a canned [HttpResponse], or throw to simulate a
  * connection-level fault.
  */
 class FakeNetService(
-    private val handler: (RecordedRequest) -> NetResponse,
+    private val handler: (RecordedRequest) -> HttpResponse,
 ) : NetService {
     val requests = mutableListOf<RecordedRequest>()
 
-    override suspend fun request(
-        method: String,
-        url: String,
-        body: String?,
-        headers: Map<String, String>,
-    ): NetResponse {
-        val req = RecordedRequest(method, url, body, headers)
-        requests += req
-        return handler(req)
+    override suspend fun request(req: HttpRequest): HttpResponse {
+        val recorded = RecordedRequest(req.method, req.url, req.body?.decodeToString(), req.headers)
+        requests += recorded
+        return handler(recorded)
     }
 
     /** The JSON-RPC `method` of the most recent request body. */
@@ -54,8 +51,11 @@ class FakeNetService(
 }
 
 /** Build a JSON-RPC success response wrapping [resultJson]. */
-fun rpcOk(resultJson: String): NetResponse =
-    NetResponse(status = 200, body = """{"jsonrpc":"2.0","id":1,"result":$resultJson}""")
+fun rpcOk(resultJson: String): HttpResponse =
+    HttpResponse(
+        status = 200,
+        body = """{"jsonrpc":"2.0","id":1,"result":$resultJson}""".encodeToByteArray(),
+    )
 
 /** A minimal [HostServices] whose only live capability is [net]. */
 class TestHostServices(override val net: NetService) : HostServices {
@@ -66,12 +66,14 @@ class TestHostServices(override val net: NetService) : HostServices {
         override suspend fun startActivityForResult(intent: Map<String, String>): Map<String, String>? = null
     }
     override val secureStore: SecureStore = object : SecureStore {
-        override suspend fun get(key: String): String? = null
-        override suspend fun put(key: String, value: String) {}
+        override suspend fun get(key: String): ByteArray? = null
+        override suspend fun put(key: String, value: ByteArray) {}
         override suspend fun remove(key: String) {}
+        override suspend fun keys(): Set<String> = emptySet()
     }
     override val clock: Clock = object : Clock {
-        override fun nowMs(): Long = 0L
+        override fun now(): Instant = Instant.fromEpochMilliseconds(0L)
+        override fun monotonicMs(): Long = 0L
     }
     override val json: JsonService = object : JsonService {
         override fun parse(json: String): JsonElement = Json.parseToJsonElement(json)

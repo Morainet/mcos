@@ -343,7 +343,7 @@ IR 的 `meta` 字段（[02 §8.2](./02-command-protocol.md)）—— `source`、
 
 ## 6. HostServices（面向插件的门面）
 
-> ✅ **Implementation status:** `HostServices` 与 §6.1–6.6 全部接口已在 `mcos-sdk` 落地（JVM 桩 + `mcos-android` 真实现）。v0.x 已知差异：实现用 `val` 属性（规范示意 `fun`），部分签名更精简（`NetService.request(method, url, body, headers)`、`Clock.nowMs()`）——全量签名对齐是 [11-implementation-status.md](./11-implementation-status.md) 记录的 🟡 缺口。§6.7–6.10 的可选能力为 v0.x 增补；§6.1 的作用域存储也已于 v0.x 以可选能力 `sandbox` 交付（见 §6.1 的 as-built 说明）。
+> ✅ **Implementation status:** `HostServices` 与 §6.1–6.6 全部接口已在 `mcos-sdk` 落地（JVM 桩 + `mcos-android` 真实现）。**§6.2/§6.4/§6.5 已完成全量签名对齐**（item 46）：`NetService.request(HttpRequest): HttpResponse`（字节体、`timeoutMs`、多值响应头）、字节值 + `keys()` 的 `SecureStore`、`now(): Instant` + `monotonicMs()` 的 `Clock`。剩余 v0.x 差异：实现用 `val` 属性（规范示意 `fun`）；`websocket()` 为规范标记的 P2，刻意未实现（诚实缺席而非假实现）；`Clock.nowMs()` 保留为派生便捷方法（epoch-ms 仍是 IR/审计/调度的线上格式）。§6.7–6.10 的可选能力为 v0.x 增补；§6.1 的作用域存储也已于 v0.x 以可选能力 `sandbox` 交付（见 §6.1 的 as-built 说明）。
 
 插件应当依赖**门面（facades）**，而非整个 Android 框架。
 
@@ -400,7 +400,7 @@ data class SandboxEntry(val path: String, val isDir: Boolean, val size: Long?)
 
 处理器返回的产出物应使用 `tempFile(...)` 或稳定的沙箱路径，然后返回 URI —— 切勿在 `CommandResult.Ok` 中内联字节（见 §7.3）。**密钥绝不落入沙箱** —— 它是明文的应用私有存储；请使用 `SecureStore`（§6.4、[08 §9](./08-security.md)）。
 
-> 🟡 **v0.x 差异（诚实记录）：** 上述字节 API 比最初的流式示意（`openInput`/`openOutput` → `InputFlow`/`OutputFlow`）更精简 —— 与 `NetService`/`Clock` 属同一 drift 家族，由 [11-implementation-status.md](./11-implementation-status.md) 跟踪；"用户通过系统选择器授予沙箱外访问"的流程属 V1 宿主工作；超出单次写入 1 MiB 上限的按插件配额尚未实现。
+> 🟡 **v0.x 差异（诚实记录）：** 上述字节 API 比最初的流式示意（`openInput`/`openOutput` → `InputFlow`/`OutputFlow`）更精简——这是本节自身记录的 drift（NetService/Clock 的同族 drift 已随 item 46 对齐关闭）；"用户通过系统选择器授予沙箱外访问"的流程属 V1 宿主工作；超出单次写入 1 MiB 上限的按插件配额尚未实现。
 
 ### 6.2 `NetService` —— 策略感知的 HTTP
 
@@ -428,6 +428,8 @@ data class HttpResponse(
 ```
 
 生产构建强制使用 HTTPS；仅在 debug 中允许 HTTP。用于 `Authorization` 头的密钥必须来自 `SecureStore`，绝不能硬编码。
+
+> ✅ **As-built（item 46 对齐后）：** 上面的签名即 `mcos-sdk` 现行接口。补充：`HttpResponse` 带派生便捷属性 `bodyText`（`body` 的 UTF-8 视图——MCOS 的协议面以文本为主）；`websocket()` 是规范标记的 P2，**刻意缺席**——塞进一个无法实现的抽象成员只会逼宿主伪造成功。Android 实现（`HttpURLConnection`）按 `timeoutMs` 设连接/读取超时（命令级 deadline 仍叠加其上），响应头以小写规范化并保留多值（如重复 `Set-Cookie`）；传输异常如实映射为 `status = 0` 的响应体文本。
 
 ### 6.3 `UiService` —— Activity 桥接与通知
 
@@ -460,6 +462,8 @@ interface SecureStore {
 
 用于存储 API 令牌、OAuth 刷新令牌、厂商凭据。**切勿**将密钥存储在 `FileService`、`Memory` 或清单中。存储在此处的密钥会被排除在审计脱敏遍历之外（它们从不进入 IR），也被排除在 Memory 同步之外。
 
+> ✅ **As-built（item 46 对齐后）：** 上面的签名即 `mcos-sdk` 现行接口——字节值 `get`/`put`、`keys()` 枚举（卸载清理与轮换所需的密钥卫生面）。诚实边界：Android 宿主的落地实现（`AndroidSecureStore`）今日以应用私有 `SharedPreferences` + Base64 字节为背书，**尚未**用 Keystore 持有的 AES 密钥包裹——那是 [11-implementation-status.md](./11-implementation-status.md) 跟踪的加固项；接口形状已按本节固定，后续加固不再破坏调用方。`{{secret.*}}` 模板解析（[08 §9.2](./08-security.md)）按文本语义消费字节值。
+
 ### 6.5 `Clock` —— 可注入的时间
 
 ```kotlin
@@ -470,6 +474,8 @@ interface Clock {
 ```
 
 始终使用 `Clock`，而非直接使用 `System.currentTimeMillis()` / `Instant.now()` —— 这让处理器具有确定性和可测试性。`mcos-sdk-testing` 会注入一个 `FakeClock`（[§14.1](#141-full-mcos-sdk-testing-api)），使测试可以在不 `Thread.sleep` 的情况下推进时间。
+
+> ✅ **As-built（item 46 对齐后）：** 上面的签名即 `mcos-sdk` 现行接口（`kotlinx-datetime` 0.6.x），外加一个派生便捷方法 `fun nowMs(): Long = now().toEpochMilliseconds()` —— epoch-ms 仍是 IR、审计与调度存储的线上格式，内部调用点保留这一拼写而非处处重derive。`monotonicMs()` 天然进程本地（跨进程比较单调钟无意义——隔离门面在插件进程本地读取它，绝不跨线转发）。
 
 ### 6.6 `MemoryFacade` —— 插件只读视图
 

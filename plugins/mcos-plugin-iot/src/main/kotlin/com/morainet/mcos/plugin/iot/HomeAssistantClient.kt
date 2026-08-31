@@ -1,7 +1,8 @@
 package com.morainet.mcos.plugin.iot
 
+import com.morainet.mcos.sdk.HttpRequest
+import com.morainet.mcos.sdk.HttpResponse
 import com.morainet.mcos.sdk.McosException
-import com.morainet.mcos.sdk.NetResponse
 import com.morainet.mcos.sdk.NetService
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -32,15 +33,17 @@ internal class HomeAssistantClient(
         ?: emptyMap()
 
     /** GET `{base}/api/states` — every entity with its current state. */
-    suspend fun states(): NetResponse = net.request("GET", "$base/api/states", headers = headers)
+    suspend fun states(): HttpResponse = net.request(HttpRequest(url = "$base/api/states", headers = headers))
 
     /** POST a HA service call, e.g. `light/turn_on` with a JSON payload. */
-    suspend fun service(domain: String, service: String, payload: JsonObject): NetResponse =
+    suspend fun service(domain: String, service: String, payload: JsonObject): HttpResponse =
         net.request(
-            "POST",
-            "$base/api/services/$domain/$service",
-            body = payload.toString(),
-            headers = headers,
+            HttpRequest(
+                method = "POST",
+                url = "$base/api/services/$domain/$service",
+                body = payload.toString().encodeToByteArray(),
+                headers = headers,
+            )
         )
 
     companion object {
@@ -50,7 +53,7 @@ internal class HomeAssistantClient(
          * token cannot succeed); 404 means a wrong baseUrl (retryable: the
          * hub may come back); anything else is a transient hub failure.
          */
-        fun ensureSuccess(response: NetResponse, what: String) {
+        fun ensureSuccess(response: HttpResponse, what: String) {
             when (response.status) {
                 in 200..299 -> {}
                 401, 403 -> throw McosException(
@@ -75,11 +78,15 @@ internal class HomeAssistantClient(
          * Parse a hub JSON object body; a malformed body fails closed as a
          * schema violation rather than being treated as empty success data.
          */
-        fun parseObject(body: String?): JsonObject =
-            Json.parseToJsonElement(checkNotNull(body) { "Hub returned an empty body" }).jsonObject
+        fun parseObject(body: String): JsonObject =
+            Json.parseToJsonElement(checkNotNull(body.takeIf { it.isNotEmpty() }) {
+                "Hub returned an empty body"
+            }).jsonObject
 
         /** Parse a hub JSON array body (e.g. `/api/states`). */
-        fun parseArray(body: String?): JsonArray =
-            Json.parseToJsonElement(checkNotNull(body) { "Hub returned an empty body" }).jsonArray
+        fun parseArray(body: String): JsonArray =
+            Json.parseToJsonElement(checkNotNull(body.takeIf { it.isNotEmpty() }) {
+                "Hub returned an empty body"
+            }).jsonArray
     }
 }
