@@ -462,7 +462,7 @@ interface SecureStore {
 
 用于存储 API 令牌、OAuth 刷新令牌、厂商凭据。**切勿**将密钥存储在 `FileService`、`Memory` 或清单中。存储在此处的密钥会被排除在审计脱敏遍历之外（它们从不进入 IR），也被排除在 Memory 同步之外。
 
-> ✅ **As-built（item 46 对齐后）：** 上面的签名即 `mcos-sdk` 现行接口——字节值 `get`/`put`、`keys()` 枚举（卸载清理与轮换所需的密钥卫生面）。诚实边界：Android 宿主的落地实现（`AndroidSecureStore`）今日以应用私有 `SharedPreferences` + Base64 字节为背书，**尚未**用 Keystore 持有的 AES 密钥包裹——那是 [11-implementation-status.md](./11-implementation-status.md) 跟踪的加固项；接口形状已按本节固定，后续加固不再破坏调用方。`{{secret.*}}` 模板解析（[08 §9.2](./08-security.md)）按文本语义消费字节值。
+> ✅ **As-built（item 46 对齐后、item 47 加固后）：** 上面的签名即 `mcos-sdk` 现行接口——字节值 `get`/`put`、`keys()` 枚举（卸载清理与轮换所需的密钥卫生面）。Android 宿主落地实现（`AndroidSecureStore`）如今对每个落盘值以 AES-256-GCM 封装，密钥在 AndroidKeyStore 内生成、永不离开（`[0x01][12 字节 IV][密文‖tag]` 信封，Base64 存于应用私有 `SharedPreferences`）；每次写入使用全新随机 IV，因而不存在密文相等预言机；被封装值遭篡改会响亮失败，绝不静默返回 null。加固前写入的旧值原样读回、下次写入自动重新封装——无需迁移步骤。诚实边界：Keystore/SharedPreferences 胶水本身属真机验证面；信封编解码与存储字符串编解码器已由 JVM 单测覆盖。`{{secret.*}}` 模板解析（[08 §9.2](./08-security.md)）按文本语义消费字节值，不受包裹影响。
 
 ### 6.5 `Clock` —— 可注入的时间
 

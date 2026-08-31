@@ -39,7 +39,6 @@ import kotlinx.serialization.json.*
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
-import java.util.Base64
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -639,32 +638,6 @@ class AndroidHapticsService(private val context: Context) : HapticsService {
             VibrationEffect.createOneShot(durationMs.toLong(), VibrationEffect.DEFAULT_AMPLITUDE)
         )
     }
-}
-
-// ── SecureStore ─────────────────────────────────────────────────────────────
-
-/**
- * SecureStore over app-private SharedPreferences: values are Base64-encoded
- * bytes (04-plugin-sdk.md 6.4 — secrets are byte-valued), namespaced by the
- * caller's key scheme. Honest boundary: the backing store is app-private
- * plaintext on disk today; wrapping values with a Keystore-held AES key is
- * the tracked hardening item (11-implementation-status).
- */
-class AndroidSecureStore(private val context: Context) : SecureStore {
-    private val prefs = context.getSharedPreferences("mcos_secure", Context.MODE_PRIVATE)
-
-    override suspend fun get(key: String): ByteArray? =
-        prefs.getString(key, null)?.let { runCatching { Base64.getDecoder().decode(it) }.getOrNull() }
-
-    override suspend fun put(key: String, value: ByteArray) {
-        prefs.edit().putString(key, Base64.getEncoder().encodeToString(value)).apply()
-    }
-
-    override suspend fun remove(key: String) {
-        prefs.edit().remove(key).apply()
-    }
-
-    override suspend fun keys(): Set<String> = prefs.all.keys
 }
 
 // ── MemoryFacade ────────────────────────────────────────────────────────────

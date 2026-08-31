@@ -10,6 +10,14 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### Secrets encrypted at rest — Keystore-wrapped `AndroidSecureStore` (2026-08-31)
+
+04 §6.4 hardening, closing the plaintext gap item 46 documented.
+
+- **`ValueCipher`** seam: `AesGcmValueCipher` (pure-JCA AES-256-GCM, `[0x01][IV][ct‖tag]` envelopes, fresh IV per write → no ciphertext-equality oracle, tamper fails loudly) + `AndroidKeystoreValueCipher` (production default — key generated inside, never leaves AndroidKeyStore; thin by design).
+- Legacy pre-hardening values pass through on read and re-seal on next write — no migration steps; `encodeStored`/`decodeStored` extracted so the rules are JVM-tested; envelope-shaped legacy collisions (1/256 first byte) fail closed.
+- Keystore/SharedPreferences glue is on-device verification surface, stated honestly; tests +11 (as1-as6 · ss1-ss5); baseline 1353/1530 → 1364/1552.
+
 ### §6 host-capability alignment — `NetService`/`SecureStore`/`Clock` take the spec signatures (2026-08-31)
 
 04 §6: executed in the pre-0.2.0 window, where the breaking change is free (post-release it would be semver-major).
