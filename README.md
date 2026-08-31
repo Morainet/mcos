@@ -1,14 +1,72 @@
 # MCOS — Mobile Command OS
 
+[![Maven Central](https://img.shields.io/maven-central/v/io.github.morainet/mcos-bom.svg?label=Maven%20Central)](https://central.sonatype.com/artifact/io.github.morainet/mcos-bom/overview)
+[![CI](https://img.shields.io/github/actions/workflow/status/Morainet/mcos/ci.yml.svg?branch=main&label=CI)](https://github.com/Morainet/mcos/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/Morainet/mcos.svg)](https://github.com/Morainet/mcos/blob/main/LICENSE)
+
 > **Make every cooperative capability on the phone a command that AI can call — safely.**
 
-MCOS is an open design for a **Mobile Command Bus**: a typed Command Protocol, on-device Runtime, Plugin SDK, and optional AI planner that compiles natural language into auditable DSL — not opaque side effects.
+**MCOS (Mobile Command OS)** is an open **mobile command bus**: a typed Command Protocol, an on-device Runtime, a Plugin SDK, and an optional AI planner that compiles natural language into auditable DSL — never opaque side effects.
 
-## Status
+Think of it as **the phone's Kubernetes + MCP + Claude Code Runtime**. The moat is the command protocol itself, not any single model or vendor.
 
-**Phase 1 — core runtime implemented (Draft v0.1.0). Phase 2 — workflow engine, typed event bus, memory enhancements, Android shell — implemented. Phase 3 — marketplace client (index, install pipeline, recipe store, reports, telemetry) and process isolation (dispatch seam + trust-level routing, AuthStamp facade scope gate, isolation RPC pure layer, isolated plugin runner, Binder byte transport, manifest-only `.mcos` registration — opt-in via `processIsolation = true`) — implemented.**
+## Why MCOS
 
-The repository now contains a working multi-module Gradle project (every module has its own README):
+- **AI generates commands — it never touches the device.** Intents, accessibility, Bluetooth, IoT — every real operation is executed by the Runtime *after* permission checks. AI stays in the sandbox.
+- **The Runtime owns security.** Permissions, rate limits, confirmation policy, and audit all live in the runtime kernel — never left to a plugin's goodwill.
+- **Model-agnostic.** OpenAI, Gemini, Qwen, DeepSeek, Claude, on-device models — swap the model, keep the same command surface.
+- **Protocol over model.** HTTP unified the web; SQL unified data access. MCOS aims to unify mobile app capabilities with one open Command Protocol.
+- **Opt-in process isolation.** Plugins can run in a separate `:mcos_plugin` process behind Binder RPC with stamp-scoped facades.
+- **Open, self-hostable ecosystem.** Marketplace client, recipe store, sync server, AI planning — everything in one repo, all open source.
+
+## Quick Start
+
+### Android host app
+
+```kotlin
+// settings.gradle.kts
+dependencyResolutionManagement {
+    repositories {
+        google()        // required by the Android SDK's androidx dependencies
+        mavenCentral()
+    }
+}
+```
+
+```kotlin
+// build.gradle.kts — consume via the BOM so every module stays version-aligned
+dependencies {
+    implementation(platform("io.github.morainet:mcos-bom:0.0.3"))
+    implementation("io.github.morainet:mcos-android-sdk")
+}
+```
+
+```kotlin
+class MyApplication : Application(), McosHostApp {
+    override lateinit var deps: AppDeps
+    override fun onCreate() {
+        super.onCreate()
+        deps = CompositionRoot.create(this)      // processIsolation = true enables the sandbox
+        RuntimeBootstrap.ensureRehydrated(deps)  // restore plugins + reschedule persisted alarms
+    }
+}
+```
+
+That's it — the SDK's manifest merge brings in the receivers, permissions, FileProvider, and the optional `:mcos_plugin` isolation process for free. See the [SDK README](./mcos-android-sdk/README.md) for the full integration guide.
+
+### JVM host & plugin authors
+
+```kotlin
+dependencies {
+    implementation(platform("io.github.morainet:mcos-bom:0.0.3"))
+    implementation("io.github.morainet:mcos-runtime")  // JVM host (server / CLI / desktop)
+    // implementation("io.github.morainet:mcos-sdk")   // plugin authors: contracts only
+}
+```
+
+## What's Inside
+
+A working multi-module Gradle project (every module has its own README):
 
 | Module | Content | Status |
 |--------|---------|--------|
@@ -24,14 +82,9 @@ The repository now contains a working multi-module Gradle project (every module 
 
 Plugins are independently buildable in `plugins/`: `mcos-plugin-hello`, `mcos-plugin-system`, `mcos-plugin-camera`, `mcos-plugin-files`, `mcos-plugin-mcp`, `mcos-plugin-iot` (each with tests and a README).
 
-See [`docs/en/11-implementation-status.md`](./docs/en/11-implementation-status.md) for the detailed status matrix.
+## Documentation
 
-## Docs
-
-Documentation is available in two languages:
-
-- **English:** [`docs/en/README.md`](./docs/en/README.md)
-- **中文:** [`docs/zh/README.md`](./docs/zh/README.md)
+Available in two languages — [English](./docs/en/README.md) · [中文](./docs/zh/README.md):
 
 | # | Topic |
 |---|--------|
@@ -48,35 +101,7 @@ Documentation is available in two languages:
 | 10 | [Roadmap](./docs/en/10-roadmap.md) |
 | 11 | [Implementation Status](./docs/en/11-implementation-status.md) |
 
-中文说明：见 [`README.zh-CN.md`](./README.zh-CN.md)。
-
-Golden DSL ↔ IR fixtures: [`docs/fixtures/`](./docs/fixtures/).
-
-## Target Modules
-
-Implemented topology:
-
-```text
-mcos-sdk          Plugin contracts (leaf module, no internal deps)
-mcos-security     Permission kernel · AuthStamp · Audit · Signatures · Egress · Rate limit · Enterprise policy
-mcos-runtime-core Parser → IR · Registry (incl. manifest-only) · Executor (7-stage + isolation routing) · EventBus · Workflow · Memory
-mcos-llm          AI planner · Multi-provider registry · GBNF / JSON-schema decoding · Agent loop
-mcos-marketplace  Index client · Install pipeline · Recipe store · Reports · Telemetry
-mcos-runtime      Facade: McosRuntime builder · Confirmation coordinator · Run/Trigger managers
-plugins/
-  mcos-plugin-hello     Reference sample (hello.world)        ✅
-  mcos-plugin-system    sys.* (13 commands)                   ✅
-  mcos-plugin-camera    camera.* (capture, scan)              ✅
-  mcos-plugin-files     file.* / photo.* (8 commands)         ✅
-  mcos-plugin-mcp       mcp.* adapter (dynamic synthesis)     ✅
-  mcos-plugin-iot       home.* / iot.* (Home Assistant)  ✅
-mcos-android-sdk  UI-free Android host SDK (+ opt-in :mcos_plugin process isolation) ✅
-mcos-android      Compose demo shell (on the SDK)    ✅
-mcos-server       Sync endpoint (REST + Bearer auth) ✅
-mcos-server       marketplace index (host-side)     (planned, P3)
-```
-
-For the full dependency graph and per-module target, see [`docs/en/REPOSITORIES.md`](./docs/en/REPOSITORIES.md).
+Golden DSL ↔ IR fixtures: [`docs/fixtures/`](./docs/fixtures/). For the full dependency graph, see [`docs/en/REPOSITORIES.md`](./docs/en/REPOSITORIES.md).
 
 ## Build
 
@@ -88,27 +113,14 @@ sh gradlew test         # JVM module tests only
 sh gradlew :mcos-android:assembleDebug   # demo shell APK
 ```
 
-## Artifacts
+## Release
 
-Published to Maven Central under `io.github.morainet` (namespace verified via the [Morainet](https://github.com/Morainet) GitHub org; a dedicated domain may replace it later). Pushing a `v<version>` tag triggers [`.github/workflows/release.yml`](./.github/workflows/release.yml): build gate → GPG-signed publish → Central Portal upload → GitHub Release with the demo APK.
+Artifacts are published to Maven Central under `io.github.morainet` (namespace verified via the [Morainet](https://github.com/Morainet) GitHub org). Pushing a `v<version>` tag triggers the [release workflow](./.github/workflows/release.yml): build gate → GPG-signed publish → Central Portal upload → GitHub Release with the demo APK. Local dry-run: `sh gradlew publish` fills `build/central-bundle` (unsigned, no secrets needed).
 
-Once the first version is out, consume via the BOM so all modules stay version-aligned:
+## License & Contributing
 
-```kotlin
-dependencies {
-    implementation(platform("io.github.morainet:mcos-bom:<version>"))
-    implementation("io.github.morainet:mcos-android-sdk")   // Android host
-    // JVM host: implementation("io.github.morainet:mcos-runtime")
-    // Plugin authors only need: implementation("io.github.morainet:mcos-sdk")
-}
-```
+[Apache License 2.0](./LICENSE) · [CONTRIBUTING.md](./CONTRIBUTING.md) · [CHANGELOG.md](./CHANGELOG.md)
 
-Local dry-run: `sh gradlew publish` fills `build/central-bundle` (unsigned, no secrets needed); `sh gradlew publishToMavenLocal` installs into `~/.m2`.
+---
 
-## License
-
-[Apache License 2.0](./LICENSE)
-
-## Contributing
-
-See [CONTRIBUTING.md](./CONTRIBUTING.md). Changes are recorded in [CHANGELOG.md](./CHANGELOG.md).
+**中文说明：见 [README.zh-CN.md](./README.zh-CN.md)。**
