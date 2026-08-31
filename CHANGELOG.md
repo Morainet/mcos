@@ -10,6 +10,14 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### Process isolation slice 3b part 1 — isolated plugin runner + full-chain E2E (2026-08-30)
+
+Item 42 (08 §8.1-§8.3): the plugin-process execution half of the isolation boundary, plus the proof that every pure link composes. The Binder byte pipe and on-device verification remain slice 3b-final.
+
+- **`IsolatedPluginRunner`** (`mcos-android-sdk`, `host.isolation`) — `serveInvoke(envelope)` decodes an `IsolatedInvocation` (malformed → `PLUGIN_ERROR`/`invocation_decode_failure`, never throws), **refuses invocations addressed to another plugin id** (`PERMISSION_DENIED`/`plugin.identity_mismatch` — the same §8.2 reason checked on both sides of the wire), resolves the handler from the plugin's real `handlers()` (missing → `UNKNOWN_COMMAND`), and rebuilds the `ExecutionContext`. The AuthStamp is forwarded to the handler's facade **only when it describes this very invocation** (`runId`+`commandId`+`pluginId` all match; otherwise stripped to null — a replayed or cross-command stamp can never ride a proxy call into the facade gate). The deadline is enforced locally (`withTimeout` on the remaining budget; past-deadline invocations time out without running the handler) so a hung plugin cannot outlive its slot even if cancellation is never delivered. `McosException` maps verbatim; any other handler failure → `PLUGIN_ERROR`/`handler_crash`. `start()`/`stop()` wrap `onLoad`/`onUnload` with a stamp-less proxy facade.
+- **`IsolationEndToEndTest`** — the entire pure chain in one JVM process: real `Executor` (permissive kernel sharing one HMAC signer with the facade) → `TransportIsolationHost` → in-memory channel → `IsolatedPluginRunner` → handler → `IsolatedHostServicesProxy` → `IsolatedFacadeServer` (UID identity + §8.2 stamp gate + §9.2 secret resolution + §8.3 namespacing) → real host fakes. The main-process registry holds the plugin **manifest only**, proving the main process carries none of the plugin's code. Six scenarios: happy path (net call with `{{secret.*}}` resolved on the main side + sandbox write under `<pluginId>/`), confused-deputy out-of-scope URL denied with zero bytes leaving the host, auto-approved-but-scopeless stamp still cannot egress, plugin-process death → `PLUGIN_ERROR`/`isolation_transport_failure`, BUILTIN stays in-process with the whole stack wired, artifacts survive the round-trip.
+- Tests +15 (9 runner unit + 6 E2E); baseline 1267/1396 → 1282/1426 (SDK 107×2 + demo 37×2).
+
 ### Process isolation slice 3a — pure-Kotlin isolation RPC layer (2026-08-30)
 
 Item 41 (08 §8.1-§8.3): the RPC halves of the Android bound-service `IsolationHost`, delivered JVM-testable in `mcos-android-sdk` (`com.morainet.mcos.android.host.isolation`) with the Binder transport itself explicitly deferred to slice 3b — a thin `IsolationChannel` adapter plus on-device verification.
