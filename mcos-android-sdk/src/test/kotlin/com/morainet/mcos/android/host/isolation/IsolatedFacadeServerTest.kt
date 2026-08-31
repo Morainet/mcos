@@ -219,7 +219,9 @@ class IsolatedFacadeServerTest {
 
     @Test
     fun clockNowForwardsToTheHostClock() = runTest {
-        val clockHost = FakeHostServices(net = net, secureStore = secureStore, sandbox = sandbox, now = { 1_700_000_777_000L })
+        val clockHost = FakeHostServices(
+            net = net, secureStore = secureStore, sandbox = sandbox, now = { 1_700_000_777_000L },
+        )
         val clockServer = IsolatedFacadeServer(clockHost, signer, pluginId, admittedUid) { now.last() }
         val reply = clockServer.handle(
             IsolationOps.OP_CLOCK_NOW,

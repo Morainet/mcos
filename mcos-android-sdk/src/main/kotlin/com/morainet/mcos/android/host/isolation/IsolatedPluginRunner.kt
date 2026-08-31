@@ -73,7 +73,8 @@ class IsolatedPluginRunner(
         if (invocation.pluginId != plugin.manifest.id) {
             return IsolationCodec.encodeError(
                 code = McosErrorCode.PERMISSION_DENIED.name,
-                message = "Invocation targets plugin '${invocation.pluginId}' but this process serves '${plugin.manifest.id}'",
+                message = "Invocation targets plugin '${invocation.pluginId}' " +
+                    "but this process serves '${plugin.manifest.id}'",
                 retryable = false,
                 details = buildJsonObject { put("reason", BinderIdentityPolicy.AUDIT_REASON) },
             )

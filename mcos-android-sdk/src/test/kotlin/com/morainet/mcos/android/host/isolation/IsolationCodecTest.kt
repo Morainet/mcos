@@ -73,7 +73,8 @@ class IsolationCodecTest {
 
     @Test
     fun invocationDecodeReturnsNullOnGarbage() {
-        assertNull(IsolationCodec.decodeInvocation(JsonObject(mapOf("pluginId" to kotlinx.serialization.json.JsonArray(emptyList())))))
+        val wrongType = JsonObject(mapOf("pluginId" to kotlinx.serialization.json.JsonArray(emptyList())))
+        assertNull(IsolationCodec.decodeInvocation(wrongType))
     }
 
     // ── command result ───────────────────────────────────────────────────

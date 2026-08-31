@@ -113,7 +113,8 @@ object IsolationCodec {
                 put("value", result.value)
                 if (result.artifacts.isNotEmpty()) put("artifacts", encodeArtifacts(result.artifacts))
             }
-            is CommandResult.Err -> put("error", encodeErrorBody(result.code, result.message, result.retryable, result.details))
+            is CommandResult.Err ->
+                put("error", encodeErrorBody(result.code, result.message, result.retryable, result.details))
         }
     }
 

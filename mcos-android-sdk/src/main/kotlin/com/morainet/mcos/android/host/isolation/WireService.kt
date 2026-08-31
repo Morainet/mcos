@@ -28,8 +28,7 @@ object WireService {
      * is a protocol violation → framed `PLUGIN_ERROR` envelope.
      */
     fun serveInvoke(frame: String, runner: IsolatedPluginRunner): String {
-        val (op, envelope) = BinderWire.unframe(frame)
-            ?: return BinderWire.frame("error", wireError(WireFailureReasons.FRAME_DECODE, "malformed isolation wire frame"))
+        val (op, envelope) = BinderWire.unframe(frame) ?: return malformedFrameError()
         if (op != IsolationOps.OP_INVOKE) {
             return BinderWire.frame(
                 op,
@@ -48,8 +47,7 @@ object WireService {
      * against [callingUid] FIRST and never throws — and frame the reply.
      */
     fun serveFacade(frame: String, server: IsolatedFacadeServer, callingUid: Int): String {
-        val (op, envelope) = BinderWire.unframe(frame)
-            ?: return BinderWire.frame("error", wireError(WireFailureReasons.FRAME_DECODE, "malformed isolation wire frame"))
+        val (op, envelope) = BinderWire.unframe(frame) ?: return malformedFrameError()
         // handle() returns an error envelope (not an exception) for identity
         // mismatch, stamp failures, unknown ops — the §8.2/§8.3 semantics are
         // entirely the server's; this half only frames.
@@ -64,4 +62,7 @@ object WireService {
             retryable = false,
             details = buildJsonObject { put("reason", reason) },
         )
+
+    private fun malformedFrameError(): String =
+        BinderWire.frame("error", wireError(WireFailureReasons.FRAME_DECODE, "malformed isolation wire frame"))
 }

@@ -119,7 +119,8 @@ class IsolatedPluginRunnerTest {
     fun startPassesTheProxyFacadeToOnLoad() = runTest {
         var loaded: HostServices? = null
         val p = object : McosPlugin by plugin(object : CommandHandler {
-            override suspend fun invoke(ctx: ExecutionContext) = CommandResult.Ok(kotlinx.serialization.json.JsonPrimitive("x"))
+            override suspend fun invoke(ctx: ExecutionContext) =
+                CommandResult.Ok(kotlinx.serialization.json.JsonPrimitive("x"))
         }) {
             override suspend fun onLoad(services: HostServices) { loaded = services }
         }
@@ -144,7 +145,8 @@ class IsolatedPluginRunnerTest {
         val runner = run(object : CommandHandler {
             override suspend fun invoke(ctx: ExecutionContext): CommandResult { runCount++; error("unreachable") }
         })
-        val err = IsolationCodec.decodeError(runner.serveInvoke(IsolationCodec.encodeInvocation(invocation(commandId = "iso.gone"))))!!
+        val reply = runner.serveInvoke(IsolationCodec.encodeInvocation(invocation(commandId = "iso.gone")))
+        val err = IsolationCodec.decodeError(reply)!!
         assertEquals("UNKNOWN_COMMAND", err.code)
         assertEquals(IsolatedPluginRunner.HANDLER_MISSING, err.details["reason"]!!.jsonPrimitive.content)
         assertEquals(0, runCount)

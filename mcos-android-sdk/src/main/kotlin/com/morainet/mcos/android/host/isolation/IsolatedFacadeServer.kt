@@ -168,7 +168,9 @@ class IsolatedFacadeServer(
                             }
                             is com.morainet.mcos.sdk.ResolveResult.Ambiguous -> buildJsonObject {
                                 put("kind", "ambiguous")
-                                put("candidates", buildJsonArray { result.candidates.forEach { add(JsonPrimitive(it)) } })
+                                put("candidates", buildJsonArray {
+                                    result.candidates.forEach { add(JsonPrimitive(it)) }
+                                })
                             }
                             is com.morainet.mcos.sdk.ResolveResult.NotFound -> buildJsonObject {
                                 put("kind", "notFound")

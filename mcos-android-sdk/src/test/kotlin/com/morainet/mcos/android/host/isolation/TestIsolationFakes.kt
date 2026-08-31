@@ -60,7 +60,9 @@ class CapturingNetService(var response: NetResponse = NetResponse(200, "net-ok",
     var calls = 0
         private set
 
-    override suspend fun request(method: String, url: String, body: String?, headers: Map<String, String>): NetResponse {
+    override suspend fun request(
+        method: String, url: String, body: String?, headers: Map<String, String>,
+    ): NetResponse {
         calls++
         lastMethod = method
         lastUrl = url
