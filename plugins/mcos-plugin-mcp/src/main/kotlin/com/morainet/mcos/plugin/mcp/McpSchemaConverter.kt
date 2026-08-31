@@ -1,8 +1,10 @@
 package com.morainet.mcos.plugin.mcp
 
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
@@ -238,7 +240,7 @@ object McpSchemaConverter {
         return defs[key]
     }
 
-    private fun typeOfPrimitive(value: kotlinx.serialization.json.JsonElement, path: String): JsonPrimitive {
+    private fun typeOfPrimitive(value: JsonElement, path: String): JsonPrimitive {
         val prim = value as? JsonPrimitive
             ?: throw UnmappedException("const", "non_primitive_const", path)
         return JsonPrimitive(
@@ -260,7 +262,7 @@ object McpSchemaConverter {
         return JsonPrimitive(if (types.size == 1) types.first() else "string")
     }
 
-    private fun copyDescription(from: JsonObject, into: kotlinx.serialization.json.JsonObjectBuilder) {
+    private fun copyDescription(from: JsonObject, into: JsonObjectBuilder) {
         from["description"]?.jsonPrimitive?.contentOrNull?.let {
             into.put("description", JsonPrimitive(it))
         }

@@ -1,6 +1,7 @@
 package com.morainet.mcos.security
 
 import java.security.KeyFactory
+import java.security.MessageDigest
 import java.security.PublicKey
 import java.security.Signature
 import java.security.spec.MGF1ParameterSpec
@@ -125,7 +126,7 @@ class ArtifactVerifier(
 
     /** Computes the hex-encoded SHA-256 of [data]. */
     private fun sha256Hex(data: ByteArray): String {
-        val md = java.security.MessageDigest.getInstance("SHA-256")
+        val md = MessageDigest.getInstance("SHA-256")
         return md.digest(data).joinToString("") { "%02x".format(it) }
     }
 

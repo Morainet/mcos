@@ -8,6 +8,7 @@ import com.morainet.mcos.runtime.core.events.EventFilter
 import com.morainet.mcos.runtime.core.events.EventSubscription
 import com.morainet.mcos.runtime.core.executor.Command
 import com.morainet.mcos.runtime.core.registry.CommandRegistry
+import com.morainet.mcos.sdk.ExecutionContext
 import com.morainet.mcos.security.HmacAuthStampSigner
 import com.morainet.mcos.sdk.CommandHandler
 import com.morainet.mcos.sdk.CommandManifestEntry
@@ -83,7 +84,7 @@ class ConfirmationCoordinatorTest {
             override fun handlers(): Map<String, CommandHandler> =
                 mapOf(
                     "test.write" to object : CommandHandler {
-                        override suspend fun invoke(ctx: com.morainet.mcos.sdk.ExecutionContext): CommandResult =
+                        override suspend fun invoke(ctx: ExecutionContext): CommandResult =
                             CommandResult.Ok(JsonPrimitive("ok"))
                     }
                 )

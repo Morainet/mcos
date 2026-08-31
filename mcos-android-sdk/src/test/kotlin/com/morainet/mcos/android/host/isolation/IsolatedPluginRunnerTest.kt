@@ -14,6 +14,7 @@ import com.morainet.mcos.runtime.core.executor.IsolatedInvocation
 import com.morainet.mcos.runtime.core.error.McosErrorCode
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -97,14 +98,14 @@ class IsolatedPluginRunnerTest {
             override suspend fun invoke(ctx: ExecutionContext): CommandResult {
                 lastCtx = ctx; runCount++
                 return CommandResult.Ok(
-                    kotlinx.serialization.json.JsonPrimitive("done"),
+                    JsonPrimitive("done"),
                     artifacts = listOf(Artifact(type = "image", uri = "file:///tmp/x.jpg")),
                 )
             }
         })
         val reply = runner.serveInvoke(IsolationCodec.encodeInvocation(invocation(auth = stampFor())))
         val result = IsolationCodec.decodeResult(reply) as CommandResult.Ok
-        assertEquals("done", (result.value as kotlinx.serialization.json.JsonPrimitive).content)
+        assertEquals("done", (result.value as JsonPrimitive).content)
         assertEquals(1, result.artifacts.size)
         assertEquals("file:///tmp/x.jpg", result.artifacts.single().uri)
         assertEquals("run-1", lastCtx!!.runId)
@@ -120,7 +121,7 @@ class IsolatedPluginRunnerTest {
         var loaded: HostServices? = null
         val p = object : McosPlugin by plugin(object : CommandHandler {
             override suspend fun invoke(ctx: ExecutionContext) =
-                CommandResult.Ok(kotlinx.serialization.json.JsonPrimitive("x"))
+                CommandResult.Ok(JsonPrimitive("x"))
         }) {
             override suspend fun onLoad(services: HostServices) { loaded = services }
         }
@@ -157,7 +158,7 @@ class IsolatedPluginRunnerTest {
         val runner = run(object : CommandHandler {
             override suspend fun invoke(ctx: ExecutionContext): CommandResult {
                 lastCtx = ctx
-                return CommandResult.Ok(kotlinx.serialization.json.JsonPrimitive("x"))
+                return CommandResult.Ok(JsonPrimitive("x"))
             }
         })
         // Signed by the runtime, but minted for a different run — it must

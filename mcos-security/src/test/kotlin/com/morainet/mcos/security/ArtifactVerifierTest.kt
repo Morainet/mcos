@@ -2,6 +2,7 @@ package com.morainet.mcos.security
 
 import java.security.KeyPair
 import java.security.KeyPairGenerator
+import java.security.MessageDigest
 import java.security.PrivateKey
 import java.security.PublicKey
 import java.security.Signature
@@ -35,7 +36,7 @@ class ArtifactVerifierTest {
         Base64.getEncoder().encodeToString(pk.encoded)
 
     private fun fingerprint(pk: PublicKey): String {
-        val md = java.security.MessageDigest.getInstance("SHA-256")
+        val md = MessageDigest.getInstance("SHA-256")
         return md.digest(pk.encoded).joinToString("") { "%02x".format(it) }
     }
 
@@ -55,7 +56,7 @@ class ArtifactVerifierTest {
     }
 
     private fun sha256Hex(data: ByteArray): String {
-        val md = java.security.MessageDigest.getInstance("SHA-256")
+        val md = MessageDigest.getInstance("SHA-256")
         return md.digest(data).joinToString("") { "%02x".format(it) }
     }
 

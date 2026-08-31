@@ -9,6 +9,7 @@ import com.morainet.mcos.security.TrustLevel
 import com.morainet.mcos.security.permission.DefaultPermissionKernel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -33,7 +34,7 @@ import org.junit.runner.Description
  * the whole install chain is real: Ed25519 key pair + signature, ArtifactVerifier,
  * trust-gated loader (with `disableSideload = true`), and the real registry.
  */
-@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+@OptIn(ExperimentalCoroutinesApi::class)
 class MarketplaceViewModelTest {
 
     private val mainDispatcher = UnconfinedTestDispatcher()

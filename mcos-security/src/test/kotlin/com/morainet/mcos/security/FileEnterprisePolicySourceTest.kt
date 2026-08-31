@@ -1,6 +1,8 @@
 package com.morainet.mcos.security
 
 import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.attribute.FileTime
 import kotlin.io.path.writeText
 import kotlin.test.*
 
@@ -10,8 +12,8 @@ import kotlin.test.*
  */
 class FileEnterprisePolicySourceTest {
 
-    private lateinit var dir: java.nio.file.Path
-    private lateinit var policyFile: java.nio.file.Path
+    private lateinit var dir: Path
+    private lateinit var policyFile: Path
 
     @BeforeTest
     fun setUp() {
@@ -52,7 +54,7 @@ class FileEnterprisePolicySourceTest {
         // Force a different mtime (same-length rewrite may keep mtime on
         // coarse filesystems, so bump it explicitly).
         policyFile.writeText(minimalPolicy("1.0", issuedBy = "mdm-v2"))
-        Files.setLastModifiedTime(policyFile, java.nio.file.attribute.FileTime.fromMillis(System.currentTimeMillis() + 2_000))
+        Files.setLastModifiedTime(policyFile, FileTime.fromMillis(System.currentTimeMillis() + 2_000))
 
         val reloaded = src.current()
         assertEquals("mdm-v2", reloaded.issuedBy)
@@ -68,7 +70,7 @@ class FileEnterprisePolicySourceTest {
     @Test
     fun `F3-parse failure switches to fail-closed and emits event`() {
         policyFile.writeText("{broken json")
-        Files.setLastModifiedTime(policyFile, java.nio.file.attribute.FileTime.fromMillis(System.currentTimeMillis() + 2_000))
+        Files.setLastModifiedTime(policyFile, FileTime.fromMillis(System.currentTimeMillis() + 2_000))
 
         val src = source()
         val policy = src.current()
@@ -81,7 +83,7 @@ class FileEnterprisePolicySourceTest {
     @Test
     fun `F4-unsupported version is fail-closed`() {
         policyFile.writeText(minimalPolicy("9.9"))
-        Files.setLastModifiedTime(policyFile, java.nio.file.attribute.FileTime.fromMillis(System.currentTimeMillis() + 2_000))
+        Files.setLastModifiedTime(policyFile, FileTime.fromMillis(System.currentTimeMillis() + 2_000))
 
         val src = source()
         assertEquals(EnterprisePolicy.FAIL_CLOSED, src.current())
@@ -124,7 +126,7 @@ class FileEnterprisePolicySourceTest {
         src.addListener { events.add(it) }
 
         policyFile.writeText("{bad")
-        Files.setLastModifiedTime(policyFile, java.nio.file.attribute.FileTime.fromMillis(System.currentTimeMillis() + 2_000))
+        Files.setLastModifiedTime(policyFile, FileTime.fromMillis(System.currentTimeMillis() + 2_000))
         src.current()
 
         assertEquals(1, events.size)
@@ -141,7 +143,7 @@ class FileEnterprisePolicySourceTest {
         assertEquals("1.0", src.current().version)
 
         policyFile.writeText(minimalPolicy("1.0", issuedBy = "mdm-v2"))
-        Files.setLastModifiedTime(policyFile, java.nio.file.attribute.FileTime.fromMillis(System.currentTimeMillis() + 2_000))
+        Files.setLastModifiedTime(policyFile, FileTime.fromMillis(System.currentTimeMillis() + 2_000))
 
         // Within the refresh window → still old policy
         assertEquals("mdm", src.current().issuedBy)
@@ -153,7 +155,7 @@ class FileEnterprisePolicySourceTest {
         assertEquals("1.0", src.current().version)
 
         policyFile.writeText(minimalPolicy("1.0", issuedBy = "mdm-v2"))
-        Files.setLastModifiedTime(policyFile, java.nio.file.attribute.FileTime.fromMillis(System.currentTimeMillis() + 2_000))
+        Files.setLastModifiedTime(policyFile, FileTime.fromMillis(System.currentTimeMillis() + 2_000))
         Thread.sleep(10) // let the refresh window pass
 
         assertEquals("mdm-v2", src.current().issuedBy)

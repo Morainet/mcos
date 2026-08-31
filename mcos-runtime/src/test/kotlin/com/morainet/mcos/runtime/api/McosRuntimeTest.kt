@@ -1,11 +1,18 @@
 package com.morainet.mcos.runtime.api
 
+import com.morainet.mcos.marketplace.MarketplaceHttpResponse
+import com.morainet.mcos.marketplace.MarketplaceHttpTransport
+import com.morainet.mcos.marketplace.PluginInstaller
 import com.morainet.mcos.runtime.core.api.ExecuteRequest
 import com.morainet.mcos.runtime.core.api.ExecutionStatus
 import com.morainet.mcos.runtime.core.api.Payload
 import com.morainet.mcos.runtime.core.api.RuntimeEvent
 import com.morainet.mcos.runtime.core.api.Source
 import com.morainet.mcos.runtime.core.memory.MemoryStore
+import com.morainet.mcos.runtime.core.plugin.PluginLoader
+import com.morainet.mcos.security.ArtifactVerifier
+import com.morainet.mcos.security.InMemoryPublisherKeyStore
+import com.morainet.mcos.security.PluginTrustGate
 import com.morainet.mcos.security.permission.DefaultPermissionKernel
 import com.morainet.mcos.security.permission.PermissionKernel
 import com.morainet.mcos.runtime.core.registry.CommandRegistry
@@ -545,20 +552,20 @@ class McosRuntimeTest {
 
     @Test
     fun `I2-builder wiring exposes the installer`() {
-        val gate = com.morainet.mcos.security.PluginTrustGate(
-            verifier = com.morainet.mcos.security.ArtifactVerifier(
-                com.morainet.mcos.security.InMemoryPublisherKeyStore()
+        val gate = PluginTrustGate(
+            verifier = ArtifactVerifier(
+                InMemoryPublisherKeyStore()
             ),
             debugBuild = false,
         )
-        val loader = com.morainet.mcos.runtime.core.plugin.PluginLoader(gate, CommandRegistry())
-        val installer = com.morainet.mcos.marketplace.PluginInstaller(
-            transport = object : com.morainet.mcos.marketplace.MarketplaceHttpTransport {
+        val loader = PluginLoader(gate, CommandRegistry())
+        val installer = PluginInstaller(
+            transport = object : MarketplaceHttpTransport {
                 override suspend fun getJson(
                     url: String,
                     connectTimeoutMs: Long,
                     requestTimeoutMs: Long,
-                ): com.morainet.mcos.marketplace.MarketplaceHttpResponse =
+                ): MarketplaceHttpResponse =
                     error("not used")
 
                 override suspend fun getBytes(
@@ -567,10 +574,10 @@ class McosRuntimeTest {
                     requestTimeoutMs: Long,
                 ): ByteArray = error("not used")
             },
-            verifier = com.morainet.mcos.security.ArtifactVerifier(
-                com.morainet.mcos.security.InMemoryPublisherKeyStore()
+            verifier = ArtifactVerifier(
+                InMemoryPublisherKeyStore()
             ),
-            keyStore = com.morainet.mcos.security.InMemoryPublisherKeyStore(),
+            keyStore = InMemoryPublisherKeyStore(),
             loader = loader,
             registry = CommandRegistry(),
             downloadDir = kotlin.io.path.createTempDirectory("mcos-runtime-wiring").toString(),
@@ -633,7 +640,7 @@ class EchoCommandHandler(
         return CommandResult.Ok(
             value = JsonObject(emptyMap()),
             artifacts = listOf(
-                com.morainet.mcos.sdk.Artifact("text", "echo:$commandId", "text/plain")
+                Artifact("text", "echo:$commandId", "text/plain")
             )
         )
     }

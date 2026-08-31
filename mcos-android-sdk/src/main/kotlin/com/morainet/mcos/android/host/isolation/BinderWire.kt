@@ -5,6 +5,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
@@ -60,7 +61,7 @@ object BinderWire {
      */
     fun unframe(frame: String): Pair<String, JsonObject>? {
         val obj = runCatching { Json.parseToJsonElement(frame).jsonObject }.getOrNull() ?: return null
-        val opPrimitive = obj["op"] as? kotlinx.serialization.json.JsonPrimitive ?: return null
+        val opPrimitive = obj["op"] as? JsonPrimitive ?: return null
         if (!opPrimitive.isString) return null
         val op = opPrimitive.contentOrNull?.takeIf { it.isNotBlank() } ?: return null
         val payload = obj["payload"] as? JsonObject ?: return null

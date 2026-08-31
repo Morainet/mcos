@@ -22,6 +22,8 @@ import com.morainet.mcos.sdk.PluginManifest
 import com.morainet.mcos.sdk.ProviderInfo
 import com.morainet.mcos.sdk.SandboxFileService
 import com.morainet.mcos.sdk.SideEffectClass
+import com.morainet.mcos.security.audit.RunOutcome
+import com.morainet.mcos.security.permission.DefaultPermissionKernel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -128,7 +130,7 @@ class McosRuntimeFilesTest {
 
         audit.flush()
         assertTrue(
-            audit.getRuns().any { it.commandId == "file.write" && it.outcome == com.morainet.mcos.security.audit.RunOutcome.OK },
+            audit.getRuns().any { it.commandId == "file.write" && it.outcome == RunOutcome.OK },
             "the sandboxed write must land in the audit log",
         )
         stopObserving()
@@ -178,7 +180,7 @@ class McosRuntimeFilesTest {
         // own degradation, not the permission gate. file.stat is a
         // read-class command, which keeps the default (non-permissive)
         // posture out of the confirmation flow.
-        val kernel = com.morainet.mcos.security.permission.DefaultPermissionKernel()
+        val kernel = DefaultPermissionKernel()
         kernel.grant("mcos.plugin.files", "android.permission.READ_MEDIA_IMAGES")
         kernel.grant("mcos.plugin.files", "android.permission.READ_EXTERNAL_STORAGE")
         val bareRuntime = McosRuntime.Builder()

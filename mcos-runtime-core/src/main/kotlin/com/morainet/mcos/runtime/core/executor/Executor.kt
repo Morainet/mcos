@@ -1,5 +1,6 @@
 package com.morainet.mcos.runtime.core.executor
 
+import com.morainet.mcos.security.audit.ArtifactRecord
 import com.morainet.mcos.security.audit.RunOutcome
 import com.morainet.mcos.security.audit.RunRecord
 import com.morainet.mcos.security.audit.StepRecord
@@ -17,6 +18,7 @@ import com.morainet.mcos.security.validate.SchemaValidator
 import com.morainet.mcos.security.validate.ValidationError as ValError
 import com.morainet.mcos.security.validate.ValidationResult
 import com.morainet.mcos.sdk.*
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonArray
@@ -91,7 +93,7 @@ class Executor(
      * has already been audited, so the `plugin.isolation_fallback` record is
      * emitted once per plugin per Executor rather than on every invocation.
      */
-    private val isolationFallbackAudited = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private val isolationFallbackAudited = ConcurrentHashMap.newKeySet<String>()
 
     /**
      * Execute a single command by ID.
@@ -414,7 +416,7 @@ class Executor(
                         message = (result as? CommandResult.Err)?.message?.take(200),
                         durationMs = durationMs,
                         artifacts = (result as? CommandResult.Ok)?.artifacts?.map {
-                            com.morainet.mcos.security.audit.ArtifactRecord(it.type, it.uri, it.mimeType)
+                            ArtifactRecord(it.type, it.uri, it.mimeType)
                         } ?: emptyList()
                     )
                 ),

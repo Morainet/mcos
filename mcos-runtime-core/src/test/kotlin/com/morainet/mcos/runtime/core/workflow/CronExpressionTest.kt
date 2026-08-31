@@ -2,6 +2,7 @@ package com.morainet.mcos.runtime.core.workflow
 
 import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import kotlin.test.*
@@ -101,9 +102,9 @@ class CronExpressionTest {
             next("0 12 * * MON-FRI", at(2026, 8, 29, 10, 0)),
         )
         val monWedFri = parse("0 0 * * MON-FRI/2")
-        assertTrue(monWedFri.matches(java.time.LocalDateTime.of(2026, 8, 24, 0, 0)))  // Mon
-        assertFalse(monWedFri.matches(java.time.LocalDateTime.of(2026, 8, 25, 0, 0))) // Tue
-        assertTrue(monWedFri.matches(java.time.LocalDateTime.of(2026, 8, 26, 0, 0)))  // Wed
+        assertTrue(monWedFri.matches(LocalDateTime.of(2026, 8, 24, 0, 0)))  // Mon
+        assertFalse(monWedFri.matches(LocalDateTime.of(2026, 8, 25, 0, 0))) // Tue
+        assertTrue(monWedFri.matches(LocalDateTime.of(2026, 8, 26, 0, 0)))  // Wed
     }
 
     @Test
@@ -122,22 +123,22 @@ class CronExpressionTest {
     fun `CR10-both dom and dow restricted means union`() {
         // "0 0 13 * FRI" — 13th of month OR any Friday (vixie union rule).
         val union = parse("0 0 13 * FRI")
-        assertTrue(union.matches(java.time.LocalDateTime.of(2026, 11, 13, 0, 0)))  // Friday the 13th
-        assertTrue(union.matches(java.time.LocalDateTime.of(2026, 12, 13, 0, 0)))  // Sunday the 13th → dom
-        assertTrue(union.matches(java.time.LocalDateTime.of(2026, 11, 20, 0, 0)))  // Friday the 20th → dow
-        assertFalse(union.matches(java.time.LocalDateTime.of(2026, 11, 14, 0, 0))) // Saturday the 14th
+        assertTrue(union.matches(LocalDateTime.of(2026, 11, 13, 0, 0)))  // Friday the 13th
+        assertTrue(union.matches(LocalDateTime.of(2026, 12, 13, 0, 0)))  // Sunday the 13th → dom
+        assertTrue(union.matches(LocalDateTime.of(2026, 11, 20, 0, 0)))  // Friday the 20th → dow
+        assertFalse(union.matches(LocalDateTime.of(2026, 11, 14, 0, 0))) // Saturday the 14th
         // Non-matching hour/minute must still fail even on a unioned day.
-        assertFalse(union.matches(java.time.LocalDateTime.of(2026, 11, 13, 10, 30)))
+        assertFalse(union.matches(LocalDateTime.of(2026, 11, 13, 10, 30)))
     }
 
     @Test
     fun `CR11-bare star on one side defers to the other field`() {
         val domOnly = parse("0 0 13 * *")
-        assertTrue(domOnly.matches(java.time.LocalDateTime.of(2026, 12, 13, 0, 0)))   // Sunday 13th
-        assertFalse(domOnly.matches(java.time.LocalDateTime.of(2026, 11, 20, 0, 0))) // Friday the 20th
+        assertTrue(domOnly.matches(LocalDateTime.of(2026, 12, 13, 0, 0)))   // Sunday 13th
+        assertFalse(domOnly.matches(LocalDateTime.of(2026, 11, 20, 0, 0))) // Friday the 20th
         val dowOnly = parse("0 0 * * FRI")
-        assertTrue(dowOnly.matches(java.time.LocalDateTime.of(2026, 11, 20, 0, 0)))
-        assertFalse(dowOnly.matches(java.time.LocalDateTime.of(2026, 12, 13, 0, 0))) // Sunday
+        assertTrue(dowOnly.matches(LocalDateTime.of(2026, 11, 20, 0, 0)))
+        assertFalse(dowOnly.matches(LocalDateTime.of(2026, 12, 13, 0, 0))) // Sunday
     }
 
     // ─── Horizon / satisfiability ───────────────────────────────────────
@@ -179,9 +180,9 @@ class CronExpressionTest {
     @Test
     fun `CR15-name lists in the weekday field`() {
         val weekend = parse("0 0 * * SUN,SAT")
-        assertTrue(weekend.matches(java.time.LocalDateTime.of(2026, 8, 29, 0, 0)))  // Sat
-        assertTrue(weekend.matches(java.time.LocalDateTime.of(2026, 8, 30, 0, 0)))  // Sun
-        assertFalse(weekend.matches(java.time.LocalDateTime.of(2026, 8, 24, 0, 0))) // Mon
+        assertTrue(weekend.matches(LocalDateTime.of(2026, 8, 29, 0, 0)))  // Sat
+        assertTrue(weekend.matches(LocalDateTime.of(2026, 8, 30, 0, 0)))  // Sun
+        assertFalse(weekend.matches(LocalDateTime.of(2026, 8, 24, 0, 0))) // Mon
         // Lowercase names are accepted (case-insensitive normalization).
         assertNotNull(CronExpression.parse("0 0 * * sun,sat"))
     }

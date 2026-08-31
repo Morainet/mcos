@@ -2,6 +2,7 @@ package com.morainet.mcos.server
 
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
+import java.io.IOException
 import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
@@ -84,7 +85,7 @@ class BlobServer(
             respond(exchange, 413, e.message?.toByteArray(StandardCharsets.UTF_8))
         } catch (e: IllegalArgumentException) {
             respond(exchange, 400, null)
-        } catch (e: java.io.IOException) {
+        } catch (e: IOException) {
             respond(exchange, 500, null)
         } finally {
             exchange.close()

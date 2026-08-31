@@ -16,9 +16,16 @@ import com.morainet.mcos.sdk.HostServices
 import com.morainet.mcos.sdk.McosPlugin
 import com.morainet.mcos.sdk.PluginManifest
 import com.morainet.mcos.sdk.ProviderInfo
+import java.io.File
+import java.security.KeyPair
+import java.security.KeyPairGenerator
+import java.security.MessageDigest
+import java.security.Signature
+import java.util.Base64
 import kotlinx.coroutines.runBlocking
 import java.nio.file.Files
 import kotlin.test.*
+import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * Unit tests for §14.4 — force-disable of installed plugins via the blocklist.
@@ -30,28 +37,28 @@ class PluginInstallerBlocklistTest {
     // ─── Fixtures (mirror PluginInstallerTest) ───────────────────────────
 
     private fun keyPair() = run {
-        val kpg = java.security.KeyPairGenerator.getInstance("Ed25519")
+        val kpg = KeyPairGenerator.getInstance("Ed25519")
         kpg.generateKeyPair()
     }
 
-    private fun pubKey(pair: java.security.KeyPair): PublisherKey =
+    private fun pubKey(pair: KeyPair): PublisherKey =
         PublisherKey(
             keyId = "key_2026_01",
             publisherId = "pub_1",
             publicKeyFingerprint = "ff".repeat(32),
             algorithm = "Ed25519",
-            publicKeyEncoded = java.util.Base64.getEncoder().encodeToString(pair.public.encoded),
+            publicKeyEncoded = Base64.getEncoder().encodeToString(pair.public.encoded),
             createdAt = "2026-01-01T00:00:00Z",
             status = KeyStatus.ACTIVE,
         )
 
-    private fun sign(pair: java.security.KeyPair, payload: ByteArray): ArtifactSignature {
-        val signer = java.security.Signature.getInstance("Ed25519")
+    private fun sign(pair: KeyPair, payload: ByteArray): ArtifactSignature {
+        val signer = Signature.getInstance("Ed25519")
         signer.initSign(pair.private)
         signer.update(payload)
         return ArtifactSignature(
             payloadSha256 = sha256Hex(payload),
-            signature = java.util.Base64.getEncoder().encodeToString(signer.sign()),
+            signature = Base64.getEncoder().encodeToString(signer.sign()),
             signingKeyId = "key_2026_01",
             algorithm = "Ed25519",
             signedAt = "2026-02-01T00:00:00Z",
@@ -59,12 +66,12 @@ class PluginInstallerBlocklistTest {
     }
 
     private fun sha256Hex(bytes: ByteArray): String {
-        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
+        val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
         return digest.joinToString("") { "%02x".format(it) }
     }
 
     private fun metadata(
-        pair: java.security.KeyPair,
+        pair: KeyPair,
         packageId: String = "com.example.a",
         version: String = "1.0.0",
     ): PackageMetadata {
@@ -103,7 +110,7 @@ class PluginInstallerBlocklistTest {
         override fun handlers(): Map<String, CommandHandler> = mapOf(
             "$id.ping" to object : CommandHandler {
                 override suspend fun invoke(ctx: ExecutionContext): CommandResult =
-                    CommandResult.Ok(kotlinx.serialization.json.JsonPrimitive("pong"))
+                    CommandResult.Ok(JsonPrimitive("pong"))
             },
         )
     }
@@ -190,7 +197,7 @@ class PluginInstallerBlocklistTest {
         assertTrue(h.registry.getByPlugin(meta.packageId).isEmpty(), "descriptors must be drained")
         assertFalse(h.registry.isRegistered("${meta.packageId}.ping"))
         // Artifact stays on disk (DISABLED, not NOT_INSTALLED).
-        assertTrue(java.io.File(h.downloadDir, "${meta.packageId}-${meta.version}.mcos").exists())
+        assertTrue(File(h.downloadDir, "${meta.packageId}-${meta.version}.mcos").exists())
     }
 
     @Test
@@ -274,7 +281,7 @@ class PluginInstallerBlocklistTest {
 
         assertIs<UninstallResult.Done>(result)
         assertEquals(InstallState.NOT_INSTALLED, h.installer.stateOf(meta.packageId))
-        assertFalse(java.io.File(h.downloadDir, "${meta.packageId}-${meta.version}.mcos").exists())
+        assertFalse(File(h.downloadDir, "${meta.packageId}-${meta.version}.mcos").exists())
     }
 
     @Test

@@ -4,6 +4,9 @@ import com.morainet.mcos.runtime.core.error.McosErrorCode
 import com.morainet.mcos.runtime.core.executor.NamespacedSandbox
 import com.morainet.mcos.runtime.core.executor.SecretResolvingNetService
 import com.morainet.mcos.runtime.core.executor.StampScopedNetService
+import com.morainet.mcos.sdk.AuthStamp
+import com.morainet.mcos.sdk.ResolveResult
+import com.morainet.mcos.sdk.SandboxFileService
 import com.morainet.mcos.security.AuthStampSigner
 import com.morainet.mcos.sdk.HostServices
 import com.morainet.mcos.sdk.McosException
@@ -89,7 +92,7 @@ class IsolatedFacadeServer(
         }
     }
 
-    private suspend fun dispatch(op: String, args: JsonObject, stamp: com.morainet.mcos.sdk.AuthStamp?): JsonObject =
+    private suspend fun dispatch(op: String, args: JsonObject, stamp: AuthStamp?): JsonObject =
         when (op) {
             IsolationOps.OP_NET_REQUEST -> serveNet(args, stamp)
 
@@ -161,18 +164,18 @@ class IsolatedFacadeServer(
                     put(
                         "resolved",
                         when (result) {
-                            is com.morainet.mcos.sdk.ResolveResult.Resolved -> buildJsonObject {
+                            is ResolveResult.Resolved -> buildJsonObject {
                                 put("kind", "resolved")
                                 put("id", result.id)
                                 put("confidence", result.confidence)
                             }
-                            is com.morainet.mcos.sdk.ResolveResult.Ambiguous -> buildJsonObject {
+                            is ResolveResult.Ambiguous -> buildJsonObject {
                                 put("kind", "ambiguous")
                                 put("candidates", buildJsonArray {
                                     result.candidates.forEach { add(JsonPrimitive(it)) }
                                 })
                             }
-                            is com.morainet.mcos.sdk.ResolveResult.NotFound -> buildJsonObject {
+                            is ResolveResult.NotFound -> buildJsonObject {
                                 put("kind", "notFound")
                                 put("reason", result.reason)
                             }
@@ -194,7 +197,7 @@ class IsolatedFacadeServer(
      * in-process Executor's Stage-4 facade (ScopedFacade.kt) — the gate sits
      * outermost so scope is judged before any store read or egress.
      */
-    private suspend fun serveNet(args: JsonObject, stamp: com.morainet.mcos.sdk.AuthStamp?): JsonObject {
+    private suspend fun serveNet(args: JsonObject, stamp: AuthStamp?): JsonObject {
         val gated = StampScopedNetService(
             SecretResolvingNetService(host.net, host.secureStore),
             stamp,
@@ -219,7 +222,7 @@ class IsolatedFacadeServer(
     }
 
     /** Namespaced sandbox view for this connection's plugin, or an honest UNAVAILABLE envelope. */
-    private fun sandboxOrUnavailable(): com.morainet.mcos.sdk.SandboxFileService =
+    private fun sandboxOrUnavailable(): SandboxFileService =
         host.sandbox?.let { NamespacedSandbox(it, pluginId) }
             ?: throw McosException(
                 code = McosErrorCode.UNAVAILABLE.name,

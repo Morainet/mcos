@@ -9,6 +9,7 @@ import com.morainet.mcos.runtime.core.events.EventBus
 import com.morainet.mcos.runtime.core.events.EventEnvelope
 import com.morainet.mcos.runtime.core.events.TypedEventBus
 import com.morainet.mcos.runtime.core.memory.MemoryStore
+import com.morainet.mcos.sdk.ExecutionContext
 import com.morainet.mcos.security.audit.InMemoryAuditLog
 import com.morainet.mcos.security.permission.DefaultPermissionKernel
 import com.morainet.mcos.security.permission.PermissionKernel
@@ -104,7 +105,7 @@ class McosRuntimeTriggerTest {
             )
             override fun handlers(): Map<String, CommandHandler> = mapOf(
                 id to object : CommandHandler {
-                    override suspend fun invoke(ctx: com.morainet.mcos.sdk.ExecutionContext): CommandResult {
+                    override suspend fun invoke(ctx: ExecutionContext): CommandResult {
                         invocations.add(id to (ctx.args as? JsonObject ?: JsonObject(emptyMap())))
                         return CommandResult.Ok(value = buildJsonObject { put("echo", JsonPrimitive(id)) })
                     }

@@ -1,5 +1,6 @@
 package com.morainet.mcos.android.host.isolation
 
+import com.morainet.mcos.sdk.Clock
 import com.morainet.mcos.sdk.FileEntry
 import com.morainet.mcos.sdk.FileService
 import com.morainet.mcos.sdk.HostServices
@@ -103,7 +104,7 @@ class FakeHostServices(
         override suspend fun startActivityForResult(intent: Map<String, String>): Map<String, String>? =
             throw IllegalStateException("ui not served in isolation tests")
     }
-    override val clock: com.morainet.mcos.sdk.Clock = object : com.morainet.mcos.sdk.Clock {
+    override val clock: Clock = object : Clock {
         override fun nowMs(): Long = now()
     }
     override val json: JsonService = object : JsonService {

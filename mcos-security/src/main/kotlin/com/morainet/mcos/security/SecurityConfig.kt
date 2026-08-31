@@ -2,6 +2,7 @@ package com.morainet.mcos.security
 
 import com.morainet.mcos.security.audit.AuditLog
 import com.morainet.mcos.security.audit.RunRecord
+import com.morainet.mcos.security.permission.AuthorizationResult
 import com.morainet.mcos.security.permission.DefaultPermissionKernel
 import com.morainet.mcos.security.permission.PermissionKernel
 import com.morainet.mcos.sdk.AuthStamp
@@ -91,9 +92,9 @@ class PermissivePermissionKernel : PermissionKernel {
     override fun authorize(
         descriptor: CommandDescriptor,
         enterprisePolicy: EnterprisePolicy?,
-    ): com.morainet.mcos.security.permission.AuthorizationResult {
+    ): AuthorizationResult {
         val now = System.currentTimeMillis()
-        return com.morainet.mcos.security.permission.AuthorizationResult.Authorized(
+        return AuthorizationResult.Authorized(
             stamp = AuthStamp(
                 runId = "", // filled by Executor when the run binds
                 commandId = descriptor.id,

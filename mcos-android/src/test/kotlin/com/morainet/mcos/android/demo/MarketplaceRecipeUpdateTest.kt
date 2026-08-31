@@ -3,6 +3,7 @@ package com.morainet.mcos.android.demo
 import androidx.lifecycle.viewModelScope
 import com.morainet.mcos.marketplace.RecipePlaceholder
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -26,7 +27,7 @@ import org.junit.runner.Description
  * [MarketplaceViewModel]. Same pure-JVM scaffolding as [MarketplaceViewModelTest]:
  * an in-memory index transport with a real Ed25519 verify chain behind installs.
  */
-@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+@OptIn(ExperimentalCoroutinesApi::class)
 class MarketplaceRecipeUpdateTest {
 
     private val mainDispatcher = UnconfinedTestDispatcher()

@@ -3,6 +3,7 @@ package com.morainet.mcos.runtime.api
 import com.morainet.mcos.runtime.core.api.AGENT_PROBE_AUDIT_SOURCE
 import com.morainet.mcos.runtime.core.api.ExecuteRequest
 import com.morainet.mcos.runtime.core.api.Payload
+import com.morainet.mcos.runtime.core.api.RuntimeEvent
 import com.morainet.mcos.runtime.core.api.Source
 import com.morainet.mcos.runtime.core.executor.Command
 import com.morainet.mcos.runtime.core.memory.MemoryStore
@@ -183,8 +184,8 @@ class McosRuntimeProbeTest {
                 val terminal = runtime.observe(handle.runId)
                 var done = false
                 terminal.collect { ev ->
-                    if (ev is com.morainet.mcos.runtime.core.api.RuntimeEvent.RunSucceeded ||
-                        ev is com.morainet.mcos.runtime.core.api.RuntimeEvent.RunFailed
+                    if (ev is RuntimeEvent.RunSucceeded ||
+                        ev is RuntimeEvent.RunFailed
                     ) done = true
                 }
                 if (done) break

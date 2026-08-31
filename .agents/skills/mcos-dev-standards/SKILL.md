@@ -141,6 +141,27 @@ Gradle 拆分后 `internal` 从"包内可见"变为"模块内可见"。跨模块
   等首个事件(execute() 返回 handle 早于 RunStarted 发布,早订阅者必须能等到事件);
 - 回放上限 RUN_REPLAY=512,已完成 run 保留 128 个,被逐出 runId tombstone 保留 512 个。
 
+## 规则 10: 引用类必须先 import,禁止调用处内联全限定名
+
+使用其他包的类(含伴生对象成员、嵌套类、顶层函数)时,必须先 `import` 再用短名:
+
+```kotlin
+// ✗ 禁止:调用处写全限定名
+val r = com.morainet.mcos.sdk.ResolveResult.NotFound("cmd")
+
+// ✓ 正确
+import com.morainet.mcos.sdk.ResolveResult
+val r = ResolveResult.NotFound("cmd")
+```
+
+- 适用所有模块 Kotlin 源码(main + test),含 `java.*`/`javax.*`/`kotlinx.*`/`androidx.*`
+  (例:`java.security.MessageDigest.getInstance` 必须先 import)。
+- 同名遮蔽先用显式 import 解决:Kotlin 显式 import 优先级**高于本包声明**,只有
+  通配符 import 才会被本包同名类遮蔽(即把 `import x.y.Z` 写全即可覆盖同包 `Z`)。
+- 唯一例外:同一文件确需用到**两个同短名**类(import 只能绑定一个),允许其中一个
+  保留全限定引用,并加行内注释说明缘由。
+- 新增 import 后同步清理未使用导入(规则 3)。
+
 ## 常见错误速查表
 
 | 错误信息关键词 | 原因 | 解决 |

@@ -4,6 +4,7 @@ import com.morainet.mcos.runtime.core.error.McosErrorCode
 import com.morainet.mcos.runtime.core.executor.IsolatedInvocation
 import com.morainet.mcos.runtime.core.executor.IsolationHost
 import com.morainet.mcos.sdk.CommandResult
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -35,7 +36,7 @@ class TransportIsolationHost(
         } catch (e: Exception) {
             // Cancellation must keep propagating — only transport failures
             // become command errors.
-            if (e is kotlinx.coroutines.CancellationException) throw e
+            if (e is CancellationException) throw e
             return CommandResult.Err(
                 code = McosErrorCode.PLUGIN_ERROR.name,
                 message = "Isolated process call failed: ${e.message ?: e.javaClass.simpleName}",

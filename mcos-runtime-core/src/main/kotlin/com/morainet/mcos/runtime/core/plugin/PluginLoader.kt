@@ -4,6 +4,7 @@ import com.morainet.mcos.runtime.core.registry.CommandRegistry
 import com.morainet.mcos.runtime.core.registry.RegisterResult
 import com.morainet.mcos.security.ArtifactSignature
 import com.morainet.mcos.security.PluginTrustGate
+import com.morainet.mcos.security.TrustDecision
 import com.morainet.mcos.security.TrustLevel
 import com.morainet.mcos.sdk.McosPlugin
 import com.morainet.mcos.sdk.PluginManifest
@@ -84,7 +85,7 @@ class PluginLoader(
         )
 
         return when (decision) {
-            is com.morainet.mcos.security.TrustDecision.Allow -> {
+            is TrustDecision.Allow -> {
                 val result = registry.register(plugin, decision.trustLevel)
                 when (result) {
                     is RegisterResult.Ok -> LoadResult.Installed(
@@ -108,7 +109,7 @@ class PluginLoader(
                     )
                 }
             }
-            is com.morainet.mcos.security.TrustDecision.Deny -> LoadResult.Denied(
+            is TrustDecision.Deny -> LoadResult.Denied(
                 pluginId = packageId,
                 reason = decision.reason,
                 code = decision.code,
@@ -150,7 +151,7 @@ class PluginLoader(
             builtin = false,
         )
         return when (decision) {
-            is com.morainet.mcos.security.TrustDecision.Allow -> {
+            is TrustDecision.Allow -> {
                 when (val result = registry.registerManifest(manifest, decision.trustLevel)) {
                     is RegisterResult.Ok -> LoadResult.Installed(
                         pluginId = manifest.id,
@@ -173,7 +174,7 @@ class PluginLoader(
                     )
                 }
             }
-            is com.morainet.mcos.security.TrustDecision.Deny -> LoadResult.Denied(
+            is TrustDecision.Deny -> LoadResult.Denied(
                 pluginId = packageId,
                 reason = decision.reason,
                 code = decision.code,

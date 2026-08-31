@@ -1,6 +1,7 @@
 package com.morainet.mcos.runtime.core.workflow
 
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlin.test.*
 
@@ -209,7 +210,7 @@ class WorkflowTriggerParsingTest {
     fun `TP17-store round-trips a spec with trigger`() {
         val store = WorkflowStore()
         val spec = WorkflowSpec(
-            trigger = Trigger.Event(filter = Json.parseToJsonElement("""{"type":"wifi.connected"}""") as kotlinx.serialization.json.JsonObject),
+            trigger = Trigger.Event(filter = Json.parseToJsonElement("""{"type":"wifi.connected"}""") as JsonObject),
             step = WorkflowStep.Command("vpn.connect")
         )
 

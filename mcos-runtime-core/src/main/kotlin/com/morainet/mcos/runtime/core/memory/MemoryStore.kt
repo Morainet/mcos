@@ -6,6 +6,7 @@ import com.morainet.mcos.sdk.MemoryFacade
 import com.morainet.mcos.sdk.MemoryWriteResult
 import com.morainet.mcos.sdk.ResolveResult
 import com.morainet.mcos.sdk.WriteStatus
+import java.time.Instant
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
@@ -412,7 +413,7 @@ class MemoryStore(
 
     /** "2026-07-01T12:34:56.123Z" style timestamp, as used in history keys. */
     private fun isoTimestamp(epochMs: Long): String =
-        java.time.Instant.ofEpochMilli(epochMs).toString()
+        Instant.ofEpochMilli(epochMs).toString()
 
     private fun removeFromIndex(path: String) {
         for ((_, paths) in semanticIndex) {

@@ -1,6 +1,8 @@
 package com.morainet.mcos.sdk
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 
 // ─── Core Plugin & Handler interfaces ─────────────────────────────────────
@@ -325,14 +327,14 @@ interface Clock {
 
 interface JsonService {
     /** Parse JSON string to structured form. */
-    fun parse(json: String): kotlinx.serialization.json.JsonElement
+    fun parse(json: String): JsonElement
 }
 
 /**
  * Read-only Memory view for plugins — same as [03-runtime.md 12].
  */
 interface MemoryFacade {
-    suspend fun get(path: String): kotlinx.serialization.json.JsonElement?
+    suspend fun get(path: String): JsonElement?
     suspend fun resolveRef(ref: String, semanticType: String? = null): ResolveResult
 }
 
@@ -367,7 +369,7 @@ enum class MemoryCategory { PREFERENCE, PLACE, PERSON, DEVICE, PAYMENT, PERMISSI
  */
 data class MemoryConflict(
     val existingPath: String,
-    val existingValue: kotlinx.serialization.json.JsonElement,
+    val existingValue: JsonElement,
     val similarity: Float,
     val category: MemoryCategory,
 )
@@ -390,7 +392,7 @@ data class MemoryWriteResult(
 
 // ─── Supporting value types ──────────────────────────────────────────────
 
-@kotlinx.serialization.Serializable
+@Serializable
 data class FileEntry(
     val uri: String,
     val name: String,
@@ -400,7 +402,7 @@ data class FileEntry(
     val dateModifiedMs: Long? = null
 )
 
-@kotlinx.serialization.Serializable
+@Serializable
 data class NetResponse(
     val status: Int,
     val body: String?,

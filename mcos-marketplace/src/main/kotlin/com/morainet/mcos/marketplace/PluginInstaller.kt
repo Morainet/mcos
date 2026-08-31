@@ -7,6 +7,7 @@ import com.morainet.mcos.security.Blocklist as SecurityBlocklist
 import com.morainet.mcos.security.EmptyBlocklist
 import com.morainet.mcos.security.PublisherKey
 import com.morainet.mcos.security.PublisherKeyStore
+import com.morainet.mcos.security.TrustLevel
 import com.morainet.mcos.security.VerifyResult
 import com.morainet.mcos.runtime.core.plugin.LoadResult
 import com.morainet.mcos.runtime.core.plugin.PluginLoader
@@ -23,7 +24,7 @@ sealed class InstallResult {
     data class Installed(
         val packageId: String,
         val version: String,
-        val trustLevel: com.morainet.mcos.security.TrustLevel,
+        val trustLevel: TrustLevel,
         val commandsRegistered: Int,
         val aliasesRegistered: Int,
     ) : InstallResult()
@@ -47,7 +48,7 @@ sealed class UpdateResult {
     data class Installed(
         val packageId: String,
         val version: String,
-        val trustLevel: com.morainet.mcos.security.TrustLevel,
+        val trustLevel: TrustLevel,
         val commandsRegistered: Int,
         val aliasesRegistered: Int,
     ) : UpdateResult()

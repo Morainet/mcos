@@ -553,6 +553,8 @@ class CommandRegistryTest {
                 services = StubHostServices(object : MemoryFacade {
                     override suspend fun get(path: String) = null
                     override suspend fun resolveRef(ref: String, semanticType: String?) =
+                        // Fully qualified on purpose (rule 10 exception): this file
+                        // also uses this package's own ResolveResult bare.
                         com.morainet.mcos.sdk.ResolveResult.NotFound("ref_unresolvable")
                 }),
             ),

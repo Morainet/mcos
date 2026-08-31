@@ -1,6 +1,10 @@
 package com.morainet.mcos.marketplace
 
 import com.morainet.mcos.runtime.core.registry.CommandRegistry
+import com.morainet.mcos.runtime.core.registry.IsolationRequiredHandler
+import com.morainet.mcos.runtime.core.registry.ResolveResult
+import com.morainet.mcos.sdk.CommandManifestEntry
+import com.morainet.mcos.sdk.SideEffectClass
 import com.morainet.mcos.security.ArtifactSignature
 import com.morainet.mcos.security.ArtifactVerifier
 import com.morainet.mcos.security.InMemoryPublisherKeyStore
@@ -16,9 +20,16 @@ import com.morainet.mcos.sdk.HostServices
 import com.morainet.mcos.sdk.McosPlugin
 import com.morainet.mcos.sdk.PluginManifest
 import com.morainet.mcos.sdk.ProviderInfo
+import java.io.File
+import java.security.KeyPair
+import java.security.KeyPairGenerator
+import java.security.MessageDigest
+import java.security.Signature
+import java.util.Base64
 import kotlinx.coroutines.runBlocking
 import java.nio.file.Files
 import kotlin.test.*
+import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * Unit tests for [PluginInstaller] — §7.1 install, §7.2 update, §7.3 uninstall.
@@ -31,28 +42,28 @@ class PluginInstallerTest {
     // ─── Fixtures ─────────────────────────────────────────────────────────
 
     private fun keyPair() = run {
-        val kpg = java.security.KeyPairGenerator.getInstance("Ed25519")
+        val kpg = KeyPairGenerator.getInstance("Ed25519")
         kpg.generateKeyPair()
     }
 
-    private fun pubKey(pair: java.security.KeyPair, status: KeyStatus = KeyStatus.ACTIVE): PublisherKey =
+    private fun pubKey(pair: KeyPair, status: KeyStatus = KeyStatus.ACTIVE): PublisherKey =
         PublisherKey(
             keyId = "key_2026_01",
             publisherId = "pub_1",
             publicKeyFingerprint = "ff".repeat(32),
             algorithm = "Ed25519",
-            publicKeyEncoded = java.util.Base64.getEncoder().encodeToString(pair.public.encoded),
+            publicKeyEncoded = Base64.getEncoder().encodeToString(pair.public.encoded),
             createdAt = "2026-01-01T00:00:00Z",
             status = status,
         )
 
-    private fun sign(pair: java.security.KeyPair, payload: ByteArray): ArtifactSignature {
-        val signer = java.security.Signature.getInstance("Ed25519")
+    private fun sign(pair: KeyPair, payload: ByteArray): ArtifactSignature {
+        val signer = Signature.getInstance("Ed25519")
         signer.initSign(pair.private)
         signer.update(payload)
         return ArtifactSignature(
             payloadSha256 = sha256Hex(payload),
-            signature = java.util.Base64.getEncoder().encodeToString(signer.sign()),
+            signature = Base64.getEncoder().encodeToString(signer.sign()),
             signingKeyId = "key_2026_01",
             algorithm = "Ed25519",
             signedAt = "2026-02-01T00:00:00Z",
@@ -60,12 +71,12 @@ class PluginInstallerTest {
     }
 
     private fun sha256Hex(bytes: ByteArray): String {
-        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
+        val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
         return digest.joinToString("") { "%02x".format(it) }
     }
 
     private fun metadata(
-        pair: java.security.KeyPair,
+        pair: KeyPair,
         packageId: String = "com.example.a",
         version: String = "1.0.0",
         permissions: List<MarketplacePermissionEntry> = emptyList(),
@@ -107,7 +118,7 @@ class PluginInstallerTest {
         override fun handlers(): Map<String, CommandHandler> = mapOf(
             "$id.ping" to object : CommandHandler {
                 override suspend fun invoke(ctx: ExecutionContext): CommandResult =
-                    CommandResult.Ok(kotlinx.serialization.json.JsonPrimitive("pong"))
+                    CommandResult.Ok(JsonPrimitive("pong"))
             },
         )
     }
@@ -200,7 +211,7 @@ class PluginInstallerTest {
         }
 
         assertEquals(InstallState.INSTALLED, inst.stateOf(meta.packageId))
-        assertTrue(java.io.File(downloadDir, "${meta.packageId}-${meta.version}.mcos").exists())
+        assertTrue(File(downloadDir, "${meta.packageId}-${meta.version}.mcos").exists())
     }
 
     @Test
@@ -303,7 +314,7 @@ class PluginInstallerTest {
         val meta = metadata(pair)
 
         inst.installPackage(meta) { createPlugin(meta.packageId, meta.version) }
-        val staged = java.io.File(downloadDir, "${meta.packageId}-${meta.version}.mcos")
+        val staged = File(downloadDir, "${meta.packageId}-${meta.version}.mcos")
         assertTrue(staged.exists())
 
         var hookCalled = false
@@ -334,7 +345,7 @@ class PluginInstallerTest {
     fun `T9-install persists record and rehydrates after restart`() = runBlocking {
         val pair = keyPair()
         val store = InMemoryPublisherKeyStore().apply { put(pubKey(pair)) }
-        val recordStore = InstallRecordStore(java.io.File(downloadDir, "records.json"))
+        val recordStore = InstallRecordStore(File(downloadDir, "records.json"))
         val meta = metadata(pair)
         installer(store, recordStore = recordStore)
             .installPackage(meta) { createPlugin(meta.packageId, meta.version) }
@@ -358,13 +369,13 @@ class PluginInstallerTest {
     fun `T10-uninstall persists removal across restart`() = runBlocking {
         val pair = keyPair()
         val store = InMemoryPublisherKeyStore().apply { put(pubKey(pair)) }
-        val recordStore = InstallRecordStore(java.io.File(downloadDir, "records.json"))
+        val recordStore = InstallRecordStore(File(downloadDir, "records.json"))
         val meta = metadata(pair)
         installer(store, recordStore = recordStore)
             .installPackage(meta) { createPlugin(meta.packageId, meta.version) }
 
         val (restarted, _, _) = restartInstaller(recordStore)
-        val staged = java.io.File(downloadDir, "${meta.packageId}-${meta.version}.mcos")
+        val staged = File(downloadDir, "${meta.packageId}-${meta.version}.mcos")
         assertTrue(staged.exists(), "staged artifact survives the restart")
 
         assertIs<UninstallResult.Done>(restarted.uninstallPackage(meta.packageId))
@@ -378,13 +389,13 @@ class PluginInstallerTest {
     fun `T11-tampered staged artifact fails closed on rehydrate`() = runBlocking {
         val pair = keyPair()
         val store = InMemoryPublisherKeyStore().apply { put(pubKey(pair)) }
-        val recordStore = InstallRecordStore(java.io.File(downloadDir, "records.json"))
+        val recordStore = InstallRecordStore(File(downloadDir, "records.json"))
         val meta = metadata(pair)
         installer(store, recordStore = recordStore)
             .installPackage(meta) { createPlugin(meta.packageId, meta.version) }
 
         // Attack: swap the staged bytes after the fact.
-        java.io.File(downloadDir, "${meta.packageId}-${meta.version}.mcos")
+        File(downloadDir, "${meta.packageId}-${meta.version}.mcos")
             .writeBytes("evil-payload".encodeToByteArray())
 
         val (restarted, keys, registry) = restartInstaller(recordStore)
@@ -407,7 +418,7 @@ class PluginInstallerTest {
     fun `T12-disabled record survives restart and stays unloaded`() = runBlocking {
         val pair = keyPair()
         val store = InMemoryPublisherKeyStore().apply { put(pubKey(pair)) }
-        val recordStore = InstallRecordStore(java.io.File(downloadDir, "records.json"))
+        val recordStore = InstallRecordStore(File(downloadDir, "records.json"))
         val meta = metadata(pair)
         val inst = installer(store, recordStore = recordStore)
         inst.installPackage(meta) { createPlugin(meta.packageId, meta.version) }
@@ -427,7 +438,7 @@ class PluginInstallerTest {
 
     @Test
     fun `T13-corrupt record store fails closed`() = runBlocking {
-        val recordFile = java.io.File(downloadDir, "records.json")
+        val recordFile = File(downloadDir, "records.json")
         recordFile.writeText("not json at all\n")
         val (restarted, _, _) = restartInstaller(InstallRecordStore(recordFile))
 
@@ -440,7 +451,7 @@ class PluginInstallerTest {
         val pair = keyPair()
         val store = InMemoryPublisherKeyStore().apply { put(pubKey(pair)) }
         val hmacKey = "device-bound".toByteArray()
-        val recordFile = java.io.File(downloadDir, "records.json")
+        val recordFile = File(downloadDir, "records.json")
         val recordStore = InstallRecordStore(recordFile, hmacKey)
         val meta = metadata(pair)
         installer(store, recordStore = recordStore)
@@ -468,12 +479,12 @@ class PluginInstallerTest {
         provider = ProviderInfo("Test", "https://test.local"),
         entry = "com.test.Wire",
         commands = listOf(
-            com.morainet.mcos.sdk.CommandManifestEntry(
+            CommandManifestEntry(
                 id = "$id.fetch",
                 version = "1.0.0",
                 title = "Fetch",
                 description = "network fetch",
-                sideEffectClass = com.morainet.mcos.sdk.SideEffectClass.network,
+                sideEffectClass = SideEffectClass.network,
             ),
         ),
     )
@@ -509,9 +520,9 @@ class PluginInstallerTest {
         assertEquals(InstallState.INSTALLED, inst.stateOf(meta.packageId))
         // registered manifest-only: descriptor present, handler is the isolation stub
         val resolved = registry.resolve("${meta.packageId}.fetch")
-        assertIs<com.morainet.mcos.runtime.core.registry.ResolveResult.Found>(resolved)
+        assertIs<ResolveResult.Found>(resolved)
         assertEquals(
-            com.morainet.mcos.runtime.core.registry.IsolationRequiredHandler,
+            IsolationRequiredHandler,
             resolved.entry.handler,
         )
     }
@@ -531,7 +542,7 @@ class PluginInstallerTest {
         assertIs<InstallResult.Failed>(result)
         assertEquals("decode_failed", result.code)
         assertEquals(InstallState.FAILED, inst.stateOf(meta.packageId))
-        assertFalse(java.io.File(downloadDir, "${meta.packageId}-${meta.version}.mcos").exists())
+        assertFalse(File(downloadDir, "${meta.packageId}-${meta.version}.mcos").exists())
     }
 
     @Test
@@ -556,7 +567,7 @@ class PluginInstallerTest {
         val pair = keyPair()
         val store = InMemoryPublisherKeyStore().apply { put(pubKey(pair)) }
         val hmacKey = "device-bound".toByteArray()
-        val recordFile = java.io.File(downloadDir, "records-mmo.json")
+        val recordFile = File(downloadDir, "records-mmo.json")
         val recordStore = InstallRecordStore(recordFile, hmacKey)
         val meta = metadata(pair)
         installer(
@@ -582,7 +593,7 @@ class PluginInstallerTest {
         assertEquals(InstallState.INSTALLED, restarted.stateOf(meta.packageId))
         assertNull(outcomes[0].plugin, "manifest-only rehydrate instantiates no plugin code")
         val restored = registry.resolve("${meta.packageId}.fetch")
-        assertIs<com.morainet.mcos.runtime.core.registry.ResolveResult.Found>(restored)
+        assertIs<ResolveResult.Found>(restored)
         Unit
     }
 }

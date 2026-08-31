@@ -1,5 +1,6 @@
 package com.morainet.mcos.llm
 
+import java.net.http.HttpTimeoutException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.net.ConnectException
@@ -85,7 +86,7 @@ class JdkLlmHttpTransport : LlmHttpTransport {
         try {
             val response = client.send(request, HttpResponse.BodyHandlers.ofString())
             HttpTransportResponse(response.statusCode(), response.body())
-        } catch (e: java.net.http.HttpTimeoutException) {
+        } catch (e: HttpTimeoutException) {
             // java.net.http-only exception: normalize so the provider never
             // references a class that does not exist on Android.
             throw LlmTransportException("LLM_TIMEOUT", "LLM request timed out", true)

@@ -1,6 +1,9 @@
 package com.morainet.mcos.marketplace
 
 import com.morainet.mcos.security.PublisherKey
+import java.io.IOException
+import java.net.ConnectException
+import java.net.URLEncoder
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -60,9 +63,9 @@ class MarketplaceIndex(
             transport.getJson(base(path), CONNECT_TIMEOUT_MS, REQUEST_TIMEOUT_MS)
         } catch (e: MarketplaceTransportException) {
             throw MarketplaceIndexException(0, e.code, e.message, e.retryable)
-        } catch (e: java.net.ConnectException) {
+        } catch (e: ConnectException) {
             throw MarketplaceIndexException(0, "MARKETPLACE_UNREACHABLE", "Cannot reach marketplace: ${e.message}", true)
-        } catch (e: java.io.IOException) {
+        } catch (e: IOException) {
             throw MarketplaceIndexException(0, "MARKETPLACE_IO", "Marketplace I/O error: ${e.message}", true)
         }
 
@@ -99,9 +102,9 @@ class MarketplaceIndex(
             transport.postJson(base(path), body, CONNECT_TIMEOUT_MS, REQUEST_TIMEOUT_MS)
         } catch (e: MarketplaceTransportException) {
             throw MarketplaceIndexException(0, e.code, e.message, e.retryable)
-        } catch (e: java.net.ConnectException) {
+        } catch (e: ConnectException) {
             throw MarketplaceIndexException(0, "MARKETPLACE_UNREACHABLE", "Cannot reach marketplace: ${e.message}", true)
-        } catch (e: java.io.IOException) {
+        } catch (e: IOException) {
             throw MarketplaceIndexException(0, "MARKETPLACE_IO", "Marketplace I/O error: ${e.message}", true)
         }
 
@@ -373,7 +376,7 @@ class MarketplaceIndex(
     }
 
     private fun encode(value: String): String =
-        java.net.URLEncoder.encode(value, Charsets.UTF_8)
+        URLEncoder.encode(value, Charsets.UTF_8)
 
     private companion object {
         const val CONNECT_TIMEOUT_MS = 10_000L

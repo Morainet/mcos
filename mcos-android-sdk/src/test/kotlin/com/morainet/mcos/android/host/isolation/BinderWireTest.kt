@@ -1,5 +1,7 @@
 package com.morainet.mcos.android.host.isolation
 
+import com.morainet.mcos.runtime.core.executor.IsolatedInvocation
+import com.morainet.mcos.sdk.CommandResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonPrimitive
@@ -108,13 +110,13 @@ class BinderWireTest {
             ),
         )
         val result = host.invoke(
-            com.morainet.mcos.runtime.core.executor.IsolatedInvocation(
+            IsolatedInvocation(
                 pluginId = "p", pluginVersion = "1.0.0", commandId = "c",
                 args = buildJsonObject { }, auth = null,
                 runId = "r", deadlineMs = Long.MAX_VALUE, source = "TEST",
             ),
         )
-        val err = result as com.morainet.mcos.sdk.CommandResult.Err
+        val err = result as CommandResult.Err
         assertEquals("PLUGIN_ERROR", err.code)
         assertEquals(TransportIsolationHost.TRANSPORT_FAILURE, err.details["reason"]!!.jsonPrimitive.content)
     }
@@ -127,13 +129,13 @@ class BinderWireTest {
             PipeIsolationChannel(WirePipe { _, _ -> "" }, BinderWire.CODE_INVOKE, Dispatchers.Unconfined),
         )
         val result = host.invoke(
-            com.morainet.mcos.runtime.core.executor.IsolatedInvocation(
+            IsolatedInvocation(
                 pluginId = "p", pluginVersion = "1.0.0", commandId = "c",
                 args = buildJsonObject { }, auth = null,
                 runId = "r", deadlineMs = Long.MAX_VALUE, source = "TEST",
             ),
         )
-        val err = result as com.morainet.mcos.sdk.CommandResult.Err
+        val err = result as CommandResult.Err
         assertEquals(TransportIsolationHost.TRANSPORT_FAILURE, err.details["reason"]!!.jsonPrimitive.content)
     }
 
@@ -149,13 +151,13 @@ class BinderWireTest {
             ),
         )
         val result = host.invoke(
-            com.morainet.mcos.runtime.core.executor.IsolatedInvocation(
+            IsolatedInvocation(
                 pluginId = "p", pluginVersion = "1.0.0", commandId = "c",
                 args = buildJsonObject { }, auth = null,
                 runId = "r", deadlineMs = Long.MAX_VALUE, source = "TEST",
             ),
         )
-        val err = result as com.morainet.mcos.sdk.CommandResult.Err
+        val err = result as CommandResult.Err
         assertEquals(TransportIsolationHost.DECODE_FAILURE, err.details["reason"]!!.jsonPrimitive.content)
     }
 }

@@ -4,7 +4,9 @@ import com.morainet.mcos.runtime.core.executor.IsolatedInvocation
 import com.morainet.mcos.sdk.Artifact
 import com.morainet.mcos.sdk.AuthStamp
 import com.morainet.mcos.sdk.CommandResult
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -60,7 +62,7 @@ class IsolationCodecTest {
     @Test
     fun invocationDecodeIgnoresUnknownFields() {
         val json = IsolationCodec.encodeInvocation(invocation).let {
-            JsonObject(it.toMap() + ("futureField" to kotlinx.serialization.json.JsonPrimitive("x")))
+            JsonObject(it.toMap() + ("futureField" to JsonPrimitive("x")))
         }
         assertEquals(invocation, IsolationCodec.decodeInvocation(json))
     }
@@ -73,7 +75,7 @@ class IsolationCodecTest {
 
     @Test
     fun invocationDecodeReturnsNullOnGarbage() {
-        val wrongType = JsonObject(mapOf("pluginId" to kotlinx.serialization.json.JsonArray(emptyList())))
+        val wrongType = JsonObject(mapOf("pluginId" to JsonArray(emptyList())))
         assertNull(IsolationCodec.decodeInvocation(wrongType))
     }
 

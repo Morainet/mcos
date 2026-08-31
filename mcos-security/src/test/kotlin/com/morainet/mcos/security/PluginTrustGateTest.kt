@@ -1,5 +1,8 @@
 package com.morainet.mcos.security
 
+import java.security.KeyPairGenerator
+import java.security.MessageDigest
+import java.security.Signature
 import java.util.Base64
 import kotlin.test.*
 
@@ -12,7 +15,7 @@ class PluginTrustGateTest {
 
     private val fakePayload = byteArrayOf(1, 2, 3, 4)
     private val keyPair = run {
-        val kpg = java.security.KeyPairGenerator.getInstance("Ed25519")
+        val kpg = KeyPairGenerator.getInstance("Ed25519")
         kpg.generateKeyPair()
     }
 
@@ -226,7 +229,7 @@ class PluginTrustGateTest {
     private fun goodSig(): ArtifactSignature = ArtifactSignature(
         payloadSha256 = sha256Hex(fakePayload),
         signature = Base64.getEncoder().encodeToString(
-            java.security.Signature.getInstance("Ed25519").let { s ->
+            Signature.getInstance("Ed25519").let { s ->
                 s.initSign(keyPair.private)
                 s.update(fakePayload)
                 s.sign()
@@ -238,7 +241,7 @@ class PluginTrustGateTest {
     )
 
     private fun sha256Hex(data: ByteArray): String {
-        val md = java.security.MessageDigest.getInstance("SHA-256")
+        val md = MessageDigest.getInstance("SHA-256")
         return md.digest(data).joinToString("") { "%02x".format(it) }
     }
 }

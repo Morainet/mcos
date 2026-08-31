@@ -6,6 +6,7 @@ import com.morainet.mcos.marketplace.BlocklistVerifier
 import com.morainet.mcos.security.InMemoryPublisherKeyStore
 import com.morainet.mcos.security.KeyStatus
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -30,7 +31,7 @@ import org.junit.runner.Description
  * marks matching keys REVOKED. Pure JVM, same scaffolding as
  * [MarketplaceViewModelTest].
  */
-@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+@OptIn(ExperimentalCoroutinesApi::class)
 class TrustAnchorsKeyBootstrapTest {
 
     private val mainDispatcher = UnconfinedTestDispatcher()

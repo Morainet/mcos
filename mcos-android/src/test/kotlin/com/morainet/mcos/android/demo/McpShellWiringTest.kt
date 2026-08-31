@@ -7,6 +7,7 @@ import com.morainet.mcos.sdk.NetService
 import com.morainet.mcos.sdk.NetResponse
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -29,7 +30,7 @@ import org.junit.runner.Description
  * commands through the runtime; toggling it off unregisters them. Drives the
  * real facade + registry with a fake MCP server bolted onto the host's `net`.
  */
-@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+@OptIn(ExperimentalCoroutinesApi::class)
 class McpShellWiringTest {
 
     private val mainDispatcher = UnconfinedTestDispatcher()

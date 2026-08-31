@@ -3,6 +3,7 @@ package com.morainet.mcos.server
 import com.morainet.mcos.runtime.core.memory.JdkSyncBlobTransport
 import com.morainet.mcos.runtime.core.memory.SyncBlobException
 import com.morainet.mcos.runtime.core.memory.SyncBlobTransport
+import java.nio.file.Path
 import kotlinx.coroutines.runBlocking
 import java.net.URI
 import java.net.http.HttpClient
@@ -29,7 +30,7 @@ import kotlin.test.assertTrue
 class BlobServerTest {
 
     private val token = "test-token-0123456789"
-    private lateinit var tempDir: java.nio.file.Path
+    private lateinit var tempDir: Path
     private lateinit var server: BlobServer
     private var port: Int = 0
 

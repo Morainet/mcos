@@ -9,6 +9,7 @@ import com.morainet.mcos.runtime.core.executor.Executor
 import com.morainet.mcos.security.NullAuditLog
 import com.morainet.mcos.sdk.AuthStamp
 import com.morainet.mcos.sdk.CommandResult
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -288,7 +289,7 @@ class WorkflowEngine(
             // already in flight run to completion (structured cancellation of
             // in-flight work is a P3 concern requiring cooperative checking
             // inside commands).
-            val failed = java.util.concurrent.atomic.AtomicBoolean(false)
+            val failed = AtomicBoolean(false)
             val deferred = step.steps.map { s ->
                 async {
                     if (step.cancelOnFailure && failed.get()) {

@@ -3,6 +3,9 @@ package com.morainet.mcos.runtime.core.plugin
 import com.morainet.mcos.runtime.core.registry.CommandRegistry
 import com.morainet.mcos.runtime.core.registry.IsolationRequiredHandler
 import com.morainet.mcos.runtime.core.registry.ResolveResult
+import com.morainet.mcos.sdk.CommandManifestEntry
+import com.morainet.mcos.sdk.SideEffectClass
+import com.morainet.mcos.security.ArtifactSignature
 import com.morainet.mcos.security.ArtifactVerifier
 import com.morainet.mcos.security.InMemoryPublisherKeyStore
 import com.morainet.mcos.security.KeyStatus
@@ -16,6 +19,11 @@ import com.morainet.mcos.sdk.HostServices
 import com.morainet.mcos.sdk.McosPlugin
 import com.morainet.mcos.sdk.PluginManifest
 import com.morainet.mcos.sdk.ProviderInfo
+import java.security.KeyPair
+import java.security.KeyPairGenerator
+import java.security.MessageDigest
+import java.security.Signature
+import java.util.Base64
 import kotlinx.serialization.json.JsonPrimitive
 import kotlin.test.*
 
@@ -28,17 +36,17 @@ class PluginLoaderTest {
     private val fakePayload = byteArrayOf(1, 2, 3, 4)
 
     private fun keyPair() = run {
-        val kpg = java.security.KeyPairGenerator.getInstance("Ed25519")
+        val kpg = KeyPairGenerator.getInstance("Ed25519")
         kpg.generateKeyPair()
     }
 
-    private fun pubKey(pair: java.security.KeyPair, status: KeyStatus = KeyStatus.ACTIVE): PublisherKey =
+    private fun pubKey(pair: KeyPair, status: KeyStatus = KeyStatus.ACTIVE): PublisherKey =
         PublisherKey(
             keyId = "key_2026_01",
             publisherId = "pub_1",
             publicKeyFingerprint = "ff".repeat(32),
             algorithm = "Ed25519",
-            publicKeyEncoded = java.util.Base64.getEncoder().encodeToString(pair.public.encoded),
+            publicKeyEncoded = Base64.getEncoder().encodeToString(pair.public.encoded),
             createdAt = "2026-01-01T00:00:00Z",
             status = status,
         )
@@ -144,12 +152,12 @@ class PluginLoaderTest {
                 provider = ProviderInfo("Test", "https://test.local"),
                 entry = "com.morainet.mcos.plugin.test.Hello",
                 commands = listOf(
-                    com.morainet.mcos.sdk.CommandManifestEntry(
+                    CommandManifestEntry(
                         id = "hello.greet",
                         version = "1",
                         title = "Greet",
                         description = "g",
-                        sideEffectClass = com.morainet.mcos.sdk.SideEffectClass.read,
+                        sideEffectClass = SideEffectClass.read,
                     ),
                 ),
             )
@@ -238,12 +246,12 @@ class PluginLoaderTest {
         provider = ProviderInfo("Test", "https://test.local"),
         entry = "com.test.Wire",
         commands = listOf(
-            com.morainet.mcos.sdk.CommandManifestEntry(
+            CommandManifestEntry(
                 id = "wire.fetch",
                 version = "1.0.0",
                 title = "Fetch",
                 description = "network fetch",
-                sideEffectClass = com.morainet.mcos.sdk.SideEffectClass.network,
+                sideEffectClass = SideEffectClass.network,
             ),
         ),
     )
@@ -252,14 +260,14 @@ class PluginLoaderTest {
     // Helpers
     // ═══════════════════════════════════════════════════════════════
 
-    private fun sign(pair: java.security.KeyPair, payload: ByteArray): com.morainet.mcos.security.ArtifactSignature {
-        val signer = java.security.Signature.getInstance("Ed25519")
+    private fun sign(pair: KeyPair, payload: ByteArray): ArtifactSignature {
+        val signer = Signature.getInstance("Ed25519")
         signer.initSign(pair.private)
         signer.update(payload)
         val bytes = signer.sign()
-        return com.morainet.mcos.security.ArtifactSignature(
+        return ArtifactSignature(
             payloadSha256 = sha256Hex(payload),
-            signature = java.util.Base64.getEncoder().encodeToString(bytes),
+            signature = Base64.getEncoder().encodeToString(bytes),
             signingKeyId = "key_2026_01",
             algorithm = "Ed25519",
             signedAt = "2026-01-01T00:00:00Z",
@@ -267,7 +275,7 @@ class PluginLoaderTest {
     }
 
     private fun sha256Hex(bytes: ByteArray): String {
-        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
+        val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
         return digest.joinToString("") { "%02x".format(it) }
     }
 }

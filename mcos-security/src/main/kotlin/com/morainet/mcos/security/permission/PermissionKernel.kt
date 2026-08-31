@@ -2,6 +2,7 @@ package com.morainet.mcos.security.permission
 
 import com.morainet.mcos.security.EnterprisePolicy
 import com.morainet.mcos.sdk.*
+import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -221,7 +222,7 @@ class DefaultPermissionKernel(
         // yields null and the kernel simply starts empty (fail-closed).
         grantStore.load()?.let { snapshot ->
             snapshot.grants.forEach { (pid, perms) ->
-                grants[pid] = java.util.Collections.synchronizedSet(perms.toMutableSet())
+                grants[pid] = Collections.synchronizedSet(perms.toMutableSet())
             }
             autoApprove.addAll(snapshot.autoApprove)
             alwaysConfirm = snapshot.alwaysConfirm
@@ -332,7 +333,7 @@ class DefaultPermissionKernel(
     // ─── Grant management ─────────────────────────────────────────────────
 
     override fun grant(pluginId: String, permission: String) {
-        grants.computeIfAbsent(pluginId) { java.util.Collections.synchronizedSet(mutableSetOf()) }
+        grants.computeIfAbsent(pluginId) { Collections.synchronizedSet(mutableSetOf()) }
             .add(permission)
         persist()
     }

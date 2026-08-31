@@ -6,6 +6,7 @@ import com.morainet.mcos.sdk.McosException
 import com.morainet.mcos.sdk.ResolveResult
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
@@ -144,7 +145,7 @@ class IsolatedHostServicesProxyTest {
     fun memoryGetAndResolveRefForwardAllResultKinds() = runTest {
         val memoryHost = FakeHostServices(
             memory = CannedMemory(
-                facts = mapOf("prefs/lang" to kotlinx.serialization.json.JsonPrimitive("zh")),
+                facts = mapOf("prefs/lang" to JsonPrimitive("zh")),
                 resolver = { ref ->
                     when (ref) {
                         "tom" -> ResolveResult.Resolved("people/tom", 0.75f)

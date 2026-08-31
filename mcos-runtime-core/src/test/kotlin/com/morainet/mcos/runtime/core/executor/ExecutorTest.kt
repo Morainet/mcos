@@ -1203,7 +1203,7 @@ class ExecutorTest {
             override fun nowMs(): Long = System.currentTimeMillis()
         }
         override val json = object : JsonService {
-            override fun parse(json: String): JsonElement = kotlinx.serialization.json.Json.parseToJsonElement(json)
+            override fun parse(json: String): JsonElement = Json.parseToJsonElement(json)
         }
         override val memory = object : MemoryFacade {
             override suspend fun get(path: String): JsonElement? = null

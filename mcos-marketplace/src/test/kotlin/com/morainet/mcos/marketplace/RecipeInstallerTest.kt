@@ -1,5 +1,11 @@
 package com.morainet.mcos.marketplace
 
+import com.morainet.mcos.security.KeyStatus
+import com.morainet.mcos.security.PublisherKey
+import java.security.KeyPair
+import java.security.KeyPairGenerator
+import java.security.Signature
+import java.util.Base64
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
@@ -268,11 +274,11 @@ class RecipeInstallerTest {
 
     private fun signed(
         envelope: RecipeEnvelope,
-        pair: java.security.KeyPair,
+        pair: KeyPair,
         algorithm: String = "Ed25519",
     ): RecipeEnvelope {
         val payload = envelope.canonicalPayload()
-        val signer = java.security.Signature.getInstance(algorithm).apply {
+        val signer = Signature.getInstance(algorithm).apply {
             initSign(pair.private)
             update(payload)
         }
@@ -281,21 +287,21 @@ class RecipeInstallerTest {
                 signingKeyId = "key_marketplace_1",
                 algorithm = algorithm,
                 signedAt = "2026-02-01T00:00:00Z",
-                signature = java.util.Base64.getEncoder().encodeToString(signer.sign()),
+                signature = Base64.getEncoder().encodeToString(signer.sign()),
             ),
         )
     }
 
-    private fun signedKeyPair(): Pair<com.morainet.mcos.security.PublisherKey, java.security.KeyPair> {
-        val pair = java.security.KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
-        val key = com.morainet.mcos.security.PublisherKey(
+    private fun signedKeyPair(): Pair<PublisherKey, KeyPair> {
+        val pair = KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
+        val key = PublisherKey(
             keyId = "key_marketplace_1",
             publisherId = "pub_marketplace",
             publicKeyFingerprint = "ff".repeat(32),
             algorithm = "Ed25519",
-            publicKeyEncoded = java.util.Base64.getEncoder().encodeToString(pair.public.encoded),
+            publicKeyEncoded = Base64.getEncoder().encodeToString(pair.public.encoded),
             createdAt = "2026-01-01T00:00:00Z",
-            status = com.morainet.mcos.security.KeyStatus.ACTIVE,
+            status = KeyStatus.ACTIVE,
         )
         return key to pair
     }

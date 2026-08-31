@@ -12,6 +12,7 @@ import com.morainet.mcos.runtime.core.api.RuntimeEvent
 import com.morainet.mcos.runtime.core.api.RuntimeGateway
 import com.morainet.mcos.runtime.core.api.Source
 import com.morainet.mcos.runtime.core.api.StubHostServices
+import com.morainet.mcos.runtime.core.error.McosErrorCode
 import com.morainet.mcos.runtime.core.events.EventBus
 import com.morainet.mcos.runtime.core.events.EventEnvelope
 import com.morainet.mcos.runtime.core.events.TypedEventBus
@@ -278,7 +279,7 @@ class McosRuntime internal constructor(
             if (resolved !is RegistryResolveResult.Found) {
                 return listOf(
                     CommandResult.Err(
-                        code = com.morainet.mcos.runtime.core.error.McosErrorCode.UNKNOWN_COMMAND.name,
+                        code = McosErrorCode.UNKNOWN_COMMAND.name,
                         message = "Probe rejected: unknown command '${step.id}' (probes must be read-only, 06 §11.3)",
                         retryable = false
                     )
@@ -287,7 +288,7 @@ class McosRuntime internal constructor(
             if (resolved.entry.descriptor.sideEffectClass != SideEffectClass.read) {
                 return listOf(
                     CommandResult.Err(
-                        code = com.morainet.mcos.runtime.core.error.McosErrorCode.PERMISSION_DENIED.name,
+                        code = McosErrorCode.PERMISSION_DENIED.name,
                         message = "Probe rejected: '${step.id}' has sideEffectClass " +
                             "'${resolved.entry.descriptor.sideEffectClass}' — only read steps auto-run (06 §11.3)",
                         retryable = false

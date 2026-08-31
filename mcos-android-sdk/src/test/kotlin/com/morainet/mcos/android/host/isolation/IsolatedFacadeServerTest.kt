@@ -1,8 +1,13 @@
 package com.morainet.mcos.android.host.isolation
 
+import com.morainet.mcos.sdk.ResolveResult
 import com.morainet.mcos.security.HmacAuthStampSigner
 import com.morainet.mcos.sdk.AuthStamp
+import java.util.Base64
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -61,7 +66,7 @@ class IsolatedFacadeServerTest {
             callingUid = admittedUid,
         )
 
-    private fun errorOf(reply: kotlinx.serialization.json.JsonObject) =
+    private fun errorOf(reply: JsonObject) =
         IsolationCodec.decodeError(reply)!!
 
     // ── §8.2 check 1: identity first ────────────────────────────────────
@@ -144,7 +149,7 @@ class IsolatedFacadeServerTest {
             IsolationCodec.encodeCall(
                 buildJsonObject {
                     put("path", "notes/a.txt")
-                    put("dataB64", java.util.Base64.getEncoder().encodeToString("hello".toByteArray()))
+                    put("dataB64", Base64.getEncoder().encodeToString("hello".toByteArray()))
                     put("append", false)
                 },
                 null,
@@ -162,7 +167,7 @@ class IsolatedFacadeServerTest {
         )
         assertEquals(
             "hello",
-            String(java.util.Base64.getDecoder().decode(readReply["dataB64"]!!.jsonPrimitive.content)),
+            String(Base64.getDecoder().decode(readReply["dataB64"]!!.jsonPrimitive.content)),
         )
     }
 
@@ -175,7 +180,7 @@ class IsolatedFacadeServerTest {
             IsolationCodec.encodeCall(buildJsonObject { put("dir", "") }, null),
             callingUid = admittedUid,
         )
-        val entries = reply["entries"] as kotlinx.serialization.json.JsonArray
+        val entries = reply["entries"] as JsonArray
         assertEquals(listOf("x.txt"), entries.map { it.jsonObject["path"]!!.jsonPrimitive.content })
     }
 
@@ -235,12 +240,12 @@ class IsolatedFacadeServerTest {
     fun memoryResolveRefPreservesAllThreeResultKinds() = runTest {
         val memoryHost = FakeHostServices(
             memory = CannedMemory(
-                facts = mapOf("prefs.theme" to kotlinx.serialization.json.JsonPrimitive("dark")),
+                facts = mapOf("prefs.theme" to JsonPrimitive("dark")),
                 resolver = { ref ->
                     when (ref) {
-                        "tom" -> com.morainet.mcos.sdk.ResolveResult.Resolved("people/tom", 0.9f)
-                        "pat" -> com.morainet.mcos.sdk.ResolveResult.Ambiguous(listOf("people/pat-a", "people/pat-b"))
-                        else -> com.morainet.mcos.sdk.ResolveResult.NotFound("filtered_out")
+                        "tom" -> ResolveResult.Resolved("people/tom", 0.9f)
+                        "pat" -> ResolveResult.Ambiguous(listOf("people/pat-a", "people/pat-b"))
+                        else -> ResolveResult.NotFound("filtered_out")
                     }
                 },
             ),

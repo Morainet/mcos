@@ -19,6 +19,7 @@ import com.morainet.mcos.sdk.McosPlugin
 import com.morainet.mcos.sdk.PluginManifest
 import com.morainet.mcos.sdk.ProviderInfo
 import com.morainet.mcos.sdk.SideEffectClass
+import com.morainet.mcos.security.permission.DefaultPermissionKernel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -37,7 +38,7 @@ import org.junit.Test
 
 class RunSummarizerTest {
 
-    private val permissions = com.morainet.mcos.security.permission.DefaultPermissionKernel()
+    private val permissions = DefaultPermissionKernel()
 
     private fun newEpisodic(): EpisodicMemory = EpisodicMemory()
 

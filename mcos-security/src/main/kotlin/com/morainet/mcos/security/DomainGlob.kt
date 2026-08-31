@@ -1,5 +1,6 @@
 package com.morainet.mcos.security
 
+import java.net.IDN
 /**
  * URL-host extraction and domain-glob matching — the single source of truth
  * for "does this host fall under this `network.<pattern>` scope" questions.
@@ -71,7 +72,7 @@ object DomainGlob {
         //  - A Unicode/Punycode host that fails IDN conversion is rejected
         //    rather than silently passing.
         host = try {
-            java.net.IDN.toASCII(host)
+            IDN.toASCII(host)
         } catch (e: Exception) {
             return null
         }

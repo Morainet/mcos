@@ -4,6 +4,7 @@ import com.morainet.mcos.android.AppDeps
 import com.morainet.mcos.sdk.SecureStore
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -32,7 +33,7 @@ import org.junit.runner.Description
  * on real dispatchers, so completion is awaited with a real-time bounded
  * poll instead of virtual-time advancement.
  */
-@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+@OptIn(ExperimentalCoroutinesApi::class)
 class McosViewModelTest {
 
     private val mainDispatcher = UnconfinedTestDispatcher()

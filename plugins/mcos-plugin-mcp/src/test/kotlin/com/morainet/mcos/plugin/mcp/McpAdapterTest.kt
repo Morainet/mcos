@@ -3,8 +3,10 @@ package com.morainet.mcos.plugin.mcp
 import com.morainet.mcos.sdk.CommandResult
 import com.morainet.mcos.sdk.NetResponse
 import com.morainet.mcos.sdk.SideEffectClass
+import java.io.IOException
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
@@ -112,7 +114,7 @@ class McpAdapterTest {
         )
         assertTrue(result is CommandResult.Ok)
         val text = (result as CommandResult.Ok).value.jsonObject["content"]!!
-            .let { Json.encodeToString(kotlinx.serialization.json.JsonElement.serializer(), it) }
+            .let { Json.encodeToString(JsonElement.serializer(), it) }
         assertTrue(text.contains("hi"))
     }
 
@@ -156,7 +158,7 @@ class McpAdapterTest {
     @Test fun `AD11 a connection fault maps to a retryable UNAVAILABLE`() = runBlocking {
         val net = routing(
             onList = { rpcOk("""{"tools":[{"name":"echo","inputSchema":{"type":"object"}}]}""") },
-            onCall = { throw java.io.IOException("connection refused") },
+            onCall = { throw IOException("connection refused") },
         )
         val discovery = McpAdapter.discover(McpClient(net, config.endpoint), config)
         val result = discovery.plugin.handlers()["mcp.demo.echo"]!!.invoke(
@@ -247,7 +249,7 @@ class McpAdapterTest {
     @Test fun `AD19 a retryable failure through the handler trips the shared breaker`() = runBlocking {
         val net = routing(
             onList = { rpcOk("""{"tools":[{"name":"echo","inputSchema":{"type":"object"}}]}""") },
-            onCall = { throw java.io.IOException("connection refused") },
+            onCall = { throw IOException("connection refused") },
         )
         val breaker = McpCircuitBreaker(failureThreshold = 1, cooldownMs = 60_000)
         val handler = McpAdapter.discover(McpClient(net, config.endpoint), config, breaker)

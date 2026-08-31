@@ -2,6 +2,7 @@ package com.morainet.mcos.plugin.mcp
 
 import com.morainet.mcos.sdk.Clock
 import com.morainet.mcos.sdk.ExecutionContext
+import com.morainet.mcos.sdk.FileEntry
 import com.morainet.mcos.sdk.FileService
 import com.morainet.mcos.sdk.HostServices
 import com.morainet.mcos.sdk.JsonService
@@ -59,7 +60,7 @@ fun rpcOk(resultJson: String): NetResponse =
 /** A minimal [HostServices] whose only live capability is [net]. */
 class TestHostServices(override val net: NetService) : HostServices {
     override val files: FileService = object : FileService {
-        override suspend fun list(uri: String, mimeType: String?) = emptyList<com.morainet.mcos.sdk.FileEntry>()
+        override suspend fun list(uri: String, mimeType: String?) = emptyList<FileEntry>()
     }
     override val ui: UiService = object : UiService {
         override suspend fun startActivityForResult(intent: Map<String, String>): Map<String, String>? = null

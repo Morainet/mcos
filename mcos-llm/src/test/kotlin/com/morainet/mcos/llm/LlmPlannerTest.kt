@@ -1,5 +1,7 @@
 package com.morainet.mcos.llm
 
+import com.morainet.mcos.runtime.core.executor.Command
+import com.morainet.mcos.runtime.core.memory.MemoryStore
 import com.morainet.mcos.runtime.core.registry.CommandRegistry
 import com.morainet.mcos.sdk.*
 import kotlinx.coroutines.runBlocking
@@ -56,7 +58,7 @@ class LlmPlannerTest {
     @Test
     fun `buildSystemPrompt includes memory context when MemoryStore is provided`() = runBlocking {
         registerCameraPlugin()
-        val memory = com.morainet.mcos.runtime.core.memory.MemoryStore()
+        val memory = MemoryStore()
         memory.putString("prefs.theme", "dark", tags = setOf("preference"))
         memory.putString("prefs.language", "zh-CN", tags = setOf("preference"))
 
@@ -208,7 +210,7 @@ class LlmPlannerTest {
     @Test
     fun `LlmPlan isSuccess false when error present`() {
         val plan = LlmPlan(
-            listOf(com.morainet.mcos.runtime.core.executor.Command("x", JsonObject(emptyMap()))),
+            listOf(Command("x", JsonObject(emptyMap()))),
             "",
             null,
             LlmResponse.Err("X", "msg")
@@ -219,7 +221,7 @@ class LlmPlannerTest {
     @Test
     fun `LlmPlan isSuccess true when commands present and no error`() {
         val plan = LlmPlan(
-            listOf(com.morainet.mcos.runtime.core.executor.Command("x", JsonObject(emptyMap()))),
+            listOf(Command("x", JsonObject(emptyMap()))),
             "",
             "ok"
         )

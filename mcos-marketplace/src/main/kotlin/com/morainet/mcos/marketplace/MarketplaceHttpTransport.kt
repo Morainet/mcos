@@ -1,5 +1,6 @@
 package com.morainet.mcos.marketplace
 
+import java.net.http.HttpTimeoutException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.net.URI
@@ -120,7 +121,7 @@ class JdkMarketplaceHttpTransport : MarketplaceHttpTransport {
         try {
             val response = client.send(request, HttpResponse.BodyHandlers.ofString())
             MarketplaceHttpResponse(response.statusCode(), response.body())
-        } catch (e: java.net.http.HttpTimeoutException) {
+        } catch (e: HttpTimeoutException) {
             // java.net.http-only exception: normalize so the caller never
             // references a class that does not exist on Android.
             throw MarketplaceTransportException("MARKETPLACE_TIMEOUT", "Marketplace request timed out", true)
@@ -145,7 +146,7 @@ class JdkMarketplaceHttpTransport : MarketplaceHttpTransport {
 
         try {
             client.send(request, HttpResponse.BodyHandlers.ofByteArray()).body()
-        } catch (e: java.net.http.HttpTimeoutException) {
+        } catch (e: HttpTimeoutException) {
             throw MarketplaceTransportException("MARKETPLACE_TIMEOUT", "Marketplace download timed out", true)
         }
         // ConnectException / IOException propagate to the caller's catch clauses.
@@ -172,7 +173,7 @@ class JdkMarketplaceHttpTransport : MarketplaceHttpTransport {
         try {
             val response = client.send(request, HttpResponse.BodyHandlers.ofString())
             MarketplaceHttpResponse(response.statusCode(), response.body())
-        } catch (e: java.net.http.HttpTimeoutException) {
+        } catch (e: HttpTimeoutException) {
             throw MarketplaceTransportException("MARKETPLACE_TIMEOUT", "Marketplace request timed out", true)
         }
         // ConnectException / IOException propagate to the caller's catch clauses.

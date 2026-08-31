@@ -41,7 +41,7 @@ import org.junit.runner.Description
  * network provider is constructed; the kernel-side loop behaviour is
  * covered by mcos-llm's AgentLoopTest (A1-A16).
  */
-@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+@OptIn(ExperimentalCoroutinesApi::class)
 class McosViewModelAgentTest {
 
     private val mainDispatcher = UnconfinedTestDispatcher()

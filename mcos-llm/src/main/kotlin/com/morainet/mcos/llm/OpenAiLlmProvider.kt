@@ -1,5 +1,7 @@
 package com.morainet.mcos.llm
 
+import java.io.IOException
+import java.net.ConnectException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
@@ -74,9 +76,9 @@ open class OpenAiLlmProvider(
                 }
             } catch (e: LlmTransportException) {
                 LlmResponse.Err(e.code, e.message, e.retryable)
-            } catch (e: java.net.ConnectException) {
+            } catch (e: ConnectException) {
                 LlmResponse.Err("LLM_CONNECT_ERROR", "Cannot reach LLM endpoint: ${e.message}", true)
-            } catch (e: java.io.IOException) {
+            } catch (e: IOException) {
                 LlmResponse.Err("LLM_NETWORK_ERROR", e.message ?: "Network error", true)
             } catch (e: Exception) {
                 LlmResponse.Err("LLM_UNEXPECTED_ERROR", e.message ?: "Unexpected error", false)
@@ -118,9 +120,9 @@ open class OpenAiLlmProvider(
                 }
             } catch (e: LlmTransportException) {
                 LlmResponse.Err(e.code, e.message, e.retryable)
-            } catch (e: java.net.ConnectException) {
+            } catch (e: ConnectException) {
                 LlmResponse.Err("LLM_CONNECT_ERROR", "Cannot reach LLM endpoint: ${e.message}", true)
-            } catch (e: java.io.IOException) {
+            } catch (e: IOException) {
                 LlmResponse.Err("LLM_NETWORK_ERROR", e.message ?: "Network error", true)
             } catch (e: Exception) {
                 LlmResponse.Err("LLM_UNEXPECTED_ERROR", e.message ?: "Unexpected error", false)
@@ -143,9 +145,9 @@ open class OpenAiLlmProvider(
                 }
             } catch (e: LlmTransportException) {
                 ToolCallResponse.Err(e.code, e.message, e.retryable)
-            } catch (e: java.net.ConnectException) {
+            } catch (e: ConnectException) {
                 ToolCallResponse.Err("LLM_CONNECT_ERROR", "Cannot reach LLM endpoint: ${e.message}", true)
-            } catch (e: java.io.IOException) {
+            } catch (e: IOException) {
                 ToolCallResponse.Err("LLM_NETWORK_ERROR", e.message ?: "Network error", true)
             } catch (e: Exception) {
                 ToolCallResponse.Err("LLM_UNEXPECTED_ERROR", e.message ?: "Unexpected error", false)

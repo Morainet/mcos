@@ -83,7 +83,7 @@ object DslParser {
             is ExecutionIr.Invoke -> json.encodeToString(IrInvoke.serializer(), ir.invoke)
             is ExecutionIr.Sequence -> json.encodeToString(IrSequence.serializer(), ir.sequence)
             is ExecutionIr.Workflow -> json.encodeToString(
-                kotlinx.serialization.json.JsonElement.serializer(),
+                JsonElement.serializer(),
                 ir.body
             )
         }

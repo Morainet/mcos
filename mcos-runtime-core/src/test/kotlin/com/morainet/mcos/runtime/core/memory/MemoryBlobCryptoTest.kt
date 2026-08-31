@@ -1,5 +1,6 @@
 package com.morainet.mcos.runtime.core.memory
 
+import java.util.Base64
 import kotlinx.serialization.json.Json
 import kotlin.test.*
 
@@ -117,8 +118,8 @@ class MemoryBlobCryptoTest {
     }
 
     private fun tamper(base64: String): String {
-        val raw = java.util.Base64.getDecoder().decode(base64)
+        val raw = Base64.getDecoder().decode(base64)
         raw[0] = (raw[0].toInt() xor 0x01).toByte()
-        return java.util.Base64.getEncoder().encodeToString(raw)
+        return Base64.getEncoder().encodeToString(raw)
     }
 }
