@@ -10,6 +10,15 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### Isolation activation seam — opt-in BinderIsolationHost wiring (2026-08-30)
+
+Item 44 (08 §8.1): the flag-gated activation seam. Default off = byte-identical production (the audited in-process fallback stays); on = the Executor dispatches every non-BUILTIN plugin through `BinderIsolationHost`. Flipping the flag in a real host additionally requires on-device verification of the Binder kernel (process split, `getCallingUid`, crash isolation, rebind).
+
+- **`StagedArtifactResolver`** (pure, JVM-tested) — maps tamper-evident install records to staged `.mcos` files: only `INSTALLED` records resolve (DISABLED plugins refused here too — defense in depth), the record's `artifactFileName` joined to the downloads dir, resolution at bind time (once per plugin per process lifetime, so plugins installed after the host was built resolve too). A resolved-but-missing file is deliberately not filtered here — the plugin process's `plugin_load_failed` carries the true IO reason, better than a generic bind failure.
+- **`CompositionRoot.create(context, builtIns, processIsolation = false)`** — flag on wires `BinderIsolationHost(context, hostServices, signer, artifactFor = …StagedArtifactResolver…)` into the Executor; flag off (default) passes `isolationHost = null` and today's behavior is unchanged.
+- **Honest boundaries, documented on the flag:** plugin dex still loads in the **main** process for registration (`.mcos` manifests carry only id/entry/version, so registry descriptors come from the loaded class — manifest-only registration awaits a `.mcos` schema extension), but non-BUILTIN execution never runs in-process — dispatch routes into the isolation host before the handler is touched, and a bind failure surfaces as an honest `PLUGIN_ERROR` (no silent fallback).
+- Tests +5 (`StagedArtifactResolverTest`); baseline 1301/1464 → 1306/1474 (SDK 131×2 + demo 37×2).
+
 ### Process isolation slice 3b-final (code half) — the Binder byte transport (2026-08-30)
 
 Item 43 (08 §8.1-§8.3): every piece of the isolation transport that can be proven on the JVM; the Binder kernel itself (Parcel marshalling, the process split, `getCallingUid`) is the only device-only element left. Not yet wired into `CompositionRoot` — production keeps the audited in-process fallback until activation + on-device verification.

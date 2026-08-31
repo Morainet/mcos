@@ -4,6 +4,8 @@ import android.content.Context
 import com.morainet.mcos.android.host.ActivityResultBridge
 import com.morainet.mcos.android.host.AndroidHostServices
 import com.morainet.mcos.android.host.AndroidMarketplaceHttpTransport
+import com.morainet.mcos.android.host.isolation.BinderIsolationHost
+import com.morainet.mcos.android.host.isolation.StagedArtifactResolver
 import com.morainet.mcos.android.host.AndroidSecureStore
 import com.morainet.mcos.android.host.RuntimePermissionBridge
 import com.morainet.mcos.plugin.camera.CameraPlugin
@@ -139,8 +141,25 @@ object CompositionRoot {
      * @param context any Context; the application context is extracted.
      * @param builtIns plugins that ship inside the host app at BUILTIN trust
      *   (defaults to the reference set — inject your own catalog instead).
+     * @param processIsolation opt-in activation of the plugin-process
+     *   boundary (08 §8.1, item 44): when true the executor dispatches every
+     *   non-BUILTIN plugin through [BinderIsolationHost] into the dedicated
+     *   `:mcos_plugin` process. Default FALSE — flipping it requires the
+     *   on-device verification of the Binder chain (process split,
+     *   `getCallingUid` identity, crash isolation, rebind-after-death);
+     *   until then non-BUILTIN plugins keep the audited in-process fallback.
+     *   Honest boundary of the current seam: the plugin's dex still loads in
+     *   the MAIN process for registration (the `.mcos` manifest schema
+     *   carries only id/entry/version, so registry descriptors come from the
+     *   loaded class), but non-BUILTIN execution never runs it in-process —
+     *   dispatch routes to the isolation host before touching a handler, and
+     *   a bind failure surfaces as an honest PLUGIN_ERROR (no fallback).
      */
-    fun create(context: Context, builtIns: List<McosPlugin> = defaultBuiltIns()): AppDeps {
+    fun create(
+        context: Context,
+        builtIns: List<McosPlugin> = defaultBuiltIns(),
+        processIsolation: Boolean = false,
+    ): AppDeps {
         val appContext = context.applicationContext
         val resultBridge = ActivityResultBridge()
         // In-app runtime-permission prompts (04 §6.3): attached by the Compose
@@ -276,6 +295,27 @@ object CompositionRoot {
         // while backgrounded / in Doze, not just while the poll driver runs.
         val wakeScheduler = AlarmManagerWakeScheduler(appContext)
 
+        // Plugin-process boundary (08 §8.1, item 44): opt-in only. The
+        // staged-artifact resolver reads the tamper-evident install records
+        // at bind time (once per plugin per process lifetime), so a plugin
+        // installed after this host was built still resolves.
+        val isolationHost = if (processIsolation) {
+            BinderIsolationHost(
+                context = appContext,
+                hostServices = hostServices,
+                signer = authStampSigner,
+                artifactFor = { pluginId ->
+                    StagedArtifactResolver.resolve(
+                        records = installRecordStore.load(),
+                        downloadDir = File(appContext.filesDir, "marketplace"),
+                        pluginId = pluginId,
+                    )
+                },
+            )
+        } else {
+            null
+        }
+
         val runtime = McosRuntime.Builder()
             .withRegistry(registry)
             .withPermissionKernel(permissionKernel)
@@ -303,6 +343,10 @@ object CompositionRoot {
                         kernel = permissionKernel,
                         signer = authStampSigner,
                     ),
+                    // null (default) → audited in-process fallback for
+                    // non-BUILTIN plugins; the opt-in host (08 §8.1) routes
+                    // them into the :mcos_plugin process instead.
+                    isolationHost = isolationHost,
                 )
             )
             .build()
