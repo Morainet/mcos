@@ -11,6 +11,7 @@ import com.morainet.mcos.security.VerifyResult
 import com.morainet.mcos.runtime.core.plugin.LoadResult
 import com.morainet.mcos.runtime.core.plugin.PluginLoader
 import com.morainet.mcos.sdk.McosPlugin
+import com.morainet.mcos.sdk.PluginManifest
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
@@ -145,6 +146,16 @@ class PluginInstaller(
      * pre-persistence behaviour every existing construction site relies on.
      */
     private val installRecordStore: InstallRecordStore? = null,
+    /**
+     * Manifest-only registration seam (08-security.md §8): when set, the
+     * LOADING step registers the plugin from the decoded manifest —
+     * [PluginLoader.loadManifest] — instead of instantiating plugin code in
+     * this process. The decoder throws on a malformed manifest; the install
+     * fails closed with `decode_failed`, exactly like a failing
+     * [pluginFactory]. Null (the default) keeps the instance path every
+     * existing construction site uses.
+     */
+    private val manifestDecoder: ((ByteArray) -> PluginManifest)? = null,
 ) {
     private val states = ConcurrentHashMap<String, InstallState>()
 
@@ -180,6 +191,32 @@ class PluginInstaller(
     private fun setState(packageId: String, version: String?, state: InstallState, message: String? = null) {
         states[packageId] = state
         onProgress(InstallProgress(packageId, state, version, message = message))
+    }
+
+    /**
+     * LOADING-step core shared by [installPackage] and [rehydrateInstalled].
+     * With a [manifestDecoder] wired (manifest-only registration,
+     * 08-security.md §8), register the decoded manifest — no plugin code is
+     * instantiated in this process; dispatch reaches the plugin only via the
+     * isolation host. Otherwise decode an instance through [pluginFactory]
+     * and register through [PluginLoader.load], as before. A throwing
+     * decoder or factory surfaces to the callers as `decode_failed`.
+     */
+    private fun loadVerified(
+        packageId: String,
+        version: String,
+        bytes: ByteArray,
+        signature: ArtifactSignature,
+        pluginFactory: ((ByteArray) -> McosPlugin)?,
+    ): LoadResult {
+        val decoder = manifestDecoder
+        if (decoder != null) {
+            val manifest = decoder(bytes)
+            return loader.loadManifest(packageId, version, bytes, signature, manifest)
+        }
+        val factory = requireNotNull(pluginFactory) { "no plugin factory for the instance path" }
+        val plugin = factory(bytes)
+        return loader.load(packageId, version, bytes, signature, builtin = false, plugin = plugin)
     }
 
     /**
@@ -242,14 +279,14 @@ class PluginInstaller(
 
         // ── LOADING ────────────────────────────────────────────────────────
         setState(packageId, version, InstallState.LOADING)
-        val plugin = try {
-            pluginFactory(bytes)
+        val result = try {
+            loadVerified(packageId, version, bytes, signature, pluginFactory)
         } catch (e: Exception) {
             staged.delete()
             setState(packageId, version, InstallState.FAILED, e.message)
             return InstallResult.Failed(packageId, e.message ?: "plugin decode failed", "decode_failed")
         }
-        return when (val result = loader.load(packageId, version, bytes, signature, builtin = false, plugin = plugin)) {
+        return when (result) {
             is LoadResult.Installed -> {
                 installedVersions[packageId] = version
                 // Pin the verified fact: record + publisher key + signature
@@ -484,10 +521,11 @@ class PluginInstaller(
                 continue
             }
             val factory = pluginFactory(packageId)
-            if (factory == null) {
+            if (factory == null && manifestDecoder == null) {
                 // Verified artifact, but this build cannot decode it. Keep
                 // the record — a future build with dynamic loading (or the
-                // curated factory mapping) can still restore it.
+                // curated factory mapping) can still restore it. (With a
+                // manifestDecoder wired, registration needs no factory.)
                 setState(packageId, record.version, InstallState.FAILED, "no local implementation")
                 outcomes += RehydrateOutcome(packageId, record.version, null, InstallState.FAILED, "no local implementation")
                 continue
@@ -495,10 +533,11 @@ class PluginInstaller(
             setState(packageId, record.version, InstallState.LOADING, "rehydrating")
             var plugin: McosPlugin? = null
             val result = try {
-                loader.load(
+                loadVerified(
                     packageId, record.version, bytes, record.signature,
-                    builtin = false,
-                    plugin = factory(bytes).also { plugin = it },
+                    pluginFactory = factory?.let { f ->
+                        { b: ByteArray -> f(b).also { plugin = it } }
+                    },
                 )
             } catch (e: Exception) {
                 dropRecord(packageId)

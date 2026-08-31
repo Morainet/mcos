@@ -138,6 +138,8 @@ SDK docs focus on **logical** shape; packaging flavors are host concerns.
 }
 ```
 
+> ✅ **Implementation status (item 45):** `McosPackage.readPluginManifest` (`mcos-android-sdk`) now decodes this full schema from the verified `.mcos` bytes — the manifest-only registration source (08 §8): under process isolation the MAIN process registers descriptors/permissions from these bytes and never loads plugin dex; the plugin process still instantiates only `entry`. Decode rules: lenient (unknown fields ignored, non-security fields default — `name` falls back to `id`), but security-relevant values fail closed — an unknown `commands[].sideEffectClass` or a missing command `id` is a `FormatException` that fails the install, never a silent downgrade to `read`. Pre-schema packages (id/entry/version only) decode with empty `commands` and keep taking the dex-load path. `aliases`/`replacedBy`/`deprecated`/`outputSchema` decode when present; `threadHint`/`i18n` keep their defaults (registration does not consume them).
+
 ### 4.2 Required Fields
 
 | Field | Rule |

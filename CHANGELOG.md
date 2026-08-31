@@ -10,6 +10,17 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### Manifest-only registration — the `.mcos` carries the full manifest (2026-08-30)
+
+Item 45 (08 §8): closes the boundary item 44 left open. Under `processIsolation = true` the **main** process registers plugins from the wire `plugin.json` alone — the plugin's dex loads only in `:mcos_plugin`; the main process carries none of the plugin's code. Spec 04 §4 always specified this schema; the gap was as-built (the installer decoded only `{id, entry, version}`).
+
+- **`CommandRegistry.registerManifest(manifest, trustLevel)`** (runtime-core) — registration from a `PluginManifest` with no plugin object, sharing the exact `register` core (descriptor enrichment, first-to-load conflicts, alias/namespace bookkeeping, plugin-level permission merge), so manifest-registered and dex-registered entries cannot drift. Missing handlers resolve to `IsolationRequiredHandler` — an honest `PLUGIN_ERROR` with `details.reason = "isolation_required"` (defense in depth only: with an isolation host wired, item-41 dispatch routes through the host before any handler is consulted).
+- **`PluginLoader.loadManifest(...)`** — the load path for manifest-only registration: identical `PluginTrustGate` evaluation and `LoadResult` mapping as `load()`, plus a masquerade guard (manifest id ≠ requested package id → `Failed`), mirroring the class-path loader's guard.
+- **`McosPackage.readPluginManifest`** (android-sdk) — full-schema hand-rolled decode of the wire `plugin.json` (commands incl. fail-closed `sideEffectClass` — unknown value or missing command id → `FormatException` fails the install, never a silent downgrade to `read` — plus `timeoutMs`, aliases, command permissions; plugin-level permissions, provider), lenient to unknown fields; pre-schema packages (`{id, entry, version}`) decode with empty commands, keeping the dex-load path intact.
+- **`PluginInstaller(manifestDecoder)`** (marketplace) — with a decoder wired (`CompositionRoot` sets one iff `processIsolation`), install and rehydrate register manifest-only and skip the no-local-implementation fail; outcomes carry `plugin = null` (documented). LOADING-stage decode failures fail the install (`decode_failed`) with staged cleanup.
+- Both isolation E2Es (`IsolationEndToEndTest`, `FramedIsolationE2ETest`) upgraded from the handlers-empty plugin stand-in to the real `registerManifest` production path.
+- Tests +16 (runtime-core 7 · marketplace 4 · SDK 5); baseline 1306/1474 → 1322/1495 (SDK 136×2 + demo 37×2).
+
 ### Isolation activation seam — opt-in BinderIsolationHost wiring (2026-08-30)
 
 Item 44 (08 §8.1): the flag-gated activation seam. Default off = byte-identical production (the audited in-process fallback stays); on = the Executor dispatches every non-BUILTIN plugin through `BinderIsolationHost`. Flipping the flag in a real host additionally requires on-device verification of the Binder kernel (process split, `getCallingUid`, crash isolation, rebind).

@@ -90,8 +90,14 @@ class IsolationEndToEndTest {
         }
 
         val registry = CommandRegistry()
-        // main-process registration: manifest only — no plugin code carried
-        registry.register(pluginWith(if (manifestOnly) null else handler), trustLevel)
+        // main-process registration: manifest only — no plugin code carried.
+        // Item 45: this is the REAL production path now (registerManifest),
+        // not a handlers()-empty stand-in.
+        if (manifestOnly) {
+            registry.registerManifest(pluginWith(handler = null).manifest, trustLevel)
+        } else {
+            registry.register(pluginWith(handler), trustLevel)
+        }
 
         val executor = Executor(
             registry,

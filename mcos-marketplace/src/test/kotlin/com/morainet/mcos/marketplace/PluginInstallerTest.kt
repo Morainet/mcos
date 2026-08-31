@@ -137,9 +137,11 @@ class PluginInstallerTest {
         transport: FakeTransport = FakeTransport(),
         debugBuild: Boolean = false,
         recordStore: InstallRecordStore? = null,
+        manifestDecoder: ((ByteArray) -> PluginManifest)? = null,
+        registryOut: CommandRegistry? = null,
     ): PluginInstaller {
         val gate = PluginTrustGate(verifier = ArtifactVerifier(store), debugBuild = debugBuild)
-        val registry = CommandRegistry()
+        val registry = registryOut ?: CommandRegistry()
         val loader = PluginLoader(gate, registry)
         return PluginInstaller(
             transport = transport,
@@ -149,6 +151,7 @@ class PluginInstallerTest {
             registry = registry,
             downloadDir = downloadDir,
             installRecordStore = recordStore,
+            manifestDecoder = manifestDecoder,
         )
     }
 
@@ -159,6 +162,7 @@ class PluginInstallerTest {
      */
     private fun restartInstaller(
         recordStore: InstallRecordStore,
+        manifestDecoder: ((ByteArray) -> PluginManifest)? = null,
     ): Triple<PluginInstaller, InMemoryPublisherKeyStore, CommandRegistry> {
         val keys = InMemoryPublisherKeyStore()
         val registry = CommandRegistry()
@@ -171,6 +175,7 @@ class PluginInstallerTest {
             registry = registry,
             downloadDir = downloadDir,
             installRecordStore = recordStore,
+            manifestDecoder = manifestDecoder,
         )
         return Triple(inst, keys, registry)
     }
@@ -450,5 +455,134 @@ class PluginInstallerTest {
         val (restarted, _, _) = restartInstaller(InstallRecordStore(recordFile, hmacKey))
         assertEquals(InstallState.NOT_INSTALLED, restarted.stateOf(meta.packageId))
         assertTrue(restarted.rehydrateInstalled(pluginFactory = { _ -> null }).isEmpty())
+    }
+
+    // ─── T15-T18: Manifest-only registration (08 §8) ─────────────────────
+
+    private fun wireManifest(id: String, version: String) = PluginManifest(
+        id = id,
+        name = id,
+        version = version,
+        minRuntimeVersion = "0.1.0",
+        description = "wire manifest",
+        provider = ProviderInfo("Test", "https://test.local"),
+        entry = "com.test.Wire",
+        commands = listOf(
+            com.morainet.mcos.sdk.CommandManifestEntry(
+                id = "$id.fetch",
+                version = "1.0.0",
+                title = "Fetch",
+                description = "network fetch",
+                sideEffectClass = com.morainet.mcos.sdk.SideEffectClass.network,
+            ),
+        ),
+    )
+
+    @Test
+    fun `T15-manifestDecoder installs without ever calling pluginFactory`() = runBlocking {
+        val pair = keyPair()
+        val store = InMemoryPublisherKeyStore().apply { put(pubKey(pair)) }
+        val registry = CommandRegistry()
+        val meta = metadata(pair)
+        var factoryInvoked = false
+        var decoderBytes: ByteArray? = null
+        val inst = installer(
+            store,
+            registryOut = registry,
+            manifestDecoder = { bytes ->
+                decoderBytes = bytes
+                wireManifest(meta.packageId, meta.version)
+            },
+        )
+
+        val result = inst.installPackage(meta) { _: ByteArray ->
+            factoryInvoked = true
+            createPlugin(meta.packageId, meta.version)
+        }
+
+        assertIs<InstallResult.Installed>(result)
+        assertEquals(TrustLevel.MARKETPLACE_VERIFIED, result.trustLevel)
+        assertEquals(1, result.commandsRegistered)
+        // the plugin code path was never taken — registration came from the manifest
+        assertFalse(factoryInvoked)
+        assertEquals(payload.toList(), decoderBytes!!.toList(), "decoder receives the verified artifact bytes")
+        assertEquals(InstallState.INSTALLED, inst.stateOf(meta.packageId))
+        // registered manifest-only: descriptor present, handler is the isolation stub
+        val resolved = registry.resolve("${meta.packageId}.fetch")
+        assertIs<com.morainet.mcos.runtime.core.registry.ResolveResult.Found>(resolved)
+        assertEquals(
+            com.morainet.mcos.runtime.core.registry.IsolationRequiredHandler,
+            resolved.entry.handler,
+        )
+    }
+
+    @Test
+    fun `T16-manifestDecoder decode failure fails install and cleans the staged file`() = runBlocking {
+        val pair = keyPair()
+        val store = InMemoryPublisherKeyStore().apply { put(pubKey(pair)) }
+        val meta = metadata(pair)
+        val inst = installer(
+            store,
+            manifestDecoder = { error("malformed plugin.json") },
+        )
+
+        val result = inst.installPackage(meta) { createPlugin(meta.packageId, meta.version) }
+
+        assertIs<InstallResult.Failed>(result)
+        assertEquals("decode_failed", result.code)
+        assertEquals(InstallState.FAILED, inst.stateOf(meta.packageId))
+        assertFalse(java.io.File(downloadDir, "${meta.packageId}-${meta.version}.mcos").exists())
+    }
+
+    @Test
+    fun `T17-manifestDecoder id masquerade fails install`() = runBlocking {
+        val pair = keyPair()
+        val store = InMemoryPublisherKeyStore().apply { put(pubKey(pair)) }
+        val meta = metadata(pair)
+        val inst = installer(
+            store,
+            manifestDecoder = { wireManifest("com.example.other", meta.version) },
+        )
+
+        val result = inst.installPackage(meta) { createPlugin(meta.packageId, meta.version) }
+
+        assertIs<InstallResult.Failed>(result)
+        assertEquals("load_failed", result.code)
+        assertEquals(InstallState.FAILED, inst.stateOf(meta.packageId))
+    }
+
+    @Test
+    fun `T18-rehydrate with manifestDecoder restores without a plugin factory`() = runBlocking {
+        val pair = keyPair()
+        val store = InMemoryPublisherKeyStore().apply { put(pubKey(pair)) }
+        val hmacKey = "device-bound".toByteArray()
+        val recordFile = java.io.File(downloadDir, "records-mmo.json")
+        val recordStore = InstallRecordStore(recordFile, hmacKey)
+        val meta = metadata(pair)
+        installer(
+            store,
+            recordStore = recordStore,
+            manifestDecoder = { wireManifest(meta.packageId, meta.version) },
+        ).installPackage(meta) { createPlugin(meta.packageId, meta.version) }
+
+        // Restart: empty key store, NO factory for the package (would be
+        // "no local implementation" on the instance path) — manifest-only
+        // rehydration registers from the re-verified artifact anyway.
+        val (restarted, keys, registry) = restartInstaller(
+            InstallRecordStore(recordFile, hmacKey),
+            manifestDecoder = { wireManifest(meta.packageId, meta.version) },
+        )
+        val outcomes = restarted.rehydrateInstalled(
+            pluginFactory = { _ -> null },
+            seedKey = { keys.put(it) },
+        )
+
+        assertEquals(1, outcomes.size)
+        assertEquals(InstallState.INSTALLED, outcomes[0].state)
+        assertEquals(InstallState.INSTALLED, restarted.stateOf(meta.packageId))
+        assertNull(outcomes[0].plugin, "manifest-only rehydrate instantiates no plugin code")
+        val restored = registry.resolve("${meta.packageId}.fetch")
+        assertIs<com.morainet.mcos.runtime.core.registry.ResolveResult.Found>(restored)
+        Unit
     }
 }

@@ -148,12 +148,11 @@ object CompositionRoot {
      *   on-device verification of the Binder chain (process split,
      *   `getCallingUid` identity, crash isolation, rebind-after-death);
      *   until then non-BUILTIN plugins keep the audited in-process fallback.
-     *   Honest boundary of the current seam: the plugin's dex still loads in
-     *   the MAIN process for registration (the `.mcos` manifest schema
-     *   carries only id/entry/version, so registry descriptors come from the
-     *   loaded class), but non-BUILTIN execution never runs it in-process —
-     *   dispatch routes to the isolation host before touching a handler, and
-     *   a bind failure surfaces as an honest PLUGIN_ERROR (no fallback).
+     *   Under the flag, registration is manifest-only (item 45): the install
+     *   pipeline registers descriptors from the `.mcos` plugin.json — the
+     *   plugin's dex never loads in the MAIN process at all, and non-BUILTIN
+     *   execution only ever runs in `:mcos_plugin`. A bind failure surfaces
+     *   as an honest PLUGIN_ERROR (no fallback).
      */
     fun create(
         context: Context,
@@ -228,6 +227,16 @@ object CompositionRoot {
             downloadDir = File(appContext.filesDir, "marketplace").apply { mkdirs() }.absolutePath,
             onProgress = { installProgress.tryEmit(it) },
             installRecordStore = installRecordStore,
+            // Manifest-only registration (08 §8, item 45): under process
+            // isolation the LOADING step registers the decoded plugin.json —
+            // descriptors, schemas, permissions — and never instantiates
+            // plugin code in this process; the dex exists only in
+            // :mcos_plugin. Flag off (default) keeps the instance path.
+            manifestDecoder = if (processIsolation) {
+                { bytes -> McosPackage.readPluginManifest(bytes) }
+            } else {
+                null
+            },
         )
         // Marketplace well-known key (§6.3/§14.3): the signed blocklist is
         // verified against this bundled trust anchor. See TrustAnchors — the

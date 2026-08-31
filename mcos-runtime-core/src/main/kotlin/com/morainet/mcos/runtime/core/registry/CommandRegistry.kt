@@ -1,5 +1,6 @@
 package com.morainet.mcos.runtime.core.registry
 
+import com.morainet.mcos.runtime.core.error.McosErrorCode
 import com.morainet.mcos.security.TrustLevel
 import com.morainet.mcos.sdk.CommandDescriptor
 import com.morainet.mcos.sdk.CommandHandler
@@ -7,8 +8,10 @@ import com.morainet.mcos.sdk.CommandResult
 import com.morainet.mcos.sdk.ExecutionContext
 import com.morainet.mcos.sdk.McosPlugin
 import com.morainet.mcos.sdk.PermissionEntry
+import com.morainet.mcos.sdk.PluginManifest
 import com.morainet.mcos.sdk.SideEffectClass
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * A single resolved entry in the command registry — pairs a [CommandDescriptor]
@@ -133,6 +136,29 @@ object NotImplementedHandler : CommandHandler {
 }
 
 /**
+ * Handler for commands registered manifest-only
+ * ([CommandRegistry.registerManifest], 08-security.md §8): the plugin's code
+ * exists only in the plugin process, so an in-process dispatch can never
+ * reach an implementation. This stub is reached only when no
+ * [com.morainet.mcos.runtime.core.executor.Executor] isolation host is wired
+ * — under the manifest-only registration posture that is a configuration
+ * error, and it fails honestly instead of silently executing nothing.
+ */
+object IsolationRequiredHandler : CommandHandler {
+    /** Audit reason carried in the error envelope's `details.reason`. */
+    const val AUDIT_REASON = "isolation_required"
+
+    override suspend fun invoke(ctx: ExecutionContext): CommandResult =
+        CommandResult.Err(
+            code = McosErrorCode.PLUGIN_ERROR.name,
+            message = "Command '${ctx.commandId}' was registered manifest-only; its handler " +
+                "exists in the plugin process and no isolation host is wired.",
+            retryable = false,
+            details = JsonObject(mapOf("reason" to JsonPrimitive(AUDIT_REASON))),
+        )
+}
+
+/**
  * Command registry — the central index that maps command IDs to their
  * descriptors, handlers, and owning plugins.
  *
@@ -190,10 +216,58 @@ class CommandRegistry {
         if (trustLevel == TrustLevel.UNTRUSTED) {
             return RegisterResult.Rejected(plugin.manifest.id, "untrusted plugin rejected")
         }
-        val manifest = plugin.manifest
+        registerEntries(
+            manifest = plugin.manifest,
+            handlers = plugin.handlers(),
+            missingHandler = NotImplementedHandler,
+            trustLevel = trustLevel,
+        )
+    }
+
+    /**
+     * Register a plugin from its [manifest] alone — no [McosPlugin] instance,
+     * hence no plugin code, is loaded or touched in this process
+     * (08-security.md §8: non-BUILTIN plugin dex exists only in the plugin
+     * process). Every command gets [IsolationRequiredHandler]; the
+     * [Executor][com.morainet.mcos.runtime.core.executor.Executor] routes
+     * non-BUILTIN dispatch through the isolation host before any handler is
+     * consulted, so the stub is defense in depth for a mis-wired host.
+     *
+     * Descriptors come verbatim from the manifest — this is the trust anchor
+     * for schema validation, permission checks and prompt building, so the
+     * wire manifest must be as complete as the loaded class's would be.
+     *
+     * @param trustLevel the trust level at which the plugin is registered;
+     *        [TrustLevel.UNTRUSTED] is rejected, same as [register].
+     */
+    fun registerManifest(manifest: PluginManifest, trustLevel: TrustLevel = TrustLevel.BUILTIN): RegisterResult =
+        synchronized(this) {
+            if (trustLevel == TrustLevel.UNTRUSTED) {
+                return RegisterResult.Rejected(manifest.id, "untrusted plugin rejected")
+            }
+            registerEntries(
+                manifest = manifest,
+                handlers = emptyMap(),
+                missingHandler = IsolationRequiredHandler,
+                trustLevel = trustLevel,
+            )
+        }
+
+    /**
+     * Shared registration core of [register] and [registerManifest]: index
+     * every manifest-declared command (plus any handler-only extras) with
+     * descriptor enrichment, conflict detection (first-to-load wins) and
+     * alias/namespace bookkeeping. Commands declared in the manifest without
+     * a handler get [missingHandler].
+     */
+    private fun registerEntries(
+        manifest: PluginManifest,
+        handlers: Map<String, CommandHandler>,
+        missingHandler: CommandHandler,
+        trustLevel: TrustLevel,
+    ): RegisterResult {
         val pluginId = manifest.id
         val pluginVersion = manifest.version
-        val handlers = plugin.handlers()
 
         // Build a lookup from manifest.commands for descriptor enrichment
         val manifestCommands = manifest.commands.associateBy { it.id.lowercase() }
@@ -258,7 +332,7 @@ class CommandRegistry {
                 pluginId = pluginId,
                 pluginVersion = pluginVersion,
                 descriptor = descriptor,
-                handler = handler ?: NotImplementedHandler,
+                handler = handler ?: missingHandler,
                 trustLevel = trustLevel
             )
 
@@ -323,7 +397,7 @@ class CommandRegistry {
         } else {
             RegisterResult.Ok(commandsRegistered, aliasesRegistered)
         }
-    } // synchronized(this)
+    }
 
     /**
      * Unregister all commands owned by a plugin.

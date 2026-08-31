@@ -92,9 +92,11 @@ class FramedIsolationE2ETest {
         }
 
         // main process: manifest-only registration + the real Executor over
-        // the framed transport
+        // the framed transport. Item 45: registerManifest IS the production
+        // manifest-only path — descriptors from the wire manifest, handler
+        // slots holding the isolation stub.
         val registry = CommandRegistry()
-        registry.register(pluginWith(handler = null), TrustLevel.MARKETPLACE_VERIFIED)
+        registry.registerManifest(pluginWith(handler = null).manifest, TrustLevel.MARKETPLACE_VERIFIED)
         val executor = Executor(
             registry,
             host,

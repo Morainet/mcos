@@ -522,6 +522,8 @@ Compromised keys: revoke publisher, push kill-switch to clients.
 
 ## 7. Install / Update / Uninstall
 
+> ✅ **Implementation status (item 45):** the LOADING step has two as-built paths. Default: `pluginFactory` decodes the verified bytes into a plugin instance and `PluginLoader` registers it. With a `manifestDecoder` wired (the host's process-isolation posture, 08 §8): the manifest is decoded and `PluginLoader.loadManifest` registers descriptors manifest-only — `pluginFactory` is never invoked, no plugin code loads in this process; the same branch serves restart rehydration (a missing factory no longer fails the record). A decoder failure maps to `decode_failed` with staged-artifact cleanup, and the loader refuses a manifest whose id does not match the package (masquerade guard).
+
 ### 7.0 Normative Install State Machine
 
 ```kotlin

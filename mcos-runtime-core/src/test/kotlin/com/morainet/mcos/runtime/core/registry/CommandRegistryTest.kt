@@ -1,9 +1,12 @@
 package com.morainet.mcos.runtime.core.registry
 
+import com.morainet.mcos.runtime.core.api.StubHostServices
 import com.morainet.mcos.security.TrustLevel
 import com.morainet.mcos.sdk.*
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.*
 
 /**
@@ -471,6 +474,136 @@ class CommandRegistryTest {
     // ═══════════════════════════════════════════════════════════════
     // Helpers
     // ═══════════════════════════════════════════════════════════════
+
+    // ═══════════════════════════════════════════════════════════════
+    // R#: Manifest-only registration (08 §8 — no plugin code in-process)
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `R-manifest-only registration indexes commands, aliases and merged permissions`() {
+        val manifest = PluginManifest(
+            id = "example.wire",
+            name = "Wire",
+            version = "2.0.0",
+            minRuntimeVersion = "0.1.0",
+            description = "manifest-only plugin",
+            provider = ProviderInfo("Test", "https://test.local"),
+            entry = "com.test.Wire",
+            permissions = listOf(PermissionEntry("mcos", "sandbox", "plugin-wide")),
+            commands = listOf(
+                CommandManifestEntry(
+                    id = "wire.fetch",
+                    version = "1.0.0",
+                    title = "Fetch",
+                    description = "network fetch",
+                    sideEffectClass = SideEffectClass.network,
+                    timeoutMs = 30_000,
+                    permissions = listOf(PermissionEntry("mcos", "network.api.example.test", null)),
+                    aliases = listOf("wire.get"),
+                ),
+                CommandManifestEntry(
+                    id = "wire.ping",
+                    version = "1.0.0",
+                    title = "Ping",
+                    description = "read ping",
+                    sideEffectClass = SideEffectClass.read,
+                ),
+            ),
+        )
+
+        val result = registry.registerManifest(manifest, TrustLevel.MARKETPLACE_VERIFIED)
+
+        assertIs<RegisterResult.Ok>(result)
+        assertEquals(2, result.commandsRegistered)
+        assertEquals(1, result.aliasesRegistered)
+
+        val resolved = registry.resolve("wire.fetch")
+        assertIs<ResolveResult.Found>(resolved)
+        assertEquals("example.wire", resolved.entry.descriptor.pluginId)
+        assertEquals(SideEffectClass.network, resolved.entry.descriptor.sideEffectClass)
+        assertEquals(30_000L, resolved.entry.descriptor.timeoutMs)
+        // plugin-level permissions are additive with per-command ones — same merge as the class path
+        assertEquals(
+            setOf("sandbox", "network.api.example.test"),
+            resolved.entry.descriptor.permissions.map { it.name }.toSet(),
+        )
+        assertEquals(TrustLevel.MARKETPLACE_VERIFIED, resolved.entry.trustLevel)
+        // alias resolves to the same entry
+        val byAlias = registry.resolve("wire.get")
+        assertIs<ResolveResult.Found>(byAlias)
+        assertEquals(resolved.entry.descriptor.id, byAlias.entry.descriptor.id)
+    }
+
+    @Test
+    fun `R-manifest-only handler fails honestly without an isolation host`() = runBlocking {
+        registry.registerManifest(
+            wireManifest(),
+            TrustLevel.MARKETPLACE_VERIFIED,
+        )
+        val resolved = registry.resolve("wire.fetch")
+        assertIs<ResolveResult.Found>(resolved)
+
+        val result = resolved.entry.handler.invoke(
+            ExecutionContext(
+                runId = "r-1",
+                commandId = "wire.fetch",
+                args = JsonObject(emptyMap()),
+                // the isolation stub never touches services — a minimal
+                // in-memory MemoryFacade is all StubHostServices requires
+                services = StubHostServices(object : MemoryFacade {
+                    override suspend fun get(path: String) = null
+                    override suspend fun resolveRef(ref: String, semanticType: String?) =
+                        com.morainet.mcos.sdk.ResolveResult.NotFound("ref_unresolvable")
+                }),
+            ),
+        )
+
+        val err = assertIs<CommandResult.Err>(result)
+        assertEquals("PLUGIN_ERROR", err.code)
+        assertEquals(IsolationRequiredHandler.AUDIT_REASON, err.details["reason"]?.jsonPrimitive?.content)
+        assertFalse(err.retryable)
+    }
+
+    @Test
+    fun `R-manifest-only untrusted registration is rejected`() {
+        val result = registry.registerManifest(wireManifest(), TrustLevel.UNTRUSTED)
+
+        assertIs<RegisterResult.Rejected>(result)
+        assertIs<ResolveResult.NotFound>(registry.resolve("wire.fetch"))
+    }
+
+    @Test
+    fun `R-manifest-only re-registration replaces prior entries`() {
+        registry.registerManifest(wireManifest(), TrustLevel.MARKETPLACE_VERIFIED)
+        val again = registry.registerManifest(
+            wireManifest().copy(version = "2.1.0"),
+            TrustLevel.MARKETPLACE_VERIFIED,
+        )
+
+        assertIs<RegisterResult.Ok>(again)
+        val resolved = registry.resolve("wire.fetch")
+        assertIs<ResolveResult.Found>(resolved)
+        assertEquals("2.1.0", resolved.entry.pluginVersion)
+    }
+
+    private fun wireManifest() = PluginManifest(
+        id = "example.wire",
+        name = "Wire",
+        version = "2.0.0",
+        minRuntimeVersion = "0.1.0",
+        description = "manifest-only plugin",
+        provider = ProviderInfo("Test", "https://test.local"),
+        entry = "com.test.Wire",
+        commands = listOf(
+            CommandManifestEntry(
+                id = "wire.fetch",
+                version = "1.0.0",
+                title = "Fetch",
+                description = "network fetch",
+                sideEffectClass = SideEffectClass.network,
+            ),
+        ),
+    )
 
     private fun createPlugin(
         id: String,

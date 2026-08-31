@@ -6,6 +6,7 @@ import com.morainet.mcos.security.ArtifactSignature
 import com.morainet.mcos.security.PluginTrustGate
 import com.morainet.mcos.security.TrustLevel
 import com.morainet.mcos.sdk.McosPlugin
+import com.morainet.mcos.sdk.PluginManifest
 
 /**
  * Outcome of [PluginLoader.load].
@@ -102,6 +103,71 @@ class PluginLoader(
                     )
                     is RegisterResult.Rejected -> LoadResult.Denied(
                         pluginId = plugin.manifest.id,
+                        reason = result.reason,
+                        code = "registry_rejected",
+                    )
+                }
+            }
+            is com.morainet.mcos.security.TrustDecision.Deny -> LoadResult.Denied(
+                pluginId = packageId,
+                reason = decision.reason,
+                code = decision.code,
+            )
+        }
+    }
+
+    /**
+     * Evaluate and (if allowed) register a plugin from its manifest alone —
+     * the manifest-only path (08-security.md §8): the host process registers
+     * descriptors for prompt building, schema validation and permission
+     * checks without loading any plugin dex; the plugin's code exists only
+     * in the plugin process, where dispatch lands via the isolation host.
+     *
+     * The trust gate runs identically to [load] — same artifact bytes, same
+     * signature envelope, same fail-closed semantics. A [manifest] whose id
+     * does not match [packageId] is refused (a signed artifact must not
+     * masquerade as a different package), mirroring the class-path guard in
+     * the dynamic loader.
+     */
+    fun loadManifest(
+        packageId: String,
+        version: String,
+        payload: ByteArray?,
+        signature: ArtifactSignature?,
+        manifest: PluginManifest,
+    ): LoadResult {
+        if (manifest.id != packageId) {
+            return LoadResult.Failed(
+                pluginId = packageId,
+                message = "package manifest id '${manifest.id}' does not match requested '$packageId'",
+            )
+        }
+        val decision = trustGate.evaluate(
+            packageId = packageId,
+            version = version,
+            payload = payload,
+            signature = signature,
+            builtin = false,
+        )
+        return when (decision) {
+            is com.morainet.mcos.security.TrustDecision.Allow -> {
+                when (val result = registry.registerManifest(manifest, decision.trustLevel)) {
+                    is RegisterResult.Ok -> LoadResult.Installed(
+                        pluginId = manifest.id,
+                        trustLevel = decision.trustLevel,
+                        commandsRegistered = result.commandsRegistered,
+                        aliasesRegistered = result.aliasesRegistered,
+                        note = decision.note,
+                    )
+                    is RegisterResult.Conflict -> LoadResult.Installed(
+                        pluginId = manifest.id,
+                        trustLevel = decision.trustLevel,
+                        commandsRegistered = result.commandsRegistered,
+                        aliasesRegistered = result.aliasesRegistered,
+                        note = "conflicts: ${result.conflicts.joinToString { it.commandId }}",
+                    )
+                    is RegisterResult.Rejected -> LoadResult.Denied(
+                        pluginId = manifest.id,
                         reason = result.reason,
                         code = "registry_rejected",
                     )

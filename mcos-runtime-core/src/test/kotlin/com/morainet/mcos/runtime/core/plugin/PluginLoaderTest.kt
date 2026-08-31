@@ -1,6 +1,7 @@
 package com.morainet.mcos.runtime.core.plugin
 
 import com.morainet.mcos.runtime.core.registry.CommandRegistry
+import com.morainet.mcos.runtime.core.registry.IsolationRequiredHandler
 import com.morainet.mcos.runtime.core.registry.ResolveResult
 import com.morainet.mcos.security.ArtifactVerifier
 import com.morainet.mcos.security.InMemoryPublisherKeyStore
@@ -169,6 +170,83 @@ class PluginLoaderTest {
         assertEquals(1, result.commandsRegistered)
         assertIs<ResolveResult.Found>(registry.resolve("hello.greet"))
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // T7-T9: Manifest-only loading (08 §8 — no plugin code in-process)
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `T7-valid signature installs manifest-only as MARKETPLACE_VERIFIED`() {
+        val pair = keyPair()
+        val store = InMemoryPublisherKeyStore().apply { put(pubKey(pair)) }
+        val registry = CommandRegistry()
+        val loader = PluginLoader(PluginTrustGate(verifier = ArtifactVerifier(store)), registry)
+
+        val sig = sign(pair, fakePayload)
+        val result = loader.loadManifest(
+            "com.example.plugin", "1.0.0", fakePayload, sig,
+            manifest = wireManifest("com.example.plugin"),
+        )
+
+        assertIs<LoadResult.Installed>(result)
+        assertEquals(TrustLevel.MARKETPLACE_VERIFIED, result.trustLevel)
+        assertEquals(1, result.commandsRegistered)
+        // registered from the manifest alone — the entry carries the isolation
+        // stub, never plugin code
+        val resolved = registry.resolve("wire.fetch")
+        assertIs<ResolveResult.Found>(resolved)
+        assertEquals(IsolationRequiredHandler, resolved.entry.handler)
+    }
+
+    @Test
+    fun `T8-loadManifest refuses id masquerade`() {
+        val pair = keyPair()
+        val store = InMemoryPublisherKeyStore().apply { put(pubKey(pair)) }
+        val registry = CommandRegistry()
+        val loader = PluginLoader(PluginTrustGate(verifier = ArtifactVerifier(store)), registry)
+
+        val result = loader.loadManifest(
+            "com.example.other", "1.0.0", fakePayload, sign(pair, fakePayload),
+            manifest = wireManifest("com.example.plugin"),
+        )
+
+        assertIs<LoadResult.Failed>(result)
+        assertTrue(result.message.contains("does not match"))
+        assertIs<ResolveResult.NotFound>(registry.resolve("wire.fetch"))
+    }
+
+    @Test
+    fun `T9-loadManifest unsigned sideload denied`() {
+        val registry = CommandRegistry()
+        val loader = PluginLoader(PluginTrustGate(debugBuild = false), registry)
+
+        val result = loader.loadManifest(
+            "com.example.plugin", "1.0.0", fakePayload, null,
+            manifest = wireManifest("com.example.plugin"),
+        )
+
+        assertIs<LoadResult.Denied>(result)
+        assertEquals("sideload_production_denied", result.code)
+    }
+
+    private fun wireManifest(id: String) = PluginManifest(
+        id = id,
+        name = id,
+        version = "1.0.0",
+        minRuntimeVersion = "0.1.0",
+        description = "wire manifest",
+        provider = ProviderInfo("Test", "https://test.local"),
+        entry = "com.test.Wire",
+        commands = listOf(
+            com.morainet.mcos.sdk.CommandManifestEntry(
+                id = "wire.fetch",
+                version = "1.0.0",
+                title = "Fetch",
+                description = "network fetch",
+                sideEffectClass = com.morainet.mcos.sdk.SideEffectClass.network,
+            ),
+        ),
+    )
 
     // ═══════════════════════════════════════════════════════════════
     // Helpers

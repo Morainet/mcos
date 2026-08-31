@@ -524,6 +524,8 @@ function verifyArtifact(metadata: PackageMetadata, artifactBytes: ByteArray): Ve
 
 ## 7. 安装 / 更新 / 卸载
 
+> ✅ **落地状态（item 45）：** LOADING 步骤 as-built 有两条路径。默认：`pluginFactory` 把已验证字节解码为插件实例、`PluginLoader` 注册。接入 `manifestDecoder` 时（宿主的进程隔离姿态，08 §8）：解码 manifest、`PluginLoader.loadManifest` 按 manifest-only 注册描述符——`pluginFactory` 永不被调用、本进程不加载任何插件代码；同一分支服务重启再水合（缺失工厂不再使记录失败）。解码器失败映射为 `decode_failed` 并清理 staged 工件，loader 拒绝 id 与包不匹配的 manifest（冒名防护）。
+
 ### 7.0 规范性安装状态机
 
 ```kotlin

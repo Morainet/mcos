@@ -2,6 +2,7 @@ package com.morainet.mcos.android
 
 import com.morainet.mcos.plugin.hello.HelloPlugin
 import com.morainet.mcos.sdk.McosPlugin
+import com.morainet.mcos.sdk.SideEffectClass
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -120,6 +121,128 @@ class DynamicPluginLoadingTest {
             lastArtifact = artifact
             return HelloPlugin()
         }
+    }
+
+    // ── readPluginManifest — the full-schema decode (item 45) ──────────
+
+    private val fullManifestJson = """
+        {
+          "id": "acme.wire",
+          "entry": "com.acme.Wire",
+          "version": "2.3.0",
+          "name": "Acme Wire",
+          "minRuntimeVersion": "0.9.0",
+          "description": "wire things",
+          "provider": {"name": "Acme", "url": "https://acme.example"},
+          "permissions": [{"type": "mcos", "name": "sandbox", "reason": "cache"}],
+          "namespaces": ["acme"],
+          "eventsEmitted": ["acme.wire.*"],
+          "tags": ["network"],
+          "unknownTopLevel": {"ignored": true},
+          "commands": [
+            {
+              "id": "acme.wire.fetch",
+              "version": "1.2.0",
+              "title": "Fetch",
+              "description": "fetch a resource",
+              "sideEffectClass": "network",
+              "idempotent": true,
+              "timeoutMs": 45000,
+              "permissions": [{"type": "mcos", "name": "network.api.acme.example"}],
+              "aliases": ["acme.wire.get"],
+              "examples": ["acme.wire.fetch url=https://acme.example"],
+              "inputSchema": {"type": "object", "required": ["url"]},
+              "outputSchema": {"type": "string"},
+              "unknownCommandField": 7
+            },
+            {
+              "id": "acme.wire.purge",
+              "title": "Purge",
+              "sideEffectClass": "DESTRUCTIVE"
+            }
+          ]
+        }
+    """.trimIndent()
+
+    @Test
+    fun readPluginManifestDecodesTheFullSchema() {
+        val m = McosPackage.readPluginManifest(mcosZip("acme.wire", "com.acme.Wire", manifestJson = fullManifestJson))
+
+        assertEquals("acme.wire", m.id)
+        assertEquals("com.acme.Wire", m.entry)
+        assertEquals("2.3.0", m.version)
+        assertEquals("Acme Wire", m.name)
+        assertEquals("0.9.0", m.minRuntimeVersion)
+        assertEquals("wire things", m.description)
+        assertEquals("Acme", m.provider.name)
+        assertEquals("https://acme.example", m.provider.url)
+        assertEquals(listOf("sandbox"), m.permissions.map { it.name })
+        assertEquals(listOf("acme"), m.namespaces)
+        assertEquals(listOf("acme.wire.*"), m.eventsEmitted)
+        assertEquals(listOf("network"), m.tags)
+        assertEquals(2, m.commands.size)
+
+        val fetch = m.commands[0]
+        assertEquals("acme.wire.fetch", fetch.id)
+        assertEquals("1.2.0", fetch.version)
+        assertEquals("Fetch", fetch.title)
+        assertEquals(SideEffectClass.network, fetch.sideEffectClass)
+        assertTrue(fetch.idempotent)
+        assertEquals(45_000L, fetch.timeoutMs)
+        assertEquals(listOf("network.api.acme.example"), fetch.permissions.map { it.name })
+        assertEquals(listOf("acme.wire.get"), fetch.aliases)
+        assertEquals(listOf("acme.wire.fetch url=https://acme.example"), fetch.examples)
+        assertEquals(setOf("type", "required"), fetch.inputSchema.keys)
+        assertEquals(setOf("type"), fetch.outputSchema!!.keys)
+
+        // side-effect names are case-insensitive
+        assertEquals(SideEffectClass.destructive, m.commands[1].sideEffectClass)
+    }
+
+    @Test
+    fun legacyManifestDecodesWithEmptyCommands() {
+        val m = McosPackage.readPluginManifest(mcosZip("acme.thing", "com.acme.Thing", "2.1.0"))
+
+        assertEquals("acme.thing", m.id)
+        assertEquals("com.acme.Thing", m.entry)
+        assertEquals("2.1.0", m.version)
+        assertEquals("name defaults to the id", "acme.thing", m.name)
+        assertTrue("pre-schema packages cannot register manifest-only", m.commands.isEmpty())
+    }
+
+    @Test
+    fun readPluginManifestRejectsUnknownSideEffectClass() {
+        val e = assertThrows(McosPackage.FormatException::class.java) {
+            McosPackage.readPluginManifest(
+                mcosZip(
+                    "acme.wire", "com.acme.Wire",
+                    manifestJson = """{"id":"acme.wire","entry":"com.acme.Wire","commands":[{"id":"x.y","sideEffectClass":"magnetic"}]}""",
+                ),
+            )
+        }
+        assertTrue(e.message!!.contains("sideEffectClass 'magnetic'"))
+    }
+
+    @Test
+    fun readPluginManifestRejectsCommandWithoutId() {
+        val e = assertThrows(McosPackage.FormatException::class.java) {
+            McosPackage.readPluginManifest(
+                mcosZip(
+                    "acme.wire", "com.acme.Wire",
+                    manifestJson = """{"id":"acme.wire","entry":"com.acme.Wire","commands":[{"title":"no id"}]}""",
+                ),
+            )
+        }
+        assertTrue(e.message!!.contains("missing required 'id'"))
+    }
+
+    @Test
+    fun readManifestDelegatesToTheFullDecode() {
+        val info = McosPackage.readManifest(mcosZip("acme.wire", "com.acme.Wire", manifestJson = fullManifestJson))
+
+        assertEquals("acme.wire", info.id)
+        assertEquals("com.acme.Wire", info.entry)
+        assertEquals("2.3.0", info.version)
     }
 
     private fun mcosZip(

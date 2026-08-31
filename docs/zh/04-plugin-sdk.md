@@ -140,6 +140,8 @@ SDK 文档关注**逻辑**形态；具体的打包口味属于宿主关心的问
 }
 ```
 
+> ✅ **落地状态（item 45）：** `McosPackage.readPluginManifest`（`mcos-android-sdk`）现在从已验证的 `.mcos` 字节解码本节完整 schema——manifest-only 注册的来源（08 §8）：进程隔离打开时主进程只凭这些字节注册描述符/权限、绝不加载插件 dex；插件进程仍只实例化 `entry`。解码规则：宽松（未知字段忽略、非安全字段取默认——`name` 回退为 `id`），但安全相关值 fail-closed——未知的 `commands[].sideEffectClass` 或缺失的命令 `id` 是 `FormatException`、安装失败，绝不静默降级为 `read`。旧 schema 包（仅 id/entry/version）解码出空 `commands`、继续走 dex 加载路径。`aliases`/`replacedBy`/`deprecated`/`outputSchema` 存在即解码；`threadHint`/`i18n` 保持默认（注册不消费）。
+
 ### 4.2 必填字段
 
 | 字段 | 规则 |
