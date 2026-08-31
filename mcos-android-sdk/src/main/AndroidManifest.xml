@@ -47,6 +47,15 @@
             </intent-filter>
         </receiver>
 
+        <!-- Process isolation (08 §8.1): marketplace plugins execute in this
+             dedicated process instead of the main one. Not exported — only
+             the app's own BinderIsolationHost binds it, carrying the
+             per-plugin facade endpoint in the binding. -->
+        <service
+            android:name=".host.isolation.IsolatedPluginProcessService"
+            android:exported="false"
+            android:process=":mcos_plugin" />
+
         <!-- Camera capture / media compress share URIs through the app's
              FileProvider. The ${applicationId} placeholder resolves to the
              CONSUMING app's id at manifest-merge time, matching the

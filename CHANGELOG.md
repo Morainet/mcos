@@ -10,6 +10,19 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### Process isolation slice 3b-final (code half) — the Binder byte transport (2026-08-30)
+
+Item 43 (08 §8.1-§8.3): every piece of the isolation transport that can be proven on the JVM; the Binder kernel itself (Parcel marshalling, the process split, `getCallingUid`) is the only device-only element left. Not yet wired into `CompositionRoot` — production keeps the audited in-process fallback until activation + on-device verification.
+
+- **`BinderWire`** (pure) — the wire protocol: a frame is `{"op","payload"}` as ONE Parcel string per Binder transaction (replies framed with the served op — symmetric); codes `CODE_INVOKE` (main→plugin) and `CODE_FACADE` (plugin→main; identity comes from the Binder kernel, never the wire).
+- **`WirePipe` + `PipeIsolationChannel`** (pure) — the one seam the Android adapter implements, and the `IsolationChannel` over it: frame → blocking exchange on an injectable dispatcher → unframe; unframeable replies throw `WireFormatException` → transport failure (a corrupt pipe and a dead pipe are equally unusable).
+- **`WireService`** (pure) — the serving cores both Binder endpoints delegate to; never throws — malformed frames / direction mismatches come back as framed error envelopes.
+- **`IsolationBinder.kt`** (thin shell) — `BinderWirePipe` (one `IBinder.transact` per exchange; `DeadObjectException` → transport failure), `FacadeBinderEndpoint` (`getCallingUid()` → §8.2 check 1), `InvokeBinderEndpoint`.
+- **`IsolatedPluginProcessService`** (thin shell, `:mcos_plugin` in the SDK manifest) — one bind = one plugin: masquerade-guarded manifest re-read, `DexPluginLoader` load (plugin code exists only here), runner lifecycle, `CODE_INVOKE` serving; an unloadable plugin still answers every invoke with honest `PLUGIN_ERROR`/`plugin_load_failed`.
+- **`BinderIsolationHost`** (thin shell) — the main-side `IsolationHost`: bind on first invoke per plugin (facade endpoint rides the binding via `Bundle.putBinder`; one `IsolatedFacadeServer` per plugin pins the §8.2 admission; expected UID = the app's own — an `android:process` split shares the Linux UID), `linkToDeath` → re-bind on next invoke, mutex only around bind bookkeeping, dispatch = `TransportIsolationHost(PipeIsolationChannel(BinderWirePipe(…), CODE_INVOKE))`.
+- **`FramedIsolationE2ETest`** — the item-42 full chain re-run with both hops crossing the framing: happy path (facade op sequence `[net.request, sandbox.write]` asserted — §9.2 secret resolution stays main-side, the secret never crosses the wire), process death → transport failure, well-framed-but-resultless reply → decode failure.
+- Tests +19 (`BinderWireTest` 10 · `WireServiceTest` 6 · `FramedIsolationE2ETest` 3); baseline 1282/1426 → 1301/1464 (SDK 126×2 + demo 37×2).
+
 ### Process isolation slice 3b part 1 — isolated plugin runner + full-chain E2E (2026-08-30)
 
 Item 42 (08 §8.1-§8.3): the plugin-process execution half of the isolation boundary, plus the proof that every pure link composes. The Binder byte pipe and on-device verification remain slice 3b-final.
