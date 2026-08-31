@@ -10,6 +10,19 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### Process isolation slice 3a — pure-Kotlin isolation RPC layer (2026-08-30)
+
+Item 41 (08 §8.1-§8.3): the RPC halves of the Android bound-service `IsolationHost`, delivered JVM-testable in `mcos-android-sdk` (`com.morainet.mcos.android.host.isolation`) with the Binder transport itself explicitly deferred to slice 3b — a thin `IsolationChannel` adapter plus on-device verification.
+
+- **`IsolationWire`** — `IsolationChannel` (one suspend fun-interface carrying both directions; the in-memory fake is the test transport) + `IsolationOps` (op vocabulary: `invoke` main→plugin; `net.request`/`secureStore.*`/`sandbox.*`/`clock.now`/`memory.*` plugin→main) + `IsolationCodec` (hand-rolled lenient JSON codec: unknown fields ignored so the two sides upgrade independently, malformed input → null never throw; marshals `IsolatedInvocation`/`CommandResult` incl. artifacts, the call envelope with the run's AuthStamp riding every call, and the shared error envelope).
+- **`BinderIdentityPolicy`** (§8.2 check 1) — caller-UID equality with audit reason `plugin.identity_mismatch`; pure, transport-fed.
+- **`IsolatedFacadeServer`** (main-process half, §8.3) — identity check FIRST (on mismatch the host facade is never touched), then per-op dispatch composing the *same* decorators as the in-process Executor: `StampScopedNetService(SecretResolvingNetService(...))` for per-call §8.2 checks 2-4 + §9.2 secret resolution, `NamespacedSandbox` rooted at `<pluginId>/`, honest `UNAVAILABLE` when the host has no sandbox. Server identity (pluginId/expectedUid) comes from its own constructor, never the wire; `handle` never throws — every denial returns the error envelope with code/message/retryable/`details.reason` preserved.
+- **`IsolatedHostServicesProxy`** (plugin-process half, §8.3) — a `HostServices` facade forwarding net/secureStore/sandbox (bytes via Base64)/memory/clock over the channel, serving `json` locally, answering `files`/`ui` with honest `UNAVAILABLE`, null optional capabilities; a remote denial re-throws as the original `McosException` so code/reason reach the plugin result and Stage-10 audit.
+- **`TransportIsolationHost`** (§8.1 crash isolation) — the `IsolationHost` over any channel: channel death → `PLUGIN_ERROR` with `details.reason = "isolation_transport_failure"` (never an exception), unparseable reply → `"isolation_decode_failure"`, cancellation still propagates.
+- **Enabling refactor (mcos-runtime-core)** — `SecretResolvingNetService` + `NamespacedSandbox` moved from `Executor` private classes to public top-level in `ScopedFacade.kt`, so the isolated facade composes byte-identical Stage-4 semantics — the in-process and process-isolated boundaries cannot drift.
+- **Tests** — +48 JVM-local (`IsolationCodecTest` 13 · `BinderIdentityPolicyTest` 4 · `IsolatedFacadeServerTest` 14 — identity-first denial, per-call stamp gate with each §8.2 reason, namespaced sandbox, forwarding · `IsolatedHostServicesProxyTest` 12 — loopback against a real server, denial re-throw with reason intact, binary sandbox round-trip inside the namespace · `TransportIsolationHostTest` 5 — crash mapping, cancellation); baseline 1219/1300 → **1267/1396**, 0 failures.
+- **Docs** — `11-implementation-status` item 41 + baseline + Next-up → slice 3b (en/zh); `08-security` §8.2 second as-built note (en/zh); `REPOSITORIES` SDK package/role (en/zh).
+
 ### Host controllers — reusable ViewModel logic moves into `mcos-android-sdk` (2026-08-30)
 
 Item 39 follow-up: the demo shell's last embedded runtime-management logic becomes SDK surface, so an integrating app gets identical host semantics behind its own UI.

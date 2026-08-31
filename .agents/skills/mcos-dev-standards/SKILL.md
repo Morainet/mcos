@@ -54,7 +54,7 @@ mcos-server           依赖 core（仅 test）
 - `com.morainet.mcos.llm.*` — LLM 网关与编排
 - `com.morainet.mcos.marketplace.*` — 配方商店、遥测
 - `com.morainet.mcos.plugin.<name>` — 插件模块
-- `com.morainet.mcos.android`（含 `host`）— Android 宿主 SDK（mcos-android-sdk）
+- `com.morainet.mcos.android`（含 `host`、`host.isolation` 隔离 RPC 纯层）— Android 宿主 SDK（mcos-android-sdk）
 - `com.morainet.mcos.android.demo` — Compose 演示壳（mcos-android）
 - `com.morainet.mcos.server` — blob/索引服务
 - 跨模块 split-package 禁止;`runtime.` 前缀仅属运行时内核两模块;新模块必须显式注册根包

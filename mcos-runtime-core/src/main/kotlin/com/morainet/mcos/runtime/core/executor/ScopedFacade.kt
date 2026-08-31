@@ -3,13 +3,18 @@ package com.morainet.mcos.runtime.core.executor
 import com.morainet.mcos.runtime.core.error.McosErrorCode
 import com.morainet.mcos.security.AuthStampSigner
 import com.morainet.mcos.security.DomainGlob
+import com.morainet.mcos.security.SecretResolver
 import com.morainet.mcos.sdk.AuthStamp
 import com.morainet.mcos.sdk.McosException
 import com.morainet.mcos.sdk.NetResponse
 import com.morainet.mcos.sdk.NetService
+import com.morainet.mcos.sdk.SandboxEntry
+import com.morainet.mcos.sdk.SandboxFileService
+import com.morainet.mcos.sdk.SecureStore
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import java.util.UUID
 
 /**
  * Machine-readable denial reasons emitted by [StampScopedNetService]
@@ -139,5 +144,86 @@ class StampScopedNetService(
                     "(${networkScopes.sorted().joinToString(", ")})"
         }
         return null
+    }
+}
+
+/**
+ * [SandboxFileService] decorator that roots every path at
+ * `<pluginId>/…` (04-plugin-sdk.md 6.1). Paths returned by
+ * [stat]/[list]/[tempFile] are re-expressed plugin-relative so they
+ * round-trip through this same view.
+ *
+ * Public since item 41 (isolation slice 3a): the Android isolated-process
+ * facade server composes the **same** decorators the in-process
+ * [Executor] hands a plugin, so the two boundaries cannot drift — an
+ * isolated plugin sees exactly the Stage-4 view it would see in-process.
+ */
+class NamespacedSandbox(
+    private val delegate: SandboxFileService,
+    private val pluginId: String,
+) : SandboxFileService {
+    init {
+        // The plugin id becomes a path segment — it must be a safe one.
+        pluginId.split('/').forEach { segment ->
+            require(
+                segment.isNotBlank() && segment != "." && segment != ".." &&
+                    !segment.contains('\\') && !segment.contains('\u0000'),
+            ) { "pluginId must be a safe single path segment: $pluginId" }
+        }
+    }
+
+    private fun scoped(path: String): String = "$pluginId/$path"
+
+    override suspend fun read(path: String): ByteArray? = delegate.read(scoped(path))
+
+    override suspend fun write(path: String, data: ByteArray, append: Boolean) =
+        delegate.write(scoped(path), data, append)
+
+    override suspend fun stat(path: String): SandboxEntry? =
+        delegate.stat(scoped(path))?.copy(path = path)
+
+    override suspend fun delete(path: String): Boolean = delegate.delete(scoped(path))
+
+    override suspend fun list(dir: String): List<SandboxEntry> {
+        // An empty dir lists this plugin's namespace root, not the
+        // host-wide sandbox root.
+        val scopedDir = if (dir.isBlank()) pluginId else scoped(dir)
+        val prefix = "$pluginId/"
+        return delegate.list(scopedDir).map { it.copy(path = it.path.removePrefix(prefix)) }
+    }
+
+    override suspend fun tempFile(prefix: String, suffix: String): String {
+        // The delegate's tempFile would land at the sandbox root,
+        // invisible to this plugin's view — reserve a unique name
+        // inside the namespace instead.
+        val name = "${prefix.ifEmpty { "mcos" }}-${UUID.randomUUID()}$suffix"
+        delegate.write(scoped(name), ByteArray(0))
+        return name
+    }
+}
+
+/**
+ * [NetService] decorator that resolves `{{secret.<key>}}` templates in
+ * request headers and body before delegating. Templates whose key is not
+ * present in the plugin-scoped [SecureStore] stay inert — a plugin can
+ * only resolve secrets inside its own namespace.
+ *
+ * Public since item 41 (isolation slice 3a), alongside [NamespacedSandbox]:
+ * the isolated facade server layers [StampScopedNetService] over this
+ * decorator exactly like the in-process Stage-4 facade.
+ */
+class SecretResolvingNetService(
+    private val delegate: NetService,
+    private val store: SecureStore,
+) : NetService {
+    override suspend fun request(
+        method: String,
+        url: String,
+        body: String?,
+        headers: Map<String, String>,
+    ): NetResponse {
+        val resolvedHeaders = headers.mapValues { (_, v) -> SecretResolver.resolve(v) { store.get(it) } }
+        val resolvedBody = body?.let { SecretResolver.resolve(it) { store.get(it) } }
+        return delegate.request(method, url, resolvedBody, resolvedHeaders)
     }
 }
