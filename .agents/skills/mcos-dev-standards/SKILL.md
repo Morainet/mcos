@@ -158,8 +158,11 @@ val r = ResolveResult.NotFound("cmd")
   (例:`java.security.MessageDigest.getInstance` 必须先 import)。
 - 同名遮蔽先用显式 import 解决:Kotlin 显式 import 优先级**高于本包声明**,只有
   通配符 import 才会被本包同名类遮蔽(即把 `import x.y.Z` 写全即可覆盖同包 `Z`)。
-- 唯一例外:同一文件确需用到**两个同短名**类(import 只能绑定一个),允许其中一个
-  保留全限定引用,并加行内注释说明缘由。
+- 同文件确需**两个同短名**类时,用 import 别名(`import a.b.C as AliasedC`),
+  两侧各用各的短名,同样不留全限定(例:`CommandRegistryTest` 的
+  `SdkResolveResult`、`AndroidHostServices` 的 `PlatformWifiInfo`)。
+- 别名仍不可行时(三个以上同短名、或别名撞本地声明)才允许保留全限定引用,
+  并加行内注释说明缘由——目前仓库应为 **0 处**。
 - 新增 import 后同步清理未使用导入(规则 3)。
 
 ## 常见错误速查表

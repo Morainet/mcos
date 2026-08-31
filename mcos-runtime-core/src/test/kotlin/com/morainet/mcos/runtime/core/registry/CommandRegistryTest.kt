@@ -3,6 +3,7 @@ package com.morainet.mcos.runtime.core.registry
 import com.morainet.mcos.runtime.core.api.StubHostServices
 import com.morainet.mcos.security.TrustLevel
 import com.morainet.mcos.sdk.*
+import com.morainet.mcos.sdk.ResolveResult as SdkResolveResult
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -553,9 +554,10 @@ class CommandRegistryTest {
                 services = StubHostServices(object : MemoryFacade {
                     override suspend fun get(path: String) = null
                     override suspend fun resolveRef(ref: String, semanticType: String?) =
-                        // Fully qualified on purpose (rule 10 exception): this file
-                        // also uses this package's own ResolveResult bare.
-                        com.morainet.mcos.sdk.ResolveResult.NotFound("ref_unresolvable")
+                        // Alias import: bare `ResolveResult` here means this package's
+                        // own command-resolution type (32 uses); this is the SDK's
+                        // memory-ref-resolution type (only use).
+                        SdkResolveResult.NotFound("ref_unresolvable")
                 }),
             ),
         )

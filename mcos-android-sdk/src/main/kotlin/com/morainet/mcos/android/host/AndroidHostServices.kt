@@ -19,6 +19,7 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
 import android.net.wifi.WifiManager
+import android.net.wifi.WifiInfo as PlatformWifiInfo
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Handler
@@ -461,9 +462,9 @@ class AndroidDeviceInfoService(
             @Suppress("DEPRECATION") // WifiManager.connectionInfo is deprecated on 31+,
             // but is still the only source of SSID/RSSI for the current network.
             val wm = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-            // Fully qualified on purpose (rule 10 exception): the bare `WifiInfo`
-            // in this file is the SDK contract type; this one is the framework class.
-            val info: android.net.wifi.WifiInfo = wm.connectionInfo
+            // Alias import: bare `WifiInfo` in this file is the SDK contract
+            // type; this alias is the Android framework class.
+            val info: PlatformWifiInfo = wm.connectionInfo
             val ssid = info.ssid?.removeSurrounding("\"")
                 ?.takeIf { it.isNotEmpty() && it != "<unknown ssid>" }
             WifiInfo(connected = true, ssid = ssid, strength = info.rssi)
