@@ -54,7 +54,7 @@ plugins/
   mcos-plugin-camera    camera.*（capture, scan）            ✅
   mcos-plugin-files     file.* / photo.*（8 个命令）         ✅
   mcos-plugin-mcp       mcp.* 适配器（动态合成）              ✅
-  mcos-plugin-iot       home.* / iot.*              （规划中）
+  mcos-plugin-iot       home.* / iot.*（Home Assistant）   ✅
 mcos-android-sdk  无 UI Android 宿主 SDK（+ opt-in :mcos_plugin 进程隔离）✅
 mcos-android      Compose 演示壳（基于 SDK）          ✅
 mcos-server       Sync endpoint (REST + Bearer auth) ✅
@@ -83,7 +83,7 @@ mcos-server       marketplace index (host-side)     （规划中，P3）
 | [`mcos-android`](./mcos-android/README.md) | 基于 SDK 的 Compose 演示壳（可替换的参考 UI） | ✅ |
 | [`mcos-server`](./mcos-server/README.md) | 自托管同步端点：`SyncBlobTransport` REST 契约 + 强制 Bearer token 认证，不透明 blob 存储 | ✅ |
 
-插件在 `plugins/` 下独立构建：`mcos-plugin-hello`、`mcos-plugin-system`、`mcos-plugin-camera`、`mcos-plugin-files`、`mcos-plugin-mcp`（均带测试与 README）。
+插件在 `plugins/` 下独立构建：`mcos-plugin-hello`、`mcos-plugin-system`、`mcos-plugin-camera`、`mcos-plugin-files`、`mcos-plugin-mcp`、`mcos-plugin-iot`（均带测试与 README）。
 
 详见 [`docs/zh/11-implementation-status.md`](./docs/zh/11-implementation-status.md) 的详细状态矩阵。
 

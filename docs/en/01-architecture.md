@@ -1038,7 +1038,7 @@ enum class McosErrorCode(val retryableDefault: Boolean) {
 | Reference plugin | `mcos-plugin-hello` | P1 |
 | Built-in plugins | `mcos-plugin-system` · `mcos-plugin-camera` | P1 |
 | Files plugin | `mcos-plugin-files` | P1 |
-| IoT plugin | `mcos-plugin-iot` | P2 |
+| IoT plugin | `mcos-plugin-iot` | ✅ P2 delivered — `home.*`/`iot.*` over a Home Assistant hub (04 §9) |
 | MCP adapter | `mcos-plugin-mcp` | P2 spike / P3 production |
 | Cloud | `mcos-server` | P3 |
 | Specs | `docs/*` | ✅ Exists today |

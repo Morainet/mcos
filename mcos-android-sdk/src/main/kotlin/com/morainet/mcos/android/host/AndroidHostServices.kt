@@ -237,7 +237,12 @@ class AndroidUiService(
         val action = intent["action"] ?: return null
         return when (action) {
             "ACTION_IMAGE_CAPTURE" -> launchCamera(intent)
-            "ACTION_SCAN_BARCODE" -> null // P2: ML Kit barcode scanning
+            "ACTION_SCAN_BARCODE" -> throw McosException(
+                "UNAVAILABLE",
+                "Barcode scanning is not implemented on this host yet (P2: ML Kit) — " +
+                    "surfacing an honest failure instead of a fake user-cancel",
+                retryable = false,
+            )
             "ACTION_VIEW" -> openUrl(intent)
             "ACTION_SEND" -> share(intent)
             else -> startRawAction(action, intent)

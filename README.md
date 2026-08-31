@@ -22,7 +22,7 @@ The repository now contains a working multi-module Gradle project (every module 
 | [`mcos-android`](./mcos-android/README.md) | Compose demo shell built on the SDK (replaceable reference UI) | ✅ |
 | [`mcos-server`](./mcos-server/README.md) | Self-hosted sync endpoint: `SyncBlobTransport` REST contract + mandatory Bearer-token auth, opaque blob store | ✅ |
 
-Plugins are independently buildable in `plugins/`: `mcos-plugin-hello`, `mcos-plugin-system`, `mcos-plugin-camera`, `mcos-plugin-files`, `mcos-plugin-mcp` (each with tests and a README).
+Plugins are independently buildable in `plugins/`: `mcos-plugin-hello`, `mcos-plugin-system`, `mcos-plugin-camera`, `mcos-plugin-files`, `mcos-plugin-mcp`, `mcos-plugin-iot` (each with tests and a README).
 
 See [`docs/en/11-implementation-status.md`](./docs/en/11-implementation-status.md) for the detailed status matrix.
 
@@ -69,7 +69,7 @@ plugins/
   mcos-plugin-camera    camera.* (capture, scan)              ✅
   mcos-plugin-files     file.* / photo.* (8 commands)         ✅
   mcos-plugin-mcp       mcp.* adapter (dynamic synthesis)     ✅
-  mcos-plugin-iot       home.* / iot.*              (planned)
+  mcos-plugin-iot       home.* / iot.* (Home Assistant)  ✅
 mcos-android-sdk  UI-free Android host SDK (+ opt-in :mcos_plugin process isolation) ✅
 mcos-android      Compose demo shell (on the SDK)    ✅
 mcos-server       Sync endpoint (REST + Bearer auth) ✅

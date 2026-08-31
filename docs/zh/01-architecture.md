@@ -1030,7 +1030,7 @@ enum class McosErrorCode(val retryableDefault: Boolean) {
 | 参考插件 | `mcos-plugin-hello` | P1 |
 | 内置插件 | `mcos-plugin-system` · `mcos-plugin-camera` | P1 |
 | 文件插件 | `mcos-plugin-files` | P1 |
-| IoT 插件 | `mcos-plugin-iot` | P2 |
+| IoT 插件 | `mcos-plugin-iot` | ✅ P2 已交付——`home.*`/`iot.*`，经 Home Assistant hub（04 §9） |
 | MCP 适配器 | `mcos-plugin-mcp` | P2 spike / P3 production |
 | 云端 | `mcos-server` | P3 |
 | 规格 | `docs/*` | ✅ 今日已存在 |

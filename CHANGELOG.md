@@ -10,6 +10,18 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### IoT / smart-home plugin — `mcos-plugin-iot` delivers `home.*` + `iot.*` (2026-08-31)
+
+04 §9 / 01 §module table: the last planned plugin slot. Talks to a **Home Assistant** hub — the open, local-first surface the spec names — purely over `HostServices.net`, so every request passes the kernel's per-call egress scope check; no vendor SDK anywhere.
+
+- **8 commands**: `home.device.list` (read-only discovery per 04 §9 "SHOULD expose a read command"), `home.light.on/off/set` (the P5 golden-fixture signature `home.light.set(id, on, brightness, meta=null)`; 0..1 brightness → hub 0..255), `home.scene.apply` + the doc-named `home.scene.movie`/`home.scene.sleep`, `iot.ac.set(name, power, tempC)` (climate turn_on + set_temperature, tempC 16..30 validated).
+- **Least-privilege by construction**: the manifest declares the *concrete* `network.<hub-host>` scope from the injected config — an unconfigured plugin declares no network permission at all and every command fails honest `UNAVAILABLE` (never a fabricated success), with zero egress.
+- **Credentials**: HA token in `SecureStore`; requests carry `Bearer {{secret.<key>}}` resolved per call by the executor's Stage-4 pipeline (08 §9.2, MCP-adapter pattern) — the raw token never enters config, IR, or audit.
+- **Honest error mapping**: 401/403 → `PERMISSION_DENIED` (non-retryable), 404 → `UNAVAILABLE` + baseUrl hint (retryable), 5xx → retryable `UNAVAILABLE`; argument violations are `SCHEMA_VIOLATION` and never touch the network.
+- Standalone like plugin-mcp (host constructs it with its own `HomeAssistantConfig`) — not in the android-sdk default set, not in the published artifact set / BOM. Registered in `PackageBoundariesTest`; CI plugins shard extended.
+- Tests +18 (I1-I18) over a recording fake NetService: exact URL/method/body triples, states normalization + domain filter, error mapping, brightness conversion, `on=false` short-circuit, UTF-8 entity names (`空调`), zero-egress-when-unconfigured.
+- **camera.scan honesty fix** (android-sdk): `AndroidUiService` used to answer the unimplemented `ACTION_SCAN_BARCODE` with `null` — which the plugin contract reads as *user cancelled*. It now throws `UNAVAILABLE` ("P2: ML Kit"), same honesty rule as `toast()`. Test baseline 1324 → 1342.
+
 ### Marketplace trust — operator signing key replaces the scaffold anchor (2026-08-31)
 
 09 §6.3: `TrustAnchors` now carries the operator's **real** well-known Ed25519 key (generated 2026-08-31; private half lives outside the repository, held offline by the operator — verified the retired scaffold key's private half never existed in the repo either). The release guard added with the publication pipeline now has something real to protect.
