@@ -1,28 +1,54 @@
+<div align="center">
+
+<img src="docs/images/logo.svg" width="150" alt="MCOS logo"/>
+
 # MCOS — 移动命令操作系统
+
+**让手机上的每一个合作能力，都变成 AI 可以安全调用的命令。**
 
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.morainet/mcos-bom.svg?label=Maven%20Central)](https://central.sonatype.com/artifact/io.github.morainet/mcos-bom/overview)
 [![CI](https://img.shields.io/github/actions/workflow/status/Morainet/mcos/ci.yml.svg?branch=main&label=CI)](https://github.com/Morainet/mcos/actions/workflows/ci.yml)
-[![License](https://img.shields.io/github/license/Morainet/mcos.svg)](https://github.com/Morainet/mcos/blob/main/LICENSE)
+[![License](https://img.shields.io/github/license/Morainet/mcos.svg?color=blue)](https://github.com/Morainet/mcos/blob/main/LICENSE)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?logo=github&logoColor=white)](./CONTRIBUTING.md)
 
-> **让手机上的每一个合作能力，都变成 AI 可以安全调用的命令。**
+[![Kotlin](https://img.shields.io/badge/Kotlin-2.0.21-7F52FF?logo=kotlin&logoColor=white)](https://kotlinlang.org)
+[![Android](https://img.shields.io/badge/Android-API%2026%2B-3DDC84?logo=android&logoColor=white)](./mcos-android-sdk/README.md)
+[![JDK](https://img.shields.io/badge/JDK-17-orange?logo=openjdk&logoColor=white)](https://openjdk.org/projects/jdk/17/)
+[![Platform](https://img.shields.io/badge/platform-JVM%20%7C%20Android-lightgrey)](#构建)
+[![Last Commit](https://img.shields.io/github/last-commit/Morainet/mcos?color=blue)](https://github.com/Morainet/mcos/commits/main)
 
-**MCOS（Mobile Command OS）** 是一个开源的**移动命令总线（Mobile Command Bus）**：类型化的命令协议（Command Protocol）、设备端运行时（Runtime）、插件 SDK，以及可选的 AI 规划器（Planner）——把自然语言编译成**可审计的 DSL**，而不是不可见的副作用。
+[快速开始](#快速开始) · [运行原理](#运行原理) · [模块组成](#模块组成) · [文档导航](#文档导航) · [反馈问题](https://github.com/Morainet/mcos/issues) · [English](./README.md)
 
-一句话类比：**手机端的 Kubernetes + MCP + Claude Code Runtime**。护城河是命令协议本身，而不是某个模型或厂商。
+*开源的**移动命令总线**——一句话类比：手机端的 Kubernetes + MCP + Claude Code Runtime。护城河是开放的命令协议本身，而不是某个模型或厂商。*
+
+</div>
+
+---
+
+## 目录
+
+- [为什么是 MCOS](#为什么是-mcos)
+- [运行原理](#运行原理)
+- [快速开始](#快速开始)
+- [模块组成](#模块组成)
+- [文档导航](#文档导航)
+- [构建](#构建)
+- [发布](#发布)
+- [贡献与许可](#贡献与许可)
 
 ## 为什么是 MCOS
 
-- **AI 只生成命令，不直接触碰设备。** Intent、Accessibility、蓝牙、IoT 等真实操作一律由 Runtime 在权限校验后执行，AI 始终待在沙箱里。
-- **Runtime 掌管安全。** 权限、限流、确认策略、审计都在 Runtime 内核，不依赖插件的自觉。
-- **模型无关。** OpenAI、Gemini、Qwen、DeepSeek、Claude、端侧模型——换模型不换命令面。
-- **协议即护城河。** 就像 HTTP 统一了 Web、SQL 统一了数据访问，MCOS 用开放 Command Protocol 统一移动应用能力。
-- **进程隔离（可选开启）。** 插件可在独立 `:mcos_plugin` 进程中运行，经 Binder RPC 与 stamp 域门实现强隔离。
-- **开放、可自托管。** 插件市场、配方商店、同步服务端、AI 规划——全部在仓库内、全部开源。
+- 🧠 **AI 只生成命令，不直接触碰设备。** Intent、Accessibility、蓝牙、IoT 等真实操作一律由 Runtime 在权限校验后执行，AI 始终待在沙箱里。
+- 🔒 **Runtime 掌管安全。** 权限、限流、确认策略、审计都在 Runtime 内核，不依赖插件的自觉。
+- 🔀 **模型无关。** OpenAI、Gemini、Qwen、DeepSeek、Claude、端侧模型——换模型不换命令面。
+- 📜 **协议即护城河。** 就像 HTTP 统一了 Web、SQL 统一了数据访问，MCOS 用开放 Command Protocol 统一移动应用能力。
+- 🧱 **进程隔离（可选开启）。** 插件可在独立 `:mcos_plugin` 进程中运行，经 Binder RPC 与 stamp 域门实现强隔离。
+- 🌍 **开放、可自托管。** 插件市场、配方商店、同步服务端、AI 规划——全部在仓库内、全部开源。
 
 ### 和现有项目的关系
 
 | 层 | 代表项目 | 统一了什么 |
-|----|----------|-----------|
+|------|----------|-----------|
 | 代码工具 | Claude Code | 开发机上的操作 |
 | 工具协议 | MCP（Model Context Protocol） | 桌面 / 服务端工具服务器 |
 | 应用能力 | Android App Functions | App 内可调用函数 |
@@ -30,6 +56,47 @@
 | **移动命令（开放标准）** | **MCOS（本项目）** | **开放协议 + 可换模型 + 跨厂商插件生态** |
 
 业界已经有了代码总线、工具总线、应用能力总线，也有了 OS 厂商内置的移动命令总线（Google / Apple）——**唯独缺一个开放的、模型无关的、不锁定单一 OS 厂商的移动命令总线标准**。
+
+## 运行原理
+
+自然语言进、可审计命令出——AI 负责规划，Runtime 负责执法，插件负责执行：
+
+```text
+   "把今天拍的照片压缩一下发给 Tom"
+                      │
+                      ▼
+        ┌─────────────────────────┐
+        │        AI 规划器         │  模型无关：OpenAI · Gemini · Qwen ·
+        └───────────┬─────────────┘  Claude · DeepSeek · 端侧模型
+                    ▼
+              DSL ──► IR            类型化 · 可审计 · 可重放
+                    ▼
+        ┌─────────────────────────┐
+        │      7 阶段执行器        │  权限 · 限流 · 确认 ·
+        └───────────┬─────────────┘  stamp 域门 · 审计
+                    ▼
+        ┌─────────────────────────┐
+        │   插件（可选隔离于        │  camera · files · iot · mcp · system …
+        │   :mcos_plugin 进程）    │
+        └───────────┬─────────────┘
+                    ▼
+               HostServices        net · files · ui · secureStore · clock
+                    │
+                    ▼
+                 审计日志           每一个副作用都有据可查
+```
+
+示例交互（自然语言 → 编译出的命令）：
+
+```text
+> camera.scan          "帮我扫一下这个二维码"
+> photo.compress       "把今天拍的照片压缩一下"
+> home.scene.movie     "电影模式"
+> iot.ac.set           "打开空调，24 度"
+> home.light.set       "把客厅灯调到 50% 亮度"
+```
+
+以上都会被编译成**命令 DSL**，再经由 Runtime 在权限校验后执行。
 
 ## 快速开始
 
@@ -76,52 +143,32 @@ dependencies {
 }
 ```
 
-### 示例交互
-
-```
-> camera.scan
-> home.movie
-> github.pr
-> photo.clean
-```
-
-对应的自然语言：
-
-```
-帮我打开空调
-导航回公司
-把今天拍的照片压缩一下发给 Tom
-Wi‑Fi 连上公司网络后自动开 VPN
-```
-
-以上都会被编译成**命令 DSL**，再经由 Runtime 在权限校验后执行。
-
 ## 模块组成
 
 已实现的多模块 Gradle 工程（每个模块均有自己的 README）：
 
 | 模块 | 内容 | 状态 |
-|------|------|------|
-| [`mcos-sdk`](./mcos-sdk/README.md) | 插件契约（`McosPlugin`、`CommandHandler`、`HostServices`、`ExecutionContext`、`AuthStamp`、`DirectorySandbox`） | ✅ |
-| [`mcos-security`](./mcos-security/README.md) | 权限内核（AuthStamp 铸造/签名）、限流、出网策略 + `DomainGlob`、企业策略、插件信任门、崩溃隔离、审计日志、Schema 校验 | ✅ |
-| [`mcos-runtime-core`](./mcos-runtime-core/README.md) | DSL 解析器 → IR、命令注册中心（含 manifest-only 注册）、7 阶段执行器、隔离派发缝 + stamp 域门、事件总线、工作流引擎、记忆 | ✅ |
-| [`mcos-llm`](./mcos-llm/README.md) | AI 规划/对话、多 Provider 注册中心、语法约束解码、提示注入防护、多轮 Agent 循环 | ✅ |
-| [`mcos-marketplace`](./mcos-marketplace/README.md) | 索引客户端、安装流水线（含 manifest-only）、封禁清单验证、配方商店、依赖解析、用户举报、遥测、安装向导 | ✅ |
-| [`mcos-runtime`](./mcos-runtime/README.md) | 门面（`McosRuntime` builder、确认协调器、运行管理器、触发器协调器），组装各子模块 | ✅ |
-| [`mcos-android-sdk`](./mcos-android-sdk/README.md) | 无 UI Android 宿主 SDK：组合根、无头引导、调度/开机接收器、activity-result 与权限桥、MCP 服务器管理、动态 `.mcos` 加载、opt-in `:mcos_plugin` 进程隔离 | ✅ |
-| [`mcos-android`](./mcos-android/README.md) | 基于 SDK 的 Compose 演示壳（可替换的参考 UI） | ✅ |
-| [`mcos-server`](./mcos-server/README.md) | 自托管同步端点：`SyncBlobTransport` REST 契约 + 强制 Bearer token 认证，不透明 blob 存储 | ✅ |
+|:------|:------|:----:|
+| 📜 [`mcos-sdk`](./mcos-sdk/README.md) | 插件契约（`McosPlugin`、`CommandHandler`、`HostServices`、`ExecutionContext`、`AuthStamp`、`DirectorySandbox`） | ✅ |
+| 🔒 [`mcos-security`](./mcos-security/README.md) | 权限内核（AuthStamp 铸造/签名）、限流、出网策略 + `DomainGlob`、企业策略、插件信任门、崩溃隔离、审计日志、Schema 校验 | ✅ |
+| ⚙️ [`mcos-runtime-core`](./mcos-runtime-core/README.md) | DSL 解析器 → IR、命令注册中心（含 manifest-only 注册）、7 阶段执行器、隔离派发缝 + stamp 域门、事件总线、工作流引擎、记忆 | ✅ |
+| 🧠 [`mcos-llm`](./mcos-llm/README.md) | AI 规划/对话、多 Provider 注册中心、语法约束解码、提示注入防护、多轮 Agent 循环 | ✅ |
+| 🛒 [`mcos-marketplace`](./mcos-marketplace/README.md) | 索引客户端、安装流水线（含 manifest-only）、封禁清单验证、配方商店、依赖解析、用户举报、遥测、安装向导 | ✅ |
+| 🚀 [`mcos-runtime`](./mcos-runtime/README.md) | 门面（`McosRuntime` builder、确认协调器、运行管理器、触发器协调器），组装各子模块 | ✅ |
+| 🤖 [`mcos-android-sdk`](./mcos-android-sdk/README.md) | 无 UI Android 宿主 SDK：组合根、无头引导、调度/开机接收器、activity-result 与权限桥、MCP 服务器管理、动态 `.mcos` 加载、opt-in `:mcos_plugin` 进程隔离 | ✅ |
+| 📱 [`mcos-android`](./mcos-android/README.md) | 基于 SDK 的 Compose 演示壳（可替换的参考 UI） | ✅ |
+| 🖧 [`mcos-server`](./mcos-server/README.md) | 自托管同步端点：`SyncBlobTransport` REST 契约 + 强制 Bearer token 认证，不透明 blob 存储 | ✅ |
 
-插件在 `plugins/` 下独立构建：`mcos-plugin-hello`、`mcos-plugin-system`、`mcos-plugin-camera`、`mcos-plugin-files`、`mcos-plugin-mcp`、`mcos-plugin-iot`（均带测试与 README）。
+🔌 插件在 `plugins/` 下独立构建：`mcos-plugin-hello`、`mcos-plugin-system`、`mcos-plugin-camera`、`mcos-plugin-files`、`mcos-plugin-mcp`、`mcos-plugin-iot`（均带测试与 README）。
 
 ## 文档导航
 
 设计 RFC 提供**中英双语**：中文见 `docs/zh/`，英文见 `docs/en/`。
 
 | # | 文档 | 说明 |
-|---|------|------|
+|:--:|:------|:------|
 | 00 | [愿景](./docs/zh/00-vision.md) | 为什么做 MCOS；原则；非目标 |
-| 01 | [系统架构](./docs/zh/01-architecture.md) | 分层架构、请求生命周期、进程模型、IPC 契约、线程模型、完整 Kotlin 类型、错误码 |
+| 01 | [系统架构](./docs/zh/01-architecture.md) | 分层架构、请求生命周期、进程模型、IPC 契约、线程模型 |
 | 02 | [命令协议（RFC）](./docs/zh/02-command-protocol.md) | **规范核心**：DSL / IR / 类型系统 / 错误码 |
 | 03 | [运行时](./docs/zh/03-runtime.md) | 解析器、注册中心、执行器、权限内核、审计 |
 | 04 | [插件 SDK](./docs/zh/04-plugin-sdk.md) | Manifest、Handler 契约、Host 服务 |
@@ -152,8 +199,17 @@ sh gradlew :mcos-android:assembleDebug   # 演示壳 APK
 
 ## 贡献与许可
 
+[![License](https://img.shields.io/github/license/Morainet/mcos.svg?color=blue)](./LICENSE)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?logo=github&logoColor=white)](./CONTRIBUTING.md)
+
 [Apache License 2.0](./LICENSE) · [CONTRIBUTING.md](./CONTRIBUTING.md) · [CHANGELOG.md](./CHANGELOG.md)
 
 ---
 
+<div align="center">
+
 [English](./README.md) · **中文**
+
+⭐ 如果 MCOS 正是你的 AI 应用缺的那一层，欢迎点个 Star。
+
+</div>

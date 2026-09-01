@@ -1,23 +1,87 @@
+<div align="center">
+
+<img src="docs/images/logo.svg" width="150" alt="MCOS logo"/>
+
 # MCOS — Mobile Command OS
+
+**Make every cooperative capability on the phone a command that AI can call — safely.**
 
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.morainet/mcos-bom.svg?label=Maven%20Central)](https://central.sonatype.com/artifact/io.github.morainet/mcos-bom/overview)
 [![CI](https://img.shields.io/github/actions/workflow/status/Morainet/mcos/ci.yml.svg?branch=main&label=CI)](https://github.com/Morainet/mcos/actions/workflows/ci.yml)
-[![License](https://img.shields.io/github/license/Morainet/mcos.svg)](https://github.com/Morainet/mcos/blob/main/LICENSE)
+[![License](https://img.shields.io/github/license/Morainet/mcos.svg?color=blue)](https://github.com/Morainet/mcos/blob/main/LICENSE)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?logo=github&logoColor=white)](./CONTRIBUTING.md)
 
-> **Make every cooperative capability on the phone a command that AI can call — safely.**
+[![Kotlin](https://img.shields.io/badge/Kotlin-2.0.21-7F52FF?logo=kotlin&logoColor=white)](https://kotlinlang.org)
+[![Android](https://img.shields.io/badge/Android-API%2026%2B-3DDC84?logo=android&logoColor=white)](./mcos-android-sdk/README.md)
+[![JDK](https://img.shields.io/badge/JDK-17-orange?logo=openjdk&logoColor=white)](https://openjdk.org/projects/jdk/17/)
+[![Platform](https://img.shields.io/badge/platform-JVM%20%7C%20Android-lightgrey)](#build)
+[![Last Commit](https://img.shields.io/github/last-commit/Morainet/mcos?color=blue)](https://github.com/Morainet/mcos/commits/main)
 
-**MCOS (Mobile Command OS)** is an open **mobile command bus**: a typed Command Protocol, an on-device Runtime, a Plugin SDK, and an optional AI planner that compiles natural language into auditable DSL — never opaque side effects.
+[Quick Start](#quick-start) · [How It Works](#how-it-works) · [What's Inside](#whats-inside) · [Documentation](#documentation) · [Report a Bug](https://github.com/Morainet/mcos/issues) · [中文文档](./README.zh-CN.md)
 
-Think of it as **the phone's Kubernetes + MCP + Claude Code Runtime**. The moat is the command protocol itself, not any single model or vendor.
+*An open **mobile command bus** — think the phone's Kubernetes + MCP + Claude Code Runtime. The moat is the open Command Protocol, not any single model or vendor.*
+
+</div>
+
+---
+
+## Table of Contents
+
+- [Why MCOS](#why-mcos)
+- [How It Works](#how-it-works)
+- [Quick Start](#quick-start)
+- [What's Inside](#whats-inside)
+- [Documentation](#documentation)
+- [Build](#build)
+- [Release](#release)
+- [License & Contributing](#license--contributing)
 
 ## Why MCOS
 
-- **AI generates commands — it never touches the device.** Intents, accessibility, Bluetooth, IoT — every real operation is executed by the Runtime *after* permission checks. AI stays in the sandbox.
-- **The Runtime owns security.** Permissions, rate limits, confirmation policy, and audit all live in the runtime kernel — never left to a plugin's goodwill.
-- **Model-agnostic.** OpenAI, Gemini, Qwen, DeepSeek, Claude, on-device models — swap the model, keep the same command surface.
-- **Protocol over model.** HTTP unified the web; SQL unified data access. MCOS aims to unify mobile app capabilities with one open Command Protocol.
-- **Opt-in process isolation.** Plugins can run in a separate `:mcos_plugin` process behind Binder RPC with stamp-scoped facades.
-- **Open, self-hostable ecosystem.** Marketplace client, recipe store, sync server, AI planning — everything in one repo, all open source.
+- 🧠 **AI generates commands — it never touches the device.** Intents, accessibility, Bluetooth, IoT — every real operation is executed by the Runtime *after* permission checks. AI stays in the sandbox.
+- 🔒 **The Runtime owns security.** Permissions, rate limits, confirmation policy, and audit all live in the runtime kernel — never left to a plugin's goodwill.
+- 🔀 **Model-agnostic.** OpenAI, Gemini, Qwen, DeepSeek, Claude, on-device models — swap the model, keep the same command surface.
+- 📜 **Protocol over model.** HTTP unified the web; SQL unified data access. MCOS aims to unify mobile app capabilities with one open Command Protocol.
+- 🧱 **Opt-in process isolation.** Plugins can run in a separate `:mcos_plugin` process behind Binder RPC with stamp-scoped facades.
+- 🌍 **Open, self-hostable ecosystem.** Marketplace client, recipe store, sync server, AI planning — everything in one repo, all open source.
+
+## How It Works
+
+Natural language in, auditable commands out — the AI plans, the Runtime enforces, plugins execute:
+
+```text
+   "Compress today's photos and send them to Tom"
+                      │
+                      ▼
+        ┌─────────────────────────┐
+        │       AI Planner        │  model-agnostic: OpenAI · Gemini · Qwen ·
+        └───────────┬─────────────┘  Claude · DeepSeek · on-device
+                    ▼
+              DSL ──► IR            typed · auditable · replayable
+                    ▼
+        ┌─────────────────────────┐
+        │    7-stage Executor     │  permission · rate-limit · confirmation ·
+        └───────────┬─────────────┘  stamp scope · audit
+                    ▼
+        ┌─────────────────────────┐
+        │  Plugins (isolated in   │  camera · files · iot · mcp · system …
+        │  optional :mcos_plugin) │
+        └───────────┬─────────────┘
+                    ▼
+               HostServices        net · files · ui · secureStore · clock
+                    │
+                    ▼
+                Audit Log          every side effect on the record
+```
+
+Example utterances and their compiled commands:
+
+```text
+> camera.scan          "scan this barcode"             帮我扫一下这个二维码
+> photo.compress       "compress today's photos"       把今天拍的照片压缩一下
+> home.scene.movie     "movie time"                    电影模式
+> iot.ac.set           "turn on the AC at 24°C"        打开空调，24 度
+```
 
 ## Quick Start
 
@@ -69,37 +133,37 @@ dependencies {
 A working multi-module Gradle project (every module has its own README):
 
 | Module | Content | Status |
-|--------|---------|--------|
-| [`mcos-sdk`](./mcos-sdk/README.md) | Plugin contracts (`McosPlugin`, `CommandHandler`, `HostServices`, `ExecutionContext`, `AuthStamp`, `DirectorySandbox`) | ✅ |
-| [`mcos-security`](./mcos-security/README.md) | Permission kernel (AuthStamp minting/signing), rate limiter, egress policy + `DomainGlob`, enterprise policy, plugin trust gate, crash quarantine, audit log, schema validation | ✅ |
-| [`mcos-runtime-core`](./mcos-runtime-core/README.md) | DSL parser → IR, command registry (incl. manifest-only registration), 7-stage executor, isolation dispatch seam + stamp-scoped facades, event bus, workflow engine, memory | ✅ |
-| [`mcos-llm`](./mcos-llm/README.md) | AI planner/chat, multi-provider registry, grammar-constrained decoding, prompt-injection guard, multi-turn agent loop | ✅ |
-| [`mcos-marketplace`](./mcos-marketplace/README.md) | Index client, install pipeline (incl. manifest-only), blocklist verification, recipe store, dependency resolution, user reports, opt-in telemetry, install wizard | ✅ |
-| [`mcos-runtime`](./mcos-runtime/README.md) | Facade (`McosRuntime` builder, confirmation coordinator, run manager, trigger coordinator) wiring all submodules | ✅ |
-| [`mcos-android-sdk`](./mcos-android-sdk/README.md) | UI-free Android host SDK: composition root, headless bootstrap, schedule/boot receivers, activity-result & permission bridges, MCP server management, dynamic `.mcos` loading, opt-in `:mcos_plugin` process isolation | ✅ |
-| [`mcos-android`](./mcos-android/README.md) | Compose demo shell built on the SDK (replaceable reference UI) | ✅ |
-| [`mcos-server`](./mcos-server/README.md) | Self-hosted sync endpoint: `SyncBlobTransport` REST contract + mandatory Bearer-token auth, opaque blob store | ✅ |
+|:-------|:--------|:------:|
+| 📜 [`mcos-sdk`](./mcos-sdk/README.md) | Plugin contracts (`McosPlugin`, `CommandHandler`, `HostServices`, `ExecutionContext`, `AuthStamp`, `DirectorySandbox`) | ✅ |
+| 🔒 [`mcos-security`](./mcos-security/README.md) | Permission kernel (AuthStamp minting/signing), rate limiter, egress policy + `DomainGlob`, enterprise policy, plugin trust gate, crash quarantine, audit log, schema validation | ✅ |
+| ⚙️ [`mcos-runtime-core`](./mcos-runtime-core/README.md) | DSL parser → IR, command registry (incl. manifest-only registration), 7-stage executor, isolation dispatch seam + stamp-scoped facades, event bus, workflow engine, memory | ✅ |
+| 🧠 [`mcos-llm`](./mcos-llm/README.md) | AI planner/chat, multi-provider registry, grammar-constrained decoding, prompt-injection guard, multi-turn agent loop | ✅ |
+| 🛒 [`mcos-marketplace`](./mcos-marketplace/README.md) | Index client, install pipeline (incl. manifest-only), blocklist verification, recipe store, dependency resolution, user reports, opt-in telemetry, install wizard | ✅ |
+| 🚀 [`mcos-runtime`](./mcos-runtime/README.md) | Facade (`McosRuntime` builder, confirmation coordinator, run manager, trigger coordinator) wiring all submodules | ✅ |
+| 🤖 [`mcos-android-sdk`](./mcos-android-sdk/README.md) | UI-free Android host SDK: composition root, headless bootstrap, schedule/boot receivers, activity-result & permission bridges, MCP server management, dynamic `.mcos` loading, opt-in `:mcos_plugin` process isolation | ✅ |
+| 📱 [`mcos-android`](./mcos-android/README.md) | Compose demo shell built on the SDK (replaceable reference UI) | ✅ |
+| 🖧 [`mcos-server`](./mcos-server/README.md) | Self-hosted sync endpoint: `SyncBlobTransport` REST contract + mandatory Bearer-token auth, opaque blob store | ✅ |
 
-Plugins are independently buildable in `plugins/`: `mcos-plugin-hello`, `mcos-plugin-system`, `mcos-plugin-camera`, `mcos-plugin-files`, `mcos-plugin-mcp`, `mcos-plugin-iot` (each with tests and a README).
+🔌 Plugins are independently buildable in `plugins/`: `mcos-plugin-hello`, `mcos-plugin-system`, `mcos-plugin-camera`, `mcos-plugin-files`, `mcos-plugin-mcp`, `mcos-plugin-iot` (each with tests and a README).
 
 ## Documentation
 
 Available in two languages — [English](./docs/en/README.md) · [中文](./docs/zh/README.md):
 
-| # | Topic |
-|---|--------|
-| 00 | [Vision](./docs/en/00-vision.md) |
-| 01 | [Architecture](./docs/en/01-architecture.md) |
-| 02 | [Command Protocol RFC](./docs/en/02-command-protocol.md) |
-| 03 | [Runtime](./docs/en/03-runtime.md) |
-| 04 | [Plugin SDK](./docs/en/04-plugin-sdk.md) |
-| 05 | [Workflow Engine](./docs/en/05-workflow.md) |
-| 06 | [AI Planner](./docs/en/06-agent.md) |
-| 07 | [Memory](./docs/en/07-memory.md) |
-| 08 | [Security](./docs/en/08-security.md) |
-| 09 | [Marketplace](./docs/en/09-marketplace.md) |
-| 10 | [Roadmap](./docs/en/10-roadmap.md) |
-| 11 | [Implementation Status](./docs/en/11-implementation-status.md) |
+| # | Topic | What's in it |
+|:--:|:------|:-------------|
+| 00 | [Vision](./docs/en/00-vision.md) | why MCOS exists · principles · non-goals |
+| 01 | [Architecture](./docs/en/01-architecture.md) | layers · request lifecycle · process model · IPC contracts · threading |
+| 02 | [Command Protocol RFC](./docs/en/02-command-protocol.md) | **the spec core**: DSL · IR · type system · error codes |
+| 03 | [Runtime](./docs/en/03-runtime.md) | parser · registry · executor · permission kernel · audit |
+| 04 | [Plugin SDK](./docs/en/04-plugin-sdk.md) | manifest · handler contract · host services |
+| 05 | [Workflow Engine](./docs/en/05-workflow.md) | graph IR: sequence, parallel, retry, compensation, triggers |
+| 06 | [AI Planner](./docs/en/06-agent.md) | AIProvider · command compiler · repair loop |
+| 07 | [Memory](./docs/en/07-memory.md) | memory tiers · reference resolution · privacy |
+| 08 | [Security](./docs/en/08-security.md) | threat model · defense in depth · confirmation UX |
+| 09 | [Marketplace](./docs/en/09-marketplace.md) | signing · install/update · recipe store |
+| 10 | [Roadmap](./docs/en/10-roadmap.md) | P0 → P4 roadmap |
+| 11 | [Implementation Status](./docs/en/11-implementation-status.md) | docs ↔ code mapping (**read this first for the current state**) |
 
 Golden DSL ↔ IR fixtures: [`docs/fixtures/`](./docs/fixtures/). For the full dependency graph, see [`docs/en/REPOSITORIES.md`](./docs/en/REPOSITORIES.md).
 
@@ -119,8 +183,17 @@ Artifacts are published to Maven Central under `io.github.morainet` (namespace v
 
 ## License & Contributing
 
+[![License](https://img.shields.io/github/license/Morainet/mcos.svg?color=blue)](./LICENSE)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?logo=github&logoColor=white)](./CONTRIBUTING.md)
+
 [Apache License 2.0](./LICENSE) · [CONTRIBUTING.md](./CONTRIBUTING.md) · [CHANGELOG.md](./CHANGELOG.md)
 
 ---
 
+<div align="center">
+
 **中文说明：见 [README.zh-CN.md](./README.zh-CN.md)。**
+
+⭐ Star the repo if MCOS sounds like the layer your AI app is missing.
+
+</div>

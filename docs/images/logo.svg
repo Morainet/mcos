@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-label="MCOS logo — terminal command prompt">
+  <defs>
+    <linearGradient id="mcosGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4F46E5"/>
+      <stop offset="100%" stop-color="#06B6D4"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="224" height="224" rx="52" fill="url(#mcosGradient)"/>
+  <path d="M 78 92 L 118 128 L 78 164" fill="none" stroke="#FFFFFF" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+  <line x1="146" y1="164" x2="146" y2="92" stroke="#FFFFFF" stroke-width="18" stroke-linecap="round"/>
+</svg>
