@@ -1,12 +1,23 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-label="MCOS logo — wordmark">
+<svg xmlns="http://www.w3.org/2000/svg" width="500" height="200" viewBox="0 0 500 200" role="img" aria-label="MCOS — hand-drawn geometric wordmark with command cursor">
   <defs>
-    <linearGradient id="mcosGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+    <linearGradient id="mcosGradient" gradientUnits="userSpaceOnUse" x1="20" y1="0" x2="490" y2="0">
       <stop offset="0%" stop-color="#4F46E5"/>
       <stop offset="100%" stop-color="#06B6D4"/>
     </linearGradient>
   </defs>
-  <rect x="16" y="16" width="224" height="224" rx="52" fill="url(#mcosGradient)"/>
-  <text x="128" y="128" text-anchor="middle" dominant-baseline="central"
-        font-family="'Segoe UI', -apple-system, 'Helvetica Neue', Arial, sans-serif"
-        font-size="56" font-weight="800" letter-spacing="1" fill="#FFFFFF">MCOS</text>
+  <!-- Custom letterforms: 24px round-cap strokes, 6° forward slant, letters 45..155 tall -->
+  <g fill="none" stroke="url(#mcosGradient)" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"
+     transform="skewX(-6) translate(14 0)">
+    <!-- M -->
+    <path d="M 34 143 L 34 57 L 68 121 L 102 57 L 102 143"/>
+    <!-- C: open ring, gap on the right -->
+    <path d="M 203.2 67.7 A 41 41 0 1 0 203.2 132.3"/>
+    <!-- O -->
+    <circle cx="298" cy="100" r="41"/>
+    <!-- S: two stacked elliptical arcs -->
+    <path d="M 404 57 A 27 21.5 0 0 0 404 100 A 27 21.5 0 0 1 404 143"/>
+  </g>
+  <!-- Command cursor block on the baseline -->
+  <rect x="452" y="129" width="26" height="26" rx="5" fill="url(#mcosGradient)"
+        transform="skewX(-6) translate(14 0)"/>
 </svg>

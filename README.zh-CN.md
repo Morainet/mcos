@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/images/logo.svg" width="150" alt="MCOS logo"/>
+<img src="docs/images/logo.svg" width="300" alt="MCOS logo"/>
 
 # MCOS — 移动命令操作系统
 
