@@ -1,0 +1,40 @@
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" width="1240" height="360" viewBox="0 0 1240 360" role="img" aria-label="MCOS logo">
+  <title>MCOS logo</title>
+  <!-- MCOS artistic display wordmark, hand-constructed geometry.
+       Uniform 46px weight across the word: filled solids for M/C/O, a ribbon
+       stroke for S, one gradient (teal -> cyan -> indigo) across the whole word.
+       cap 80..280, ring R100/r54, terminal cursor block = "Command OS". -->
+  <defs>
+    <linearGradient id="ink" gradientUnits="userSpaceOnUse" x1="80" y1="0" x2="1144" y2="0">
+      <stop offset="0" stop-color="#0D9488"/>
+      <stop offset="0.5" stop-color="#0EA5E9"/>
+      <stop offset="1" stop-color="#6366F1"/>
+    </linearGradient>
+  </defs>
+
+  <!-- M : filled geometric, inner V dips to 55% of cap height -->
+  <path fill="url(#ink)" d="M 80 280 L 80 80 L 134 80 L 180 190 L 226 80 L 280 80
+                            L 280 280 L 234 280 L 234 158 L 186 250 L 174 250 L 126 158 L 126 280 Z"/>
+
+  <!-- C : filled ring-arc, 46px band, opening on the right -->
+  <path fill="url(#ink)" d="M 506.9 105.7
+                            A 100 100 0 1 0 506.9 254.3
+                            L 476.1 220.1
+                            A 54 54 0 1 1 476.1 139.9 Z"/>
+
+  <!-- O : filled ring, counter punched with even-odd -->
+  <path fill="url(#ink)" fill-rule="evenodd"
+        d="M 600 180 A 100 100 0 1 0 800 180 A 100 100 0 1 0 600 180 Z
+           M 646 180 A 54 54 0 1 0 754 180 A 54 54 0 1 0 646 180 Z"/>
+
+  <!-- S : flowing ribbon stroke, round terminals -->
+  <path fill="none" stroke="url(#ink)" stroke-width="46" stroke-linecap="round"
+        d="M 1030 122
+           C 1002 98, 936 96, 906 118
+           C 876 140, 892 170, 960 182
+           C 1028 194, 1046 224, 1014 248
+           C 984 270, 918 268, 890 244"/>
+
+  <!-- terminal cursor block, baseline-aligned -->
+  <rect x="1098" y="214" width="46" height="66" rx="11" fill="url(#ink)"/>
+</svg>
