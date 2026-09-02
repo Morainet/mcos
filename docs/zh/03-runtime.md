@@ -8,7 +8,7 @@
 > **Package:** `mcos-runtime`  
 > **Depends on:** [01-architecture.md](./01-architecture.md), [02-command-protocol.md](./02-command-protocol.md)
 
-> ✅ **实现状态：** 下述运行时管线**已实现**——Parser、Registry、Executor、Workflow Engine、Event Bus、Memory 与 Audit 位于 `mcos-runtime-core`；Permission Kernel、egress 策略与审计落盘位于 `mcos-security`；薄门面 `McosRuntime` 位于 `mcos-runtime`。已知 🟡 差距：Scheduler 仍是进程内 FIFO 队列（尚无优先级通道）；第三方进程隔离尚未强制（P3，见 [08-security.md](./08-security.md) §8）。逐子系统状态见 [11-implementation-status.md](./11-implementation-status.md) §3。
+> ✅ **实现状态：** 下述运行时管线**已实现**——Parser、Registry、Executor（含 §8 调度器：四条优先级通道、§8.2 并发上限、§8.4 背压、§8.5 设备互斥原语）、Workflow Engine、Event Bus、Memory 与 Audit 位于 `mcos-runtime-core`；Permission Kernel、egress 策略与审计落盘位于 `mcos-security`；薄门面 `McosRuntime` 位于 `mcos-runtime`。已知 🟡 差距：驱动 §8.5 设备串行化的 workflow 步骤 `requiresDevices` 声明尚未进 IR（原语本身已落地并有测试）；调度器热调参（§8 运行时配置）仅限 Builder 构建期；第三方进程隔离尚未强制（P3，见 [08-security.md](./08-security.md) §8）。逐子系统状态见 [11-implementation-status.md](./11-implementation-status.md) §3。
 
 ---
 

@@ -9,6 +9,7 @@ import com.morainet.mcos.security.permission.AuthorizationResult
 import com.morainet.mcos.runtime.core.registry.CommandRegistry
 import com.morainet.mcos.runtime.core.registry.RegistryEntry
 import com.morainet.mcos.runtime.core.registry.ResolveResult
+import com.morainet.mcos.runtime.core.scheduler.InvocationLimiter
 import com.morainet.mcos.security.EgressDecision
 import com.morainet.mcos.security.RateLimitResult
 import com.morainet.mcos.security.SecurityConfig
@@ -39,7 +40,7 @@ import kotlin.coroutines.cancellation.CancellationException
  *
  * Implements MCOS Runtime spec [03-runtime.md 9].
  *
- * Pipeline: Stage 3 (Resolve) → Stage 5 (Validate) → Stage 5.5 (Rate Limit) → Stage 6 (Authorize) → Stage 6.5 (Egress, post-auth) → Stage 8 (Invoke) → Stage 10 (Audit)
+ * Pipeline: Stage 3 (Resolve) → Stage 5 (Validate) → Stage 5.5 (Rate Limit) → Stage 6 (Authorize) → Stage 6.5 (Egress, post-auth) → §8.2 invocation caps (when [invocationLimiter] is wired) → Stage 8 (Invoke) → Stage 10 (Audit)
  *
  * NOTE: egress checking deliberately runs AFTER Stage 6 authorization
  * (signature verification + permission grants). Reading `auth.grantsUsed`
@@ -76,6 +77,11 @@ import kotlin.coroutines.cancellation.CancellationException
  *        commands run best-effort in-process (the MVP posture) and each such
  *        plugin's first fallback is audited as `plugin.isolation_fallback`.
  *        `BUILTIN` plugins always run in-process regardless. Defaults to null.
+ * @param invocationLimiter Optional §8.2 invocation caps (max per-plugin /
+ *        max global `destructive`), acquired at Stage-8 pre-dispatch — after
+ *        authorize/egress so a policy-rejected command never holds a slot, and
+ *        outside the handler `withTimeout` so waiting for a slot does not burn
+ *        command budget. Null (the default) disables the caps.
  */
 class Executor(
     private val registry: CommandRegistry,
@@ -84,6 +90,7 @@ class Executor(
     private val globalKillSwitch: () -> Boolean = { false },
     private val debugMode: Boolean = false,
     private val isolationHost: IsolationHost? = null,
+    private val invocationLimiter: InvocationLimiter? = null,
 ) {
 
     private val schemaValidator = SchemaValidator()
@@ -335,30 +342,40 @@ class Executor(
 
         var result: CommandResult
         var outcome: RunOutcome
-        try {
-            result = withTimeout(timeoutMs) {
-                when {
-                    isolationMode == IsolationMode.IN_PROCESS -> invokeInProcess()
-                    isolationHost != null -> isolationHost.invoke(
-                        IsolatedInvocation(
-                            pluginId = entry.descriptor.pluginId,
-                            pluginVersion = entry.pluginVersion,
-                            commandId = entry.descriptor.id,
-                            args = args,
-                            auth = boundAuth,
-                            runId = runId,
-                            deadlineMs = deadlineMs,
-                            source = source,
-                        )
+
+        // Stage 8 dispatch, hoisted so the §8.2 invocation caps can wrap it:
+        // the limiter's slot wait happens BEFORE the handler `withTimeout`,
+        // so waiting for a per-plugin/destructive slot never burns command
+        // budget (03-runtime.md §8.2).
+        suspend fun dispatch(): CommandResult = withTimeout(timeoutMs) {
+            when {
+                isolationMode == IsolationMode.IN_PROCESS -> invokeInProcess()
+                isolationHost != null -> isolationHost.invoke(
+                    IsolatedInvocation(
+                        pluginId = entry.descriptor.pluginId,
+                        pluginVersion = entry.pluginVersion,
+                        commandId = entry.descriptor.id,
+                        args = args,
+                        auth = boundAuth,
+                        runId = runId,
+                        deadlineMs = deadlineMs,
+                        source = source,
                     )
-                    else -> {
-                        // No isolation host: best-effort in-process fallback
-                        // (08 §8.1). Audited once per plugin so the weaker
-                        // boundary is visible without flooding the trail.
-                        recordIsolationFallback(entry, runId)
-                        invokeInProcess()
-                    }
+                )
+                else -> {
+                    // No isolation host: best-effort in-process fallback
+                    // (08 §8.1). Audited once per plugin so the weaker
+                    // boundary is visible without flooding the trail.
+                    recordIsolationFallback(entry, runId)
+                    invokeInProcess()
                 }
+            }
+        }
+
+        try {
+            result = when (val limiter = invocationLimiter) {
+                null -> dispatch()
+                else -> limiter.withPermits(entry.descriptor.pluginId, entry.descriptor.sideEffectClass) { dispatch() }
             }
             outcome = RunOutcome.OK
         } catch (e: TimeoutCancellationException) {

@@ -32,6 +32,13 @@ import com.morainet.mcos.runtime.core.plugin.LoadResult
 import com.morainet.mcos.runtime.core.plugin.PluginLoader
 import com.morainet.mcos.runtime.core.registry.CommandRegistry
 import com.morainet.mcos.runtime.core.registry.ResolveResult as RegistryResolveResult
+import com.morainet.mcos.runtime.core.scheduler.InvocationLimiter
+import com.morainet.mcos.runtime.core.scheduler.RunScheduler
+import com.morainet.mcos.runtime.core.scheduler.SchedulerConfig
+import com.morainet.mcos.runtime.core.scheduler.SchedulerLane
+import com.morainet.mcos.runtime.core.scheduler.SchedulerMetrics
+import com.morainet.mcos.runtime.core.scheduler.SubmitResult
+import com.morainet.mcos.runtime.core.scheduler.WorkKind
 import com.morainet.mcos.security.ArtifactSignature
 import com.morainet.mcos.security.ArtifactVerifier
 import com.morainet.mcos.security.AuthStampSigner
@@ -46,6 +53,7 @@ import com.morainet.mcos.security.SecurityConfig
 import com.morainet.mcos.security.SlidingWindowCrashQuarantine
 import com.morainet.mcos.security.TokenBucketRateLimiter
 import com.morainet.mcos.security.audit.AuditLog
+import com.morainet.mcos.security.audit.RunRecord
 import com.morainet.mcos.sdk.McosPlugin
 import com.morainet.mcos.runtime.core.workflow.ArmedScheduleStore
 import com.morainet.mcos.runtime.core.workflow.NullArmedScheduleStore
@@ -70,7 +78,9 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import java.util.UUID
 
 /**
@@ -133,6 +143,7 @@ class McosRuntime internal constructor(
     private val permissionKernel: PermissionKernel = DefaultPermissionKernel(),
     private val armedScheduleStore: ArmedScheduleStore = NullArmedScheduleStore,
     private val wakeScheduler: WakeScheduler? = null,
+    private val scheduler: RunScheduler,
 ) : RuntimeGateway {
     private val summarizer = RunSummarizer(episodicMemory)
 
@@ -165,11 +176,14 @@ class McosRuntime internal constructor(
         timeoutMs = confirmationTimeoutMs,
     )
 
-    // ─── Active run tracking ─────────────────────────────────────────────
+    // ─── Run scheduling (03-runtime.md §8) ───────────────────────────────
     //
-    // Runs execute as children of an owned, supervised scope so shutdown()
-    // cancels them cleanly (P0-C2). See [RunManager].
-    private val runManager = RunManager()
+    // Every run body executes through the Stage-7 [RunScheduler]: four bounded
+    // lanes (interactive/workflow/background/expedited), a global concurrency
+    // semaphore, and §8.4 backpressure. Bodies run as children of the
+    // scheduler's owned supervised scope, so shutdown() drains/cancels them
+    // cleanly (P0-C2) — the role the old RunManager played, minus the
+    // unbounded-concurrency blind spot.
 
     /**
      * Internal plan produced by payload parsing.
@@ -238,24 +252,51 @@ class McosRuntime internal constructor(
             return ExecuteHandle(runId, ExecutionStatus.COMPLETED)
         }
 
-        // Launch execution as a child of the owned run scope (P0-C2), so the
-        // runtime owns the run's lifecycle and shutdown() cancels it cleanly.
-        runManager.launch(runId) {
-            val startTime = System.currentTimeMillis()
-            try {
-                when (plan) {
-                    is Plan.Commands -> runCommands(runId, plan.commands, startTime, timestamp, request.payload, request.source.name)
-                    is Plan.Workflow -> runWorkflow(runId, plan.step, startTime, timestamp, request.payload)
-                    is Plan.ParseFailed -> Unit // unreachable: intercepted above
+        // Stage 7 — Schedule (03-runtime.md §8): the run body is admitted to a
+        // lane and executes as a child of the scheduler's owned supervised
+        // scope, so shutdown() drains/cancels it cleanly (P0-C2). A full lane
+        // rejects the submission — surfaced like a parse failure: a terminal
+        // RunFailed event plus a FAILED handle.
+        val lane = laneFor(request.source, request.payload)
+        val fingerprint = "${request.source.name}:${request.payload}"
+        when (
+            val admission = scheduler.enqueue(lane, WorkKind.RUN, runId, fingerprint) {
+                val startTime = System.currentTimeMillis()
+                try {
+                    when (plan) {
+                        is Plan.Commands -> runCommands(runId, plan.commands, startTime, timestamp, request.payload, request.source.name)
+                        is Plan.Workflow -> runWorkflow(runId, plan.step, startTime, timestamp, request.payload)
+                        is Plan.ParseFailed -> Unit // unreachable: intercepted above
+                    }
+                } catch (e: CancellationException) {
+                    eventBus.publish(runId, RuntimeEvent.RunCancelled(runId))
+                } catch (e: Exception) {
+                    eventBus.publish(runId, RuntimeEvent.RunFailed(runId, e.message ?: "Unknown error"))
                 }
-            } catch (e: CancellationException) {
-                eventBus.publish(runId, RuntimeEvent.RunCancelled(runId))
-            } catch (e: Exception) {
-                eventBus.publish(runId, RuntimeEvent.RunFailed(runId, e.message ?: "Unknown error"))
+            }
+        ) {
+            is SubmitResult.Admitted -> Unit
+            is SubmitResult.Rejected -> {
+                eventBus.publish(runId, RuntimeEvent.RunFailed(runId, "[${admission.code}] ${admission.message}"))
+                return ExecuteHandle(runId, ExecutionStatus.FAILED)
             }
         }
 
         return ExecuteHandle(runId, ExecutionStatus.RUNNING)
+    }
+
+    /**
+     * Lane assignment (03-runtime.md §8.1): event/schedule-triggered runs are
+     * `background` regardless of payload; manually-invoked workflows are
+     * `workflow`; user-facing command runs (CLI/chat/voice/API) are
+     * `interactive`. The `expedited` lane is never assigned here — it is
+     * reserved for cancellation run-requests only (§8.4) and as-built
+     * cancellation bypasses the semaphore entirely (see [cancel]).
+     */
+    private fun laneFor(source: Source, payload: Payload): SchedulerLane = when {
+        source == Source.EVENT || source == Source.SCHEDULE -> SchedulerLane.BACKGROUND
+        payload is Payload.WorkflowRef -> SchedulerLane.WORKFLOW
+        else -> SchedulerLane.INTERACTIVE
     }
 
     /**
@@ -357,18 +398,25 @@ class McosRuntime internal constructor(
     }
 
     /**
-     * Cancel a running execution by its runId.
+     * Cancel a run by its runId (03-runtime.md §8.3). A run cancelled while
+     * still queued never executes — the scheduler drops it and this method
+     * publishes the terminal `RunCancelled` event itself (the body's catch-all
+     * cannot, since the body never ran). A running run is cancelled
+     * cooperatively; its own pipeline publishes the terminal event.
      */
     fun cancel(runId: String) {
-        runManager.cancel(runId)
+        if (scheduler.cancel(runId)) {
+            eventBus.publish(runId, RuntimeEvent.RunCancelled(runId))
+        }
     }
 
     /**
-     * Shut down the runtime: cancel every in-flight run and release the owned
-     * coroutine scope (P0-C2). Idempotent; safe to call once the runtime is no
-     * longer needed (e.g. from the host's `onDestroy`). After shutdown, new
-     * [execute] calls will launch on a cancelled scope and complete immediately
-     * as cancelled — callers should not reuse a shut-down runtime.
+     * Shut down the runtime: disarm every trigger first (so no boundary or bus
+     * event can fire a run mid-teardown), then drain the scheduler — queued
+     * and in-flight work gets [SchedulerConfig.drainGraceMs] to finish before
+     * the remainder is cancelled (03 §"shutdown"). Runs dropped at shutdown
+     * (their bodies never ran) get a terminal `RunCancelled` so no observer
+     * hangs. Idempotent; after shutdown new [execute] calls are rejected.
      */
     fun shutdown() {
         // Armed triggers are released first — disarming schedules cancels the
@@ -376,9 +424,9 @@ class McosRuntime internal constructor(
         // below are torn down (event subscriptions follow, same rationale for
         // in-flight bus events). Then the runs themselves.
         triggers.disarmAll()
-        // Cancel every active run; the SupervisorJob's children are cancelled
-        // in bulk by cancelling the scope's job as well.
-        runManager.shutdown()
+        scheduler.shutdown().forEach { runId ->
+            eventBus.publish(runId, RuntimeEvent.RunCancelled(runId))
+        }
     }
 
     /**
@@ -404,6 +452,13 @@ class McosRuntime internal constructor(
      * Access the command registry.
      */
     fun registry(): CommandRegistry = registry
+
+    /**
+     * Point-in-time scheduler observability (03-runtime.md §8.4): per-lane
+     * queue depth and in-flight counts, global-semaphore wait metrics. Hosts
+     * surface this as runtime metrics / a "system busy" indicator.
+     */
+    fun schedulerMetrics(): SchedulerMetrics = scheduler.metrics()
 
     /**
      * Access the memory facade.
@@ -479,7 +534,14 @@ class McosRuntime internal constructor(
         // possible) — a dangling armed trigger must not crash the handler.
         val step = workflowStore.get(workflowId) ?: return
         val runId = UUID.randomUUID().toString()
-        runManager.launch(runId) {
+        // Trigger-fired runs are lane `background` by definition (§8.1
+        // "event-triggered / deferred") whatever the payload shape.
+        val admission = scheduler.enqueue(
+            SchedulerLane.BACKGROUND,
+            WorkKind.RUN,
+            runId,
+            "trigger:$workflowId",
+        ) {
             val startTime = System.currentTimeMillis()
             try {
                 runWorkflow(
@@ -497,6 +559,11 @@ class McosRuntime internal constructor(
             } catch (e: Exception) {
                 eventBus.publish(runId, RuntimeEvent.RunFailed(runId, e.message ?: "Unknown error"))
             }
+        }
+        // A saturated background lane surfaces as a terminal RunFailed for the
+        // trigger run (§8.4) — the same observable contract as execute().
+        if (admission is SubmitResult.Rejected) {
+            eventBus.publish(runId, RuntimeEvent.RunFailed(runId, "[${admission.code}] ${admission.message}"))
         }
     }
 
@@ -976,6 +1043,10 @@ class McosRuntime internal constructor(
         // or FileAuditLog (persistence across restarts).
         private var auditLog: AuditLog = NullAuditLog
 
+        // Scheduler tuning (03-runtime.md §8). The defaults are the normative
+        // §8.2/§8.4 numbers; hosts resize for their device class.
+        private var schedulerConfig: SchedulerConfig = SchedulerConfig()
+
         fun withParser(parser: DslParser) = apply { this.parser = parser }
         fun withRegistry(registry: CommandRegistry) = apply { this.registry = registry }
         fun withPermissionKernel(kernel: PermissionKernel) = apply { this.permissionKernel = kernel }
@@ -1033,6 +1104,16 @@ class McosRuntime internal constructor(
          * instead. Defaults to [NullAuditLog].
          */
         fun withAuditLog(auditLog: AuditLog) = apply { this.auditLog = auditLog }
+
+        /**
+         * Tune the Stage-7 scheduler (03-runtime.md §8): lane capacity, the
+         * §8.2 concurrency caps (global / per-plugin / destructive), backpressure
+         * threshold and rejection backoff. The [InvocationLimiter] caps are
+         * wired into the default Executor; a host injecting its own via
+         * [withExecutor] constructs its own limiter (same caveat as the other
+         * SecurityConfig members — see [withExecutor]).
+         */
+        fun withSchedulerConfig(config: SchedulerConfig) = apply { this.schedulerConfig = config }
 
         /**
          * Make schedule triggers durable ([10-roadmap.md §6]): armed schedules
@@ -1099,7 +1180,41 @@ class McosRuntime internal constructor(
                 },
                 security,
                 isolationHost = isolationHost,
+                // §8.2 invocation caps (per-plugin / global destructive) ride
+                // the default executor; injected executors build their own.
+                invocationLimiter = InvocationLimiter(schedulerConfig),
             )
+
+            // Stage-7 scheduler (03-runtime.md §8): four lanes + global
+            // semaphore, started here per the spec's startup step 5. The
+            // backpressure callback fans out to the system-event channel (UI
+            // "system busy") and the audit trail (§8.4 "Observability").
+            val scheduler = RunScheduler(
+                config = schedulerConfig,
+                onBackpressure = { lane, depth ->
+                    eventBus.publishEvent(
+                        EventEnvelope(
+                            type = "scheduler.backpressure",
+                            timestamp = System.currentTimeMillis(),
+                            payload = buildJsonObject {
+                                put("lane", lane.name)
+                                put("depth", depth)
+                            },
+                            source = "scheduler",
+                        )
+                    )
+                    auditLog.append(
+                        RunRecord(
+                            runId = "scheduler",
+                            timestamp = System.currentTimeMillis(),
+                            source = "SCHEDULER",
+                            commandId = "scheduler.backpressure",
+                            ir = """{"lane":"${lane.name}","depth":$depth}""",
+                        )
+                    )
+                },
+            )
+            scheduler.start()
 
             // The workflow engine defaults to the same executor, so control
             // flow steps and flat commands share one execution pipeline.
@@ -1134,6 +1249,7 @@ class McosRuntime internal constructor(
                 permissionKernel = perm,
                 armedScheduleStore = armedScheduleStore,
                 wakeScheduler = wakeScheduler,
+                scheduler = scheduler,
             )
         }
     }

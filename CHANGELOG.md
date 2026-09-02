@@ -10,6 +10,15 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### Scheduler priority lanes — the §8 admission/dispatch layer (2026-09-02)
+
+03-runtime.md §8, closing the largest documented 🟡 runtime gap; `RunManager` is deleted.
+
+- **`RunScheduler`** (new `runtime.core.scheduler`): four bounded lanes (`interactive`/`workflow`/`background`/`expedited`, per-lane worker pools so background saturation cannot starve interactive), global `Semaphore(4)` acquired before the body (waits never burn command timeout), full-lane rejection `RATE_LIMITED` + exponential `retryAfterMs` (500 ms doubling, 30 s cap, per-fingerprint, reset on admission), expedited reserved for cancellations only (`INTERNAL` otherwise), sustained-depth backpressure → `scheduler.backpressure` event + `SCHEDULER` audit record, two-phase cancel (queued-drop publishes terminal `RunCancelled` — EventBus rule 9 holds), drain-grace shutdown returning never-started runIds, `metrics()` observability.
+- **`InvocationLimiter`**: §8.2 per-plugin 2 / destructive-global 1 caps at the Executor's Stage-8 pre-dispatch (optional param — `null` keeps historical behavior); **`DeviceMutexMap`**: §8.5 sorted atomic multi-acquire, nested → `CONFLICT "device_locked"`.
+- **Facade**: lane derivation (EVENT/SCHEDULE→background, WorkflowRef→workflow, else interactive), admission on both launch points (rejection → terminal `RunFailed` + FAILED handle), `Builder.withSchedulerConfig(...)`, `schedulerMetrics()`.
+- Honest boundaries: `requiresDevices` IR wiring (02/05 cross-protocol) and scheduler hot-retuning are follow-ups. Tests +38 (SC1-SC19 · L1-L5 · DM1-DM6 · EL1-EL3 · S1-S5); baseline 1364/1552 → 1402/1590. SC10 caught a real pre-merge bug (dropped items leaking their registration → duplicate shutdown reports), fixed in all three drop paths.
+
 ### Secrets encrypted at rest — Keystore-wrapped `AndroidSecureStore` (2026-08-31)
 
 04 §6.4 hardening, closing the plaintext gap item 46 documented.
