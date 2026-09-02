@@ -6,7 +6,7 @@
 > **Depends on:** [02-command-protocol.md](./02-command-protocol.md), [03-runtime.md](./03-runtime.md)  
 > **Inspiration:** Temporal · LangGraph · Claude Code tool loops — adapted to mobile constraints
 
-> ✅ **Implementation status:** the Workflow Engine **is implemented** in `mcos-runtime-core` (`workflow/WorkflowEngine`) — sequential / parallel (`cancelOnFailure`) / if / loop / retry / try-with-compensation / confirm, plus the named workflow store and JSON decoding — wired into `McosRuntime`. Status: [11-implementation-status.md](./11-implementation-status.md) §3.
+> ✅ **Implementation status:** the Workflow Engine **is implemented** in `mcos-runtime-core` (`workflow/WorkflowEngine`) — sequential / parallel (`cancelOnFailure`) / if / loop / retry / try-with-compensation / confirm, plus the named workflow store and JSON decoding — wired into `McosRuntime`. Command steps carry `requiresDevices` (§5.0): decoded from IR and enforced through the §8.5 device mutex map (03 §8.5), unioned with device ids resolved from the command's `x-mcos-semantic: "device"` schema fields. Status: [11-implementation-status.md](./11-implementation-status.md) §3.
 
 ---
 

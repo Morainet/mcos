@@ -8,7 +8,7 @@
 > **依赖:** [02-command-protocol.md](./02-command-protocol.md), [03-runtime.md](./03-runtime.md)  
 > **灵感来源:** Temporal · LangGraph · Claude Code 工具循环 —— 针对移动端约束做了适配
 
-> ✅ **实现状态:** 工作流引擎**已实现**于 `mcos-runtime-core`（`workflow/WorkflowEngine`）——sequential / parallel（`cancelOnFailure`）/ if / loop / retry / try-补偿 / confirm，以及命名工作流存储与 JSON 解码——已接入 `McosRuntime`。状态见 [11-implementation-status.md](./11-implementation-status.md) §3。
+> ✅ **实现状态:** 工作流引擎**已实现**于 `mcos-runtime-core`（`workflow/WorkflowEngine`）——sequential / parallel（`cancelOnFailure`）/ if / loop / retry / try-补偿 / confirm，以及命名工作流存储与 JSON 解码——已接入 `McosRuntime`。命令步骤承载 `requiresDevices`（§5.0）：IR 解码并经 §8.5 设备互斥图（03 §8.5）强制，与命令 `x-mcos-semantic: "device"` schema 字段解析出的设备求并集。状态见 [11-implementation-status.md](./11-implementation-status.md) §3。
 
 ---
 

@@ -143,4 +143,64 @@ class DeviceMutexMapTest {
         assertTrue(ran.isCompleted)
         assertTrue(devices.heldDevices("run-1").isEmpty())
     }
+
+    @Test
+    fun `DM7-concurrent same-run acquisitions with disjoint devices reject exactly one`() =
+        runBlocking<Unit> {
+            val winnerEntered = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+
+            // Two gated bodies under ONE runId, disjoint devices (the parallel
+            // workflow-branch shape): the intent registration must reject the
+            // second deterministically even though neither device mutex alone
+            // would contend (03 §8.5 — no cross-step hold within a run).
+            val jobs = listOf("light-1", "light-2").map { device ->
+                async {
+                    try {
+                        devices.withDevices("run-1", listOf(device)) {
+                            winnerEntered.complete(Unit)
+                            release.await()
+                        }
+                        "ok"
+                    } catch (e: McosException) {
+                        "conflict"
+                    }
+                }
+            }
+
+            withTimeout(5_000) { winnerEntered.await() } // one registration won
+            release.complete(Unit)
+            val outcomes = withTimeout(5_000) { jobs.awaitAll() }
+            assertEquals(1, outcomes.count { it == "ok" })
+            assertEquals(1, outcomes.count { it == "conflict" })
+            assertTrue(devices.heldDevices("run-1").isEmpty())
+        }
+
+    @Test
+    fun `DM8-concurrent rejection carries the 02 error shape`() = runBlocking<Unit> {
+        val winnerEntered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val first = async {
+            devices.withDevices("run-1", listOf("light-1")) {
+                winnerEntered.complete(Unit)
+                release.await()
+            }
+        }
+        withTimeout(5_000) { winnerEntered.await() }
+
+        val e = assertFailsWith<McosException> {
+            devices.withDevices("run-1", listOf("light-2")) {}
+        }
+        assertEquals(McosErrorCode.CONFLICT.name, e.code)
+        assertFalse(e.retryable)
+        assertEquals("device_locked", e.details["reason"]!!.jsonPrimitive.content)
+        // heldDevice is the winner's registered set even mid-acquisition —
+        // intent registration makes the diagnostic stable.
+        assertEquals("light-1", e.details["heldDevice"]!!.jsonPrimitive.content)
+        assertEquals("light-2", e.details["requestedDevice"]!!.jsonPrimitive.content)
+        assertEquals("run-1", e.details["runId"]!!.jsonPrimitive.content)
+
+        release.complete(Unit)
+        withTimeout(5_000) { first.await() }
+    }
 }

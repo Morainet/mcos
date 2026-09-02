@@ -38,6 +38,26 @@ class WorkflowJsonTest {
         assertTrue(command.args.isEmpty())
     }
 
+    @Test
+    fun `command requiresDevices decodes string array`() {
+        val step = parse(
+            """{"type":"command","commandId":"home.light.set","args":{"id":"living-room"},"requiresDevices":["living-room","hallway"]}"""
+        )
+
+        val command = step as? WorkflowStep.Command
+        assertNotNull(command)
+        assertEquals(listOf("living-room", "hallway"), command.requiresDevices)
+    }
+
+    @Test
+    fun `command without requiresDevices defaults to empty`() {
+        val step = parse("""{"type":"command","commandId":"sys.notify","args":{}}""")
+
+        val command = step as? WorkflowStep.Command
+        assertNotNull(command)
+        assertTrue(command.requiresDevices.isEmpty())
+    }
+
     // ─── Composite steps ─────────────────────────────────────────────────
 
     @Test

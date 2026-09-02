@@ -6,9 +6,11 @@ import com.morainet.mcos.security.audit.RunRecord
 import com.morainet.mcos.security.audit.StepRecord
 import com.morainet.mcos.runtime.core.error.McosErrorCode
 import com.morainet.mcos.runtime.core.executor.Executor
+import com.morainet.mcos.runtime.core.scheduler.DeviceMutexMap
 import com.morainet.mcos.security.NullAuditLog
 import com.morainet.mcos.sdk.AuthStamp
 import com.morainet.mcos.sdk.CommandResult
+import com.morainet.mcos.sdk.McosException
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.JsonElement
@@ -27,10 +29,16 @@ import java.util.UUID
  * @param executor The [Executor] to invoke individual commands.
  * @param auditLog [AuditLog] for recording workflow run records. Defaults to
  *        the named [NullAuditLog] (no trail) — pass a real sink explicitly.
+ * @param deviceMutexMap §8.5 device serialization (03 §8.5): per-device
+ *        mutexes acquired around every command step that declares devices,
+ *        either literally via `requiresDevices` (05 §5.0) or through the
+ *        command's `x-mcos-semantic: "device"` schema fields. Defaults to a
+ *        fresh map — steps without devices never touch it.
  */
 class WorkflowEngine(
     private val executor: Executor,
-    private val auditLog: AuditLog = NullAuditLog
+    private val auditLog: AuditLog = NullAuditLog,
+    private val deviceMutexMap: DeviceMutexMap = DeviceMutexMap()
 ) {
 
     /**
@@ -68,7 +76,7 @@ class WorkflowEngine(
         val startTime = System.currentTimeMillis()
         val collectedSteps = mutableListOf<WorkflowStepResult>()
         var outcome = WorkflowOutcome.COMPLETED
-        val ctx = RunContext(inputs, stepSource, authFor, confirmFor)
+        val ctx = RunContext(runId, inputs, stepSource, authFor, confirmFor)
 
         try {
             val rootOk = executeStep(definition, ctx, collectedSteps)
@@ -130,6 +138,7 @@ class WorkflowEngine(
 
     /** Per-run execution context threaded through every step (05 §6.2). */
     private class RunContext(
+        val runId: String,
         val inputs: JsonObject,
         val stepSource: String,
         val authFor: (String) -> AuthStamp?,
@@ -168,30 +177,58 @@ class WorkflowEngine(
                 retryable = false
             )
         } else {
-            executor.execute(
-                step.commandId,
-                (resolvedArgs as ArgResolution.Resolved).args,
-                ctx.authFor(step.commandId),
-                source = ctx.stepSource
-            )
-        }
-        // Confirmation retry (08 §5): a CONFIRMATION_REQUIRED step with a
-        // hook present asks for the host's decision once; an approved stamp
-        // re-executes the step, anything else keeps the failure. Without a
-        // hook the step fails as before (the manual workflow path keeps its
-        // historical behavior).
-        if (result is CommandResult.Err &&
-            result.code == McosErrorCode.CONFIRMATION_REQUIRED.name &&
-            ctx.confirmFor != null &&
-            resolvedArgs is ArgResolution.Resolved
-        ) {
-            val stamp = ctx.confirmFor.invoke(step.commandId, result)
-            if (stamp != null) {
-                result = executor.execute(
-                    step.commandId,
-                    resolvedArgs.args,
-                    stamp,
-                    source = ctx.stepSource
+            val resolved = resolvedArgs as ArgResolution.Resolved
+            // §8.5 device serialization (03 §8.5): the step's declared
+            // requiresDevices (05 §5.0) plus device ids resolved from the
+            // command's `x-mcos-semantic: "device"` schema fields — the
+            // args-driven "via the device-id field" resolution. All devices
+            // are acquired atomically in sorted order around this step and
+            // released on completion, never carried across a step boundary;
+            // the initial dispatch and its one confirmation re-execution
+            // share a single hold (same step).
+            val devices = (
+                step.requiresDevices +
+                    executor.deviceSemanticIds(step.commandId, resolved.args)
+                ).distinct().sorted()
+            try {
+                deviceMutexMap.withDevices(ctx.runId, devices) {
+                    var r = executor.execute(
+                        step.commandId,
+                        resolved.args,
+                        ctx.authFor(step.commandId),
+                        source = ctx.stepSource
+                    )
+                    // Confirmation retry (08 §5): a CONFIRMATION_REQUIRED step
+                    // with a hook present asks for the host's decision once; an
+                    // approved stamp re-executes the step, anything else keeps
+                    // the failure. Without a hook the step fails as before (the
+                    // manual workflow path keeps its historical behavior).
+                    if (r is CommandResult.Err &&
+                        r.code == McosErrorCode.CONFIRMATION_REQUIRED.name &&
+                        ctx.confirmFor != null
+                    ) {
+                        val stamp = ctx.confirmFor.invoke(step.commandId, r)
+                        if (stamp != null) {
+                            r = executor.execute(
+                                step.commandId,
+                                resolved.args,
+                                stamp,
+                                source = ctx.stepSource
+                            )
+                        }
+                    }
+                    r
+                }
+            } catch (e: McosException) {
+                // A rejected nested acquisition (§8.5 `device_locked`) is a
+                // failed step carrying the structured error shape — normal
+                // control flow (parallel cancelOnFailure, try compensation)
+                // takes over from there.
+                CommandResult.Err(
+                    code = e.code,
+                    message = e.message,
+                    retryable = e.retryable,
+                    details = e.details
                 )
             }
         }

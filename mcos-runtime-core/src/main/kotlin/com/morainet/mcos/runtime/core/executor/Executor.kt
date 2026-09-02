@@ -168,6 +168,22 @@ class Executor(
         return results
     }
 
+    /**
+     * Device ids among [args] as declared device-semantic by the resolved
+     * command's `inputSchema` (`x-mcos-semantic: "device"`, 02 §5.3 / 04
+     * §4.5) — the args-driven half of 03 §8.5's device resolution. An
+     * unresolvable command yields an empty list (the [execute] call that
+     * follows surfaces `UNKNOWN_COMMAND` itself).
+     *
+     * Consumed by [com.morainet.mcos.runtime.core.workflow.WorkflowEngine]
+     * to build a step's §8.5 device-mutex set alongside the step's literal
+     * `requiresDevices` declaration.
+     */
+    fun deviceSemanticIds(commandId: String, args: JsonObject): List<String> {
+        val entry = (registry.resolve(commandId) as? ResolveResult.Found)?.entry ?: return emptyList()
+        return DeviceSemantics.deviceIds(entry.descriptor.inputSchema, args)
+    }
+
     // ─── Internal dispatch ──────────────────────────────────────────────
 
     private suspend fun invokeHandler(

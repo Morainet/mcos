@@ -14,10 +14,20 @@ import kotlinx.serialization.json.JsonObject
 
 /** A single step in a workflow graph */
 sealed class WorkflowStep {
-    /** Execute a single command by ID */
+    /**
+     * Execute a single command by ID.
+     *
+     * @param requiresDevices IoT device mutex keys (05 §5.0 / 03 §8.5): all
+     *        declared devices are acquired atomically in sorted order around
+     *        this step's dispatch and released when it completes — never held
+     *        across a step boundary. Supplemented at execution by device ids
+     *        resolved from the command's `x-mcos-semantic: "device"` schema
+     *        fields (02 §5.3 / 04 §4.5). Defaults to no device locking.
+     */
     data class Command(
         val commandId: String,
-        val args: JsonObject = JsonObject(emptyMap())
+        val args: JsonObject = JsonObject(emptyMap()),
+        val requiresDevices: List<String> = emptyList()
     ) : WorkflowStep()
 
     /** Execute steps sequentially; stops on first failure */

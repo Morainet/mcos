@@ -110,7 +110,8 @@ object WorkflowJson {
         val commandId = asString(obj["commandId"]) ?: return null
         return WorkflowStep.Command(
             commandId = commandId,
-            args = obj["args"] as? JsonObject ?: JsonObject(emptyMap())
+            args = obj["args"] as? JsonObject ?: JsonObject(emptyMap()),
+            requiresDevices = asStringList(obj["requiresDevices"])
         )
     }
 

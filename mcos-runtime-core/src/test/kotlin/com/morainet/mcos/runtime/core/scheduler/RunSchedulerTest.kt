@@ -323,7 +323,10 @@ class RunSchedulerTest {
         scheduler.enqueue(SchedulerLane.BACKGROUND, WorkKind.RUN, "q1", "f1") {}
         scheduler.enqueue(SchedulerLane.BACKGROUND, WorkKind.RUN, "q2", "f2") {}
         scheduler.enqueue(SchedulerLane.BACKGROUND, WorkKind.RUN, "q3", "f3") { tailDone.complete(Unit) }
-        withTimeout(5_000) { assertEquals(3, episodes.poll()) }
+        withTimeout(5_000) {
+            while (episodes.isEmpty()) delay(20) // the callback lands on Dispatchers.Default
+        }
+        assertEquals(3, episodes.poll())
 
         // Deeper into the same episode: no refire while still pressured.
         scheduler.enqueue(SchedulerLane.BACKGROUND, WorkKind.RUN, "q4", "f4") {}
@@ -348,7 +351,10 @@ class RunSchedulerTest {
         scheduler.enqueue(SchedulerLane.BACKGROUND, WorkKind.RUN, "p1", "g1") {}
         scheduler.enqueue(SchedulerLane.BACKGROUND, WorkKind.RUN, "p2", "g2") {}
         scheduler.enqueue(SchedulerLane.BACKGROUND, WorkKind.RUN, "p3", "g3") { secondDone.complete(Unit) }
-        withTimeout(5_000) { assertEquals(3, episodes.poll()) }
+        withTimeout(5_000) {
+            while (episodes.isEmpty()) delay(20) // the callback lands on Dispatchers.Default
+        }
+        assertEquals(3, episodes.poll())
 
         secondGate.complete(Unit)
         withTimeout(5_000) { secondDone.await() }

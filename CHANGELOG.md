@@ -10,6 +10,16 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### §8.5 wiring — workflow `requiresDevices` drives `DeviceMutexMap` (2026-09-02)
+
+03 §8.5 / 05 §5.0 — closes item 48's largest documented honest boundary: the §8.5 primitive existed, but nothing declared or resolved devices.
+
+- **IR:** `WorkflowStep.Command.requiresDevices: List<String>` (trailing default — every existing construction site compiles untouched) + `WorkflowJson` decode (absent → `[]`, non-string entries dropped).
+- **Resolution:** new `executor/DeviceSemantics` — pure scan of the command's `inputSchema` for `x-mcos-semantic: "device"` properties (02 §5.3 / 04 §4.5), taking the string arg values; `Executor.deviceSemanticIds(commandId, args)` is the thin registry-backed query.
+- **Enforcement:** `WorkflowEngine` defaults to a real `DeviceMutexMap` and wraps each command step (initial dispatch + one confirmation re-execution, single hold per step, never across a step boundary) with `withDevices(runId, declared ∪ semantic)`; a rejected same-run acquisition surfaces as a failed step (`CONFLICT`/`device_locked` with `heldDevice`/`requestedDevice`/`runId`).
+- **Hardening:** the run's intent is registered under a short bookkeeping lock *before* any device wait — concurrent same-run acquisitions (parallel branches declaring disjoint devices) now reject the second deterministically instead of racing past the held-check.
+- Also fixed SC13's flaky episode assertion (one-shot `episodes.poll()` inside `withTimeout` → proper wait loop for the `Dispatchers.Default` callback). Tests +17 (`DeviceSemanticsTest` DS1-DS7 · `WorkflowDeviceMutexTest` WD1-WD6 · `DeviceMutexMapTest` DM7-DM8 · `WorkflowJsonTest` ×2); baseline 1402/1590 → 1419/1607.
+
 ### Scheduler priority lanes — the §8 admission/dispatch layer (2026-09-02)
 
 03-runtime.md §8, closing the largest documented 🟡 runtime gap; `RunManager` is deleted.
