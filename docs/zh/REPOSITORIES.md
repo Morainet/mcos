@@ -16,7 +16,7 @@ MCOS 是一个**已实现**的多模块仓库——下述 Gradle 布局是*实�
 flowchart BT
     sdk["mcos-sdk<br/>(契约)"]
     sec["mcos-security<br/>(权限 · 审计 · 出网)"]
-    core["mcos-runtime-core<br/>(parse · registry · executor · workflow · memory)"]
+    core["mcos-runtime-core<br/>(parse · registry · executor · scheduler · workflow · memory)"]
     llm["mcos-llm<br/>(planner · ChatOrchestrator)"]
     mkt["mcos-marketplace<br/>(客户端)"]
     rt["mcos-runtime<br/>(门面: api · 确认协调)"]
@@ -89,8 +89,8 @@ flowchart BT
 | | |
 |---|---|
 | 路径 | `mcos-runtime/` |
-| 包名 | 门面 `com.morainet.mcos.runtime`（`api`：`McosRuntime`、`RunManager`、`ConfirmationCoordinator`）；内核子系统在 `mcos-runtime-core` 的 `runtime.core.*`（`ir`、`parse`、`registry`、`memory`、`executor`、`workflow` 等） |
-| 职责 | 宿主侧入口：把内核组装成可用的 `McosRuntime`，持有 run 生命周期（`RunManager`）与确认协调。以 `api` 导出 `sdk`/`security`/`runtime-core`/`marketplace`，宿主只需依赖这一个模块。另持有 `PackageBoundariesTest` 守卫测试。 |
+| 包名 | 门面 `com.morainet.mcos.runtime`（`api`：`McosRuntime`、`ConfirmationCoordinator`）；内核子系统在 `mcos-runtime-core` 的 `runtime.core.*`（`ir`、`parse`、`registry`、`memory`、`executor`、`scheduler`、`workflow` 等） |
+| 职责 | 宿主侧入口：把内核组装成可用的 `McosRuntime`，持有 run 生命周期（§8 `RunScheduler` 准入 + 两段式取消）与确认协调。以 `api` 导出 `sdk`/`security`/`runtime-core`/`marketplace`，宿主只需依赖这一个模块。另持有 `PackageBoundariesTest` 守卫测试。 |
 | 依赖 | `api(project(":mcos-sdk"))`、`api(project(":mcos-security"))`、`api(project(":mcos-runtime-core"))`、`api(project(":mcos-marketplace"))`；serialization-json、coroutines-core |
 | 技术栈 | Kotlin/JVM · JDK 17 · kotlinx.serialization |
 | 规范 | [02-command-protocol.md](./02-command-protocol.md)、[03-runtime.md](./03-runtime.md) |
@@ -111,8 +111,8 @@ flowchart BT
 | | |
 |---|---|
 | 路径 | `mcos-runtime-core/` |
-| 包名 | `com.morainet.mcos.runtime.core`——`core.api`（`RuntimeGateway`、类型）、`core.ir`、`core.parse`（`DslParser`）、`core.registry`、`core.executor`（管线：Resolve → Validate → **5.5 限流** → Authorize → **6.5 出网** → Invoke → Audit）、`core.workflow`、`core.memory`、`core.events`、`core.plugin`、`core.error` |
-| 职责 | Command Bus 内核：DSL→IR 解析、带版本选择的 Registry、Executor 管线、WorkflowEngine（顺序/并行/条件/循环/重试/补偿）、memory 子系统（`MemoryStore`、情景记忆、向量钟同步）。 |
+| 包名 | `com.morainet.mcos.runtime.core`——`core.api`（`RuntimeGateway`、类型）、`core.ir`、`core.parse`（`DslParser`）、`core.registry`、`core.executor`（管线：Resolve → Validate → **5.5 限流** → Authorize → **6.5 出网** → Invoke → Audit）、`core.scheduler`（`RunScheduler`、`InvocationLimiter`、`DeviceMutexMap`）、`core.workflow`、`core.memory`、`core.events`、`core.plugin`、`core.error` |
+| 职责 | Command Bus 内核：DSL→IR 解析、带版本选择的 Registry、Executor 管线、§8 调度器（四车道 + §8.2 调用上限 + §8.5 设备互斥）、WorkflowEngine（顺序/并行/条件/循环/重试/补偿）、memory 子系统（`MemoryStore`、情景记忆、向量钟同步）。 |
 | 依赖 | `api(project(":mcos-sdk"))`、`api(project(":mcos-security"))`；coroutines-core |
 | 技术栈 | Kotlin/JVM · JDK 17 · kotlinx.serialization |
 | 规范 | [02-command-protocol.md](./02-command-protocol.md)、[03-runtime.md](./03-runtime.md)、[05-workflow.md](./05-workflow.md)、[07-memory.md](./07-memory.md) |

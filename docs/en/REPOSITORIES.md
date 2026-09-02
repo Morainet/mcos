@@ -16,7 +16,7 @@ For per-subsystem implementation phasing, see [11-implementation-status.md](./11
 flowchart BT
     sdk["mcos-sdk<br/>(contracts)"]
     sec["mcos-security<br/>(permission · audit · egress)"]
-    core["mcos-runtime-core<br/>(parse · registry · executor · workflow · memory)"]
+    core["mcos-runtime-core<br/>(parse · registry · executor · scheduler · workflow · memory)"]
     llm["mcos-llm<br/>(planner · ChatOrchestrator)"]
     mkt["mcos-marketplace<br/>(client)"]
     rt["mcos-runtime<br/>(facade: api · confirmation)"]
@@ -89,8 +89,8 @@ Read bottom-up: `mcos-sdk` is the leaf contract layer; everything depends on it.
 | | |
 |---|---|
 | Path | `mcos-runtime/` |
-| Package | Facade `com.morainet.mcos.runtime` (`api`: `McosRuntime`, `RunManager`, `ConfirmationCoordinator`); kernel subsystems live in `mcos-runtime-core` under `runtime.core.*` (`ir`, `parse`, `registry`, `memory`, `executor`, `workflow`, …) |
-| Role | The host-facing entry point: wires the kernel into a usable `McosRuntime`, owns run lifecycle (`RunManager`) and confirmation coordination. `api`-exports `sdk`/`security`/`runtime-core`/`marketplace` so hosts need only this one dependency. Also hosts the `PackageBoundariesTest` guard. |
+| Package | Facade `com.morainet.mcos.runtime` (`api`: `McosRuntime`, `ConfirmationCoordinator`); kernel subsystems live in `mcos-runtime-core` under `runtime.core.*` (`ir`, `parse`, `registry`, `memory`, `executor`, `scheduler`, `workflow`, …) |
+| Role | The host-facing entry point: wires the kernel into a usable `McosRuntime`, owns run lifecycle (§8 `RunScheduler` admission + two-phase cancel) and confirmation coordination. `api`-exports `sdk`/`security`/`runtime-core`/`marketplace` so hosts need only this one dependency. Also hosts the `PackageBoundariesTest` guard. |
 | Depends on | `api(project(":mcos-sdk"))`, `api(project(":mcos-security"))`, `api(project(":mcos-runtime-core"))`, `api(project(":mcos-marketplace"))`; serialization-json, coroutines-core |
 | Stack | Kotlin/JVM · JDK 17 · kotlinx.serialization |
 | Spec | [02-command-protocol.md](./02-command-protocol.md), [03-runtime.md](./03-runtime.md) |
@@ -111,8 +111,8 @@ Read bottom-up: `mcos-sdk` is the leaf contract layer; everything depends on it.
 | | |
 |---|---|
 | Path | `mcos-runtime-core/` |
-| Package | `com.morainet.mcos.runtime.core` — `core.api` (`RuntimeGateway`, types), `core.ir`, `core.parse` (`DslParser`), `core.registry`, `core.executor` (pipeline: Resolve → Validate → **5.5 Rate Limit** → Authorize → **6.5 Egress** → Invoke → Audit), `core.workflow`, `core.memory`, `core.events`, `core.plugin`, `core.error` |
-| Role | The Command Bus kernel: DSL→IR parsing, Registry with version selection, Executor pipeline, WorkflowEngine (sequential/parallel/if/loop/retry/compensation), memory subsystem (`MemoryStore`, episodic memory, vector-clock sync). |
+| Package | `com.morainet.mcos.runtime.core` — `core.api` (`RuntimeGateway`, types), `core.ir`, `core.parse` (`DslParser`), `core.registry`, `core.executor` (pipeline: Resolve → Validate → **5.5 Rate Limit** → Authorize → **6.5 Egress** → Invoke → Audit), `core.scheduler` (`RunScheduler`, `InvocationLimiter`, `DeviceMutexMap`), `core.workflow`, `core.memory`, `core.events`, `core.plugin`, `core.error` |
+| Role | The Command Bus kernel: DSL→IR parsing, Registry with version selection, Executor pipeline, §8 scheduler (four lanes + §8.2 invocation caps + §8.5 device mutex), WorkflowEngine (sequential/parallel/if/loop/retry/compensation), memory subsystem (`MemoryStore`, episodic memory, vector-clock sync). |
 | Depends on | `api(project(":mcos-sdk"))`, `api(project(":mcos-security"))`; coroutines-core |
 | Stack | Kotlin/JVM · JDK 17 · kotlinx.serialization |
 | Spec | [02-command-protocol.md](./02-command-protocol.md), [03-runtime.md](./03-runtime.md), [05-workflow.md](./05-workflow.md), [07-memory.md](./07-memory.md) |

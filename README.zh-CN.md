@@ -151,10 +151,10 @@ dependencies {
 |:------|:------|:----:|
 | 📜 [`mcos-sdk`](./mcos-sdk/README.md) | 插件契约（`McosPlugin`、`CommandHandler`、`HostServices`、`ExecutionContext`、`AuthStamp`、`DirectorySandbox`） | ✅ |
 | 🔒 [`mcos-security`](./mcos-security/README.md) | 权限内核（AuthStamp 铸造/签名）、限流、出网策略 + `DomainGlob`、企业策略、插件信任门、崩溃隔离、审计日志、Schema 校验 | ✅ |
-| ⚙️ [`mcos-runtime-core`](./mcos-runtime-core/README.md) | DSL 解析器 → IR、命令注册中心（含 manifest-only 注册）、7 阶段执行器、隔离派发缝 + stamp 域门、事件总线、工作流引擎、记忆 | ✅ |
+| ⚙️ [`mcos-runtime-core`](./mcos-runtime-core/README.md) | DSL 解析器 → IR、命令注册中心（含 manifest-only 注册）、7 阶段执行器、隔离派发缝 + stamp 域门、调度器（§8 优先级车道 + §8.5 设备互斥）、事件总线、工作流引擎、记忆 | ✅ |
 | 🧠 [`mcos-llm`](./mcos-llm/README.md) | AI 规划/对话、多 Provider 注册中心、语法约束解码、提示注入防护、多轮 Agent 循环 | ✅ |
 | 🛒 [`mcos-marketplace`](./mcos-marketplace/README.md) | 索引客户端、安装流水线（含 manifest-only）、封禁清单验证、配方商店、依赖解析、用户举报、遥测、安装向导 | ✅ |
-| 🚀 [`mcos-runtime`](./mcos-runtime/README.md) | 门面（`McosRuntime` builder、确认协调器、运行管理器、触发器协调器），组装各子模块 | ✅ |
+| 🚀 [`mcos-runtime`](./mcos-runtime/README.md) | 门面（`McosRuntime` builder、确认协调器、§8 调度准入、触发器协调器），组装各子模块 | ✅ |
 | 🤖 [`mcos-android-sdk`](./mcos-android-sdk/README.md) | 无 UI Android 宿主 SDK：组合根、无头引导、调度/开机接收器、activity-result 与权限桥、MCP 服务器管理、动态 `.mcos` 加载、opt-in `:mcos_plugin` 进程隔离 | ✅ |
 | 📱 [`mcos-android`](./mcos-android/README.md) | 基于 SDK 的 Compose 演示壳（可替换的参考 UI） | ✅ |
 | 🖧 [`mcos-server`](./mcos-server/README.md) | 自托管同步端点：`SyncBlobTransport` REST 契约 + 强制 Bearer token 认证，不透明 blob 存储 | ✅ |
@@ -170,7 +170,7 @@ dependencies {
 | 00 | [愿景](./docs/zh/00-vision.md) | 为什么做 MCOS；原则；非目标 |
 | 01 | [系统架构](./docs/zh/01-architecture.md) | 分层架构、请求生命周期、进程模型、IPC 契约、线程模型 |
 | 02 | [命令协议（RFC）](./docs/zh/02-command-protocol.md) | **规范核心**：DSL / IR / 类型系统 / 错误码 |
-| 03 | [运行时](./docs/zh/03-runtime.md) | 解析器、注册中心、执行器、权限内核、审计 |
+| 03 | [运行时](./docs/zh/03-runtime.md) | 解析器、注册中心、执行器、调度器、权限内核、审计 |
 | 04 | [插件 SDK](./docs/zh/04-plugin-sdk.md) | Manifest、Handler 契约、Host 服务 |
 | 05 | [工作流引擎](./docs/zh/05-workflow.md) | 图 IR：顺序、并行、重试、补偿、触发器 |
 | 06 | [AI 规划器](./docs/zh/06-agent.md) | AIProvider、命令编译器、修复循环 |

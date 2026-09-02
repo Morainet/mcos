@@ -11,7 +11,7 @@ Official design documentation for **Mobile Command OS (MCOS)** — architecture,
 | 00 | [Vision](./00-vision.md) | Why MCOS exists; principles; non-goals |
 | 01 | [Architecture](./01-architecture.md) | Layered system, flows, process model, IPC contract, threading, Kotlin types, error codes |
 | 02 | [Command Protocol (RFC)](./02-command-protocol.md) | Normative DSL / IR / registry contracts |
-| 03 | [Runtime](./03-runtime.md) | Parser, registry, executor, events, audit |
+| 03 | [Runtime](./03-runtime.md) | Parser, registry, executor, scheduler, events, audit |
 | 04 | [Plugin SDK](./04-plugin-sdk.md) | Manifests, handlers, host services |
 | 05 | [Workflow Engine](./05-workflow.md) | Graphs, parallel, triggers, retries |
 | 06 | [AI Planner](./06-agent.md) | Providers, compiler, repair loop |
@@ -30,4 +30,4 @@ Official design documentation for **Mobile Command OS (MCOS)** — architecture,
 
 ## Status
 
-All documents are **Draft v0.1.0** as of 2026-08-06. Protocol changes should bump versions and update fixtures when code lands.
+All documents are **Draft v0.1.0**; per-document headers carry implementation-status notes kept current as code lands (latest refresh: 2026-09-02). Protocol changes should bump versions and update fixtures when code lands.

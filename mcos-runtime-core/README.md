@@ -23,9 +23,10 @@ com.morainet.mcos.runtime.core/
 ├── events/     # EventBus 接口 + TypedEventBus（per-run 隔离通道、终态自动完成）
 ├── registry/   # CommandRegistry（四索引）+ registerManifest 清单式注册
 ├── plugin/     # PluginLoader 信任门控加载（load / loadManifest）
-├── executor/   # 七阶段执行管线、PluginIsolation（隔离路由）、ScopedFacade（stamp 域门）
+├── executor/   # 七阶段执行管线、PluginIsolation（隔离路由）、ScopedFacade（stamp 域门）、DeviceSemantics（§8.5 设备语义）
 ├── memory/     # MemoryStore、EpisodicMemory、RunSummarizer、同步与 AES-GCM 加密
-└── workflow/   # WorkflowEngine、事件/cron 双触发器、ArmedScheduleStore、WakeScheduler seam
+├── scheduler/  # §8 RunScheduler 四优先级车道、InvocationLimiter（§8.2）、DeviceMutexMap（§8.5）
+└── workflow/   # WorkflowEngine（含 §8.5 设备互斥接线）、事件/cron 双触发器、ArmedScheduleStore、WakeScheduler seam
 ```
 
 ## 核心 API
@@ -42,8 +43,11 @@ com.morainet.mcos.runtime.core/
 | `IsolationPolicy` / `IsolatedInvocation` / `IsolationHost` | `executor/PluginIsolation.kt` | BUILTIN→IN_PROCESS，其余→ISOLATED；`IsolatedInvocation` 完全可序列化、刻意不含 HostServices |
 | `StampScopedNetService` | `executor/ScopedFacade.kt` | §8.2 confused-deputy 防御：facade 网络调用逐次校验 stamp 签名/TTL/`network.<domain>` glob |
 | `MemoryStore` / `EpisodicMemory` | `memory/` | 实现 SDK `MemoryFacade`；run 摘要归档（07 §9.4） |
-| `WorkflowEngine` | `workflow/WorkflowEngine.kt` | Sequential/Parallel/If/Loop/Retry/Try+compensation 七步型 |
+| `WorkflowEngine` | `workflow/WorkflowEngine.kt` | Sequential/Parallel/If/Loop/Retry/Try+compensation 七步型；命令步经 §8.5 设备互斥（`requiresDevices` ∪ 设备语义） |
 | `EventTriggerManager` / `ScheduleTriggerManager` | `workflow/` | 双触发器家族；跨进程持久化重挂经 `rehydrateSchedules()` |
+| `RunScheduler` | `scheduler/RunScheduler.kt` | §8 四优先级车道（interactive/workflow/background/expedited）+ 全局并发信号量；满车道拒绝 `RATE_LIMITED` + 指数退避；背压事件 + `metrics()` 观测 |
+| `InvocationLimiter` | `scheduler/InvocationLimiter.kt` | §8.2 Stage-8 前置闸：per-plugin 并发上限 + destructive 全局串行 |
+| `DeviceMutexMap` | `scheduler/DeviceMutexMap.kt` | §8.5 设备互斥：排序原子多设备获取，同 run 嵌套 → `CONFLICT device_locked` |
 
 Stage-4 HostServices 装饰链（`stage4Services`）：
 `StampScopedNetService(SecretResolvingNetService(net))` + `NamespacedSandbox(sandbox, pluginId)`

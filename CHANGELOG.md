@@ -10,6 +10,10 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### Docs — project summary refresh (2026-09-02)
+
+README (en/zh), module READMEs (`mcos-runtime`, `mcos-runtime-core`), and `REPOSITORIES.md` (en/zh) updated for items 48–49: the `scheduler/` package (four lanes, §8.2 invocation caps, §8.5 device mutex) now appears in every module map; stale `RunManager` references retired everywhere (the class was deleted with the §8 scheduler); docs-index "03 Runtime" descriptions and the "Draft v0.1.0 as of 2026-08-06" status lines refreshed to the living implementation-status-note convention.
+
 ### §8.5 wiring — workflow `requiresDevices` drives `DeviceMutexMap` (2026-09-02)
 
 03 §8.5 / 05 §5.0 — closes item 48's largest documented honest boundary: the §8.5 primitive existed, but nothing declared or resolved devices.

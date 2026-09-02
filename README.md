@@ -136,10 +136,10 @@ A working multi-module Gradle project (every module has its own README):
 |:-------|:--------|:------:|
 | 📜 [`mcos-sdk`](./mcos-sdk/README.md) | Plugin contracts (`McosPlugin`, `CommandHandler`, `HostServices`, `ExecutionContext`, `AuthStamp`, `DirectorySandbox`) | ✅ |
 | 🔒 [`mcos-security`](./mcos-security/README.md) | Permission kernel (AuthStamp minting/signing), rate limiter, egress policy + `DomainGlob`, enterprise policy, plugin trust gate, crash quarantine, audit log, schema validation | ✅ |
-| ⚙️ [`mcos-runtime-core`](./mcos-runtime-core/README.md) | DSL parser → IR, command registry (incl. manifest-only registration), 7-stage executor, isolation dispatch seam + stamp-scoped facades, event bus, workflow engine, memory | ✅ |
+| ⚙️ [`mcos-runtime-core`](./mcos-runtime-core/README.md) | DSL parser → IR, command registry (incl. manifest-only registration), 7-stage executor, isolation dispatch seam + stamp-scoped facades, scheduler (§8 priority lanes + §8.5 device mutex), event bus, workflow engine, memory | ✅ |
 | 🧠 [`mcos-llm`](./mcos-llm/README.md) | AI planner/chat, multi-provider registry, grammar-constrained decoding, prompt-injection guard, multi-turn agent loop | ✅ |
 | 🛒 [`mcos-marketplace`](./mcos-marketplace/README.md) | Index client, install pipeline (incl. manifest-only), blocklist verification, recipe store, dependency resolution, user reports, opt-in telemetry, install wizard | ✅ |
-| 🚀 [`mcos-runtime`](./mcos-runtime/README.md) | Facade (`McosRuntime` builder, confirmation coordinator, run manager, trigger coordinator) wiring all submodules | ✅ |
+| 🚀 [`mcos-runtime`](./mcos-runtime/README.md) | Facade (`McosRuntime` builder, confirmation coordinator, §8 scheduler admission, trigger coordinator) wiring all submodules | ✅ |
 | 🤖 [`mcos-android-sdk`](./mcos-android-sdk/README.md) | UI-free Android host SDK: composition root, headless bootstrap, schedule/boot receivers, activity-result & permission bridges, MCP server management, dynamic `.mcos` loading, opt-in `:mcos_plugin` process isolation | ✅ |
 | 📱 [`mcos-android`](./mcos-android/README.md) | Compose demo shell built on the SDK (replaceable reference UI) | ✅ |
 | 🖧 [`mcos-server`](./mcos-server/README.md) | Self-hosted sync endpoint: `SyncBlobTransport` REST contract + mandatory Bearer-token auth, opaque blob store | ✅ |
@@ -155,7 +155,7 @@ Available in two languages — [English](./docs/en/README.md) · [中文](./docs
 | 00 | [Vision](./docs/en/00-vision.md) | why MCOS exists · principles · non-goals |
 | 01 | [Architecture](./docs/en/01-architecture.md) | layers · request lifecycle · process model · IPC contracts · threading |
 | 02 | [Command Protocol RFC](./docs/en/02-command-protocol.md) | **the spec core**: DSL · IR · type system · error codes |
-| 03 | [Runtime](./docs/en/03-runtime.md) | parser · registry · executor · permission kernel · audit |
+| 03 | [Runtime](./docs/en/03-runtime.md) | parser · registry · executor · scheduler · permission kernel · audit |
 | 04 | [Plugin SDK](./docs/en/04-plugin-sdk.md) | manifest · handler contract · host services |
 | 05 | [Workflow Engine](./docs/en/05-workflow.md) | graph IR: sequence, parallel, retry, compensation, triggers |
 | 06 | [AI Planner](./docs/en/06-agent.md) | AIProvider · command compiler · repair loop |
