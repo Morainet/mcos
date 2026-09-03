@@ -10,6 +10,17 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### §8 Binder 内核真机验证 — BD1-BD6 + DF1-DF4 + RSA-PSS 双名兜底 (2026-09-03)
+
+08-security §8 item 50（切片 4/4）—— items 36-45 落地的整条 `host.isolation/` 链（RPC 层 + 字节传输 + 激活缝 + manifest-only 注册）终于在真机上钉死了 §8.1-§8.3 这一层 JVM 端触不到的隔离边界。主进程不再携带任何插件 dex；`:mcos_plugin` split + Binder 是规范点名的隔离缝。
+
+- **真机测试套件** `mcos-android-sdk/androidTest/...BinderIsolationDeviceTest`：六条 case **BD1-BD6** ——生产 `CompositionRoot(processIsolation = true)` + 真 `:mcos_plugin` 进程 split + 真 `PluginInstaller` 链路；其中 BD1 显式断言 `pluginFactory { error(...) }` 不在主进程跑（manifest-only 终结点）、BD2 在第一次 invoke 后通过 `ActivityManager.runningAppProcesses` 验证 plugin 进程 pid ≠ 宿主 pid、BD3 验证 `park` 经 §8.3 命名空间门面把 marker 落盘时 marker 内的 pid 是 plugin 进程 pid、BD4 mid-run `Process.killProcess` 后本次 run 收到 `RunFailed("Isolated process call failed")` 而宿主仍存活并服务下一次 invoke、BD5 死后下次 invoke 透明经 `linkToDeath` 重绑到一个 **新** pid、BD6 损坏 staged artifact 在 rebind 后得到诚实的 `RunFailed("failed to load in the plugin process")`。
+- **Fixture 插件** `:plugins:mcos-plugin-devicefixture`（不发布、不进 BOM、不进 android-sdk 默认集）：最小 `McosPlugin`，仅暴露 `mcos.plugin.devicefixture.{echo,park}` 两条 `read`-class 命令。`park` 先经 `ctx.services.sandbox`（命名空间门面）写入 `park-entered.txt`、再 sleep ——marker 的存在就是 kill-mid-run 测试的同步点。 **Pure JVM** 单测 `DeviceIsolatedPluginTest` 给 DF1-DF4。
+- **Gradle 任务 `deviceFixtureDex`**（mcos-android-sdk）：把 fixture jar 用 `build-tools/d8 --release --min-api 26 --lib android-35.jar` 转 dex，输出 `generated/deviceFixtureAssets/device-fixture.dex` 注入 `androidTest` 的 assets，**不**入库二进制 dex（`assets.srcDir(deviceFixtureAssetsDir)` + `mergeDebugAndroidTestAssets.dependsOn(deviceFixtureDex)`）。`deviceFixtureClasspath` 配置 `isTransitive = false`，故意只接 fixture 自己 —— SDK/Kotlin 运行时在 `DexClassLoader` parent（app classloader）解析，**不**被 dexed 进。
+- **本地运行**：`sh gradlew :mcos-android-sdk:connectedDebugAndroidTest`（需挂载设备，CI 不带真机，CI 仅 `assembleDebugAndroidTest` 编译）。
+- **`ArtifactVerifier.rsaPssSignature()` 双名兜底**（`mcos-security`）：通用 `RSASSA-PSS` 不识别时回退到摘要钉死的 `SHA256withRSA/PSS` —— 部分 OEM Android 10（**真机验证机上观察**）只注册后者；两组参数（SHA-256 + MGF1(SHA-256) + 32 字节 salt + trailer 0x01）锁定同一种构造，签验互操作。`BinderIsolationDeviceTest` 自身的 PublisherKey 注入走同样的 JCA 探测（首选 Ed25519，回退 RSA-PSS-4096），且 `.mcos` 用 verifier 即将用的算法签名；都不支持时打印本机 `Signature` 服务清单 fail-fast 帮助排错。
+- **诚实边界**（也写在 `11-implementation-status` 同条目）：same-UID only —— `:mcos_plugin` split 与本 app 共享 UID，foreign-uid 拒绝仍由 JVM `BinderIdentityPolicyTest` 罩着，需第二个 APK 才能在真机上具体跑；fixture 类在 instrumentation classloader 上可见，套件证明的是**执行 + sandbox + 崩溃隔离在独立插件进程**，主进程 dex-exclusivity 由 item 45 的 manifest-only 注册路径强制；单设备验证（Android 10 / API 29），非 emulator 矩阵。
+
 ### Docs — project summary refresh (2026-09-02)
 
 README (en/zh), module READMEs (`mcos-runtime`, `mcos-runtime-core`), and `REPOSITORIES.md` (en/zh) updated for items 48–49: the `scheduler/` package (four lanes, §8.2 invocation caps, §8.5 device mutex) now appears in every module map; stale `RunManager` references retired everywhere (the class was deleted with the §8 scheduler); docs-index "03 Runtime" descriptions and the "Draft v0.1.0 as of 2026-08-06" status lines refreshed to the living implementation-status-note convention.

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- BinderIsolationDeviceTest downloads its signed fixture `.mcos` from an
+         in-test loopback HTTP server (127.0.0.1). Android (targetSdk >= 28)
+         blocks cleartext by default, so the TEST app opts back in — this
+         manifest only ever merges into the androidTest APK, never a shipped
+         host app. -->
+    <application android:usesCleartextTraffic="true" />
+</manifest>

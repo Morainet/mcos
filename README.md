@@ -146,6 +146,8 @@ A working multi-module Gradle project (every module has its own README):
 
 🔌 Plugins are independently buildable in `plugins/`: `mcos-plugin-hello`, `mcos-plugin-system`, `mcos-plugin-camera`, `mcos-plugin-files`, `mcos-plugin-mcp`, `mcos-plugin-iot` (each with tests and a README).
 
+> Plus an internal test fixture, [`:plugins:mcos-plugin-devicefixture`](./plugins/mcos-plugin-devicefixture/README.md) — **not published, not in the android-sdk default set**: it feeds `mcos-android-sdk`'s `BinderIsolationDeviceTest` so the §8 Binder-kernel boundary has a real on-device end-to-end test (item 50). Dexed on every build; no host app should depend on it.
+
 ## Documentation
 
 Available in two languages — [English](./docs/en/README.md) · [中文](./docs/zh/README.md):

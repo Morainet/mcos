@@ -33,3 +33,6 @@ include(":plugins:mcos-plugin-camera")
 include(":plugins:mcos-plugin-files")
 include(":plugins:mcos-plugin-mcp")
 include(":plugins:mcos-plugin-iot")
+// Device-verification fixture (not published, not in the android-sdk runtime
+// set): BinderIsolationDeviceTest dexes its jar into a signed .mcos artifact.
+include(":plugins:mcos-plugin-devicefixture")

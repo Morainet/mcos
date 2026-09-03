@@ -73,7 +73,38 @@ Executor(主进程)
 配套的 manifest-only 注册（item 45）：`processIsolation=true` 时主进程只凭 `.mcos` 内的
 wire `plugin.json` 注册（`McosPackage.readPluginManifest`，未知 `sideEffectClass` 整包
 拒绝安装），插件 dex 只在 `:mcos_plugin` 加载。隔离纯层（`host.isolation`）全部 JVM
-可测，`IsolationBinder.kt` 薄壳是唯一设备验证层。
+可测，`IsolationBinder.kt` 薄壳是唯一设备验证层 — **item 50 已经在真机上端到端
+验证**（见下）。
+
+## 真机端到端验证（`androidTest`，可选）
+
+> 在写好一段 JVM-side chain 之后，唯一能证明 Binder 内核本身 OK 的办法就是把
+> 整个链路放在一台真机上跑 —— 这就是 `BinderIsolationDeviceTest` 的任务。
+
+- **位置**：`mcos-android-sdk/src/androidTest/`
+- **目标套件**：`com.morainet.mcos.android.host.isolation.BinderIsolationDeviceTest`
+  —— 五个 case BD1-BD6，分别钉死：manifest-only 注册、`:mcos_plugin` 真进程、§8.3
+  命名空间沙箱、运行中杀进程只影响本次、`linkToDeath` 透明重绑、损坏 staged
+  artifact 时如实失败。
+- **Fixture 插件**：`plugins:mcos-plugin-devicefixture` —— 一个最小 `McosPlugin`，
+  仅发布 `echo` / `park` 两条 `read`-class 命令。dex 在 build 时由
+  `deviceFixtureDex` Gradle 任务用 build-tools `d8` 现做（**不**提交二进制 dex），
+  结果放进 `generated/deviceFixtureAssets/device-fixture.dex` 并被注入
+  `androidTest` 的 assets。
+- **本地运行**：CI 不带真机，所以 CI 仅编译（`assembleDebugAndroidTest`）。要
+  真跑必须挂一台 Android ≥ API 29 且 JCA 注册了 Ed25519 或 RSA-PSS-4096
+  算法名的设备（其他机型直接走 `Signature` 服务清单 fail-fast 帮助排错）：
+
+```bash
+adb devices                                # 确认设备挂上
+sh gradlew :mcos-android-sdk:connectedDebugAndroidTest
+```
+
+- **诚实边界**（也写在 `docs/en/11-implementation-status.md` 的 item 50）：
+  same-UID only（foreign-uid 拒绝仍靠 JVM `BinderIdentityPolicyTest` 罩着）、
+  fixture 类在 instrumentation classloader 上可见但**执行 + sandbox + 崩溃隔离
+  确实在独立插件进程**（主进程 dex-exclusivity 由 manifest-only 注册路径强制）、
+  单设备验证非 emulator 矩阵。
 
 ## 平台细节（README 亮点）
 

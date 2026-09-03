@@ -161,6 +161,8 @@ dependencies {
 
 🔌 插件在 `plugins/` 下独立构建：`mcos-plugin-hello`、`mcos-plugin-system`、`mcos-plugin-camera`、`mcos-plugin-files`、`mcos-plugin-mcp`、`mcos-plugin-iot`（均带测试与 README）。
 
+> 另有内部测试夹具 [`:plugins:mcos-plugin-devicefixture`](./plugins/mcos-plugin-devicefixture/README.md)——**不发布、不进 android-sdk 默认集**：它仅为 `mcos-android-sdk` 的 `BinderIsolationDeviceTest` 服务，让 §8 的 Binder 内核边界有真正的真机端到端验证（item 50）。每次构建现 d8 转 dex，无宿主 App 应依赖之。
+
 ## 文档导航
 
 设计 RFC 提供**中英双语**：中文见 `docs/zh/`，英文见 `docs/en/`。

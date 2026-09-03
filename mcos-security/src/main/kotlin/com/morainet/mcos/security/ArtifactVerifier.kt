@@ -130,6 +130,25 @@ class ArtifactVerifier(
         return md.digest(data).joinToString("") { "%02x".format(it) }
     }
 
+    /**
+     * PSS under either of its two JCA names. Stock Conscrypt registers the
+     * generic `RSASSA-PSS` alias, but some OEM Android 10 builds only
+     * register the digest-pinned `SHA256withRSA/PSS` (observed on the
+     * on-device isolation verification handset, item 50). The parameters
+     * below pin the same construction, so signatures interoperate across
+     * the two names — signing with one and verifying with the other works.
+     */
+    private fun rsaPssSignature(): Signature {
+        val instance = try {
+            Signature.getInstance("RSASSA-PSS")
+        } catch (_: java.security.NoSuchAlgorithmException) {
+            Signature.getInstance("SHA256withRSA/PSS")
+        }
+        return instance.apply {
+            setParameter(PSSParameterSpec("SHA-256", "MGF1", MGF1ParameterSpec.SHA256, 32, 1))
+        }
+    }
+
     private fun verifySignature(
         publicKey: PublicKey,
         algorithm: String,
@@ -145,13 +164,7 @@ class ArtifactVerifier(
             algorithm.equals("Ed25519", ignoreCase = true) ->
                 Signature.getInstance("Ed25519")
             algorithm.equals("RSA-PSS-4096", ignoreCase = true) ->
-                Signature.getInstance("RSASSA-PSS").apply {
-                    setParameter(
-                        PSSParameterSpec(
-                            "SHA-256", "MGF1", MGF1ParameterSpec.SHA256, 32, 1
-                        )
-                    )
-                }
+                rsaPssSignature()
             else -> return false
         }
         return try {

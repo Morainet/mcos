@@ -16,6 +16,11 @@ android {
     defaultConfig {
         minSdk = 26
 
+        // On-device instrumented tests (the Binder isolation verification
+        // suite). No emulator in CI — run locally against an attached device
+        // via `sh gradlew :mcos-android-sdk:connectedDebugAndroidTest`.
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
         // Applied to consumer apps that enable minification: keeps the
         // runtime API surface intact and silences java.net.http warnings
         // (the JDK transports in the JVM artifacts are never loaded on
@@ -55,6 +60,60 @@ afterEvaluate {
     }
 }
 
+// ─── On-device isolation verification fixture ─────────────────────────────
+// The BinderIsolationDeviceTest installs a REAL .mcos artifact through the
+// production PluginInstaller, so the plugin's code must exist as a real dex.
+// The fixture plugin lives in :plugins:mcos-plugin-devicefixture (pure JVM);
+// this task dexes its jar with build-tools d8 and exposes the result as an
+// androidTest asset the test zips next to its plugin.json. Regenerated on
+// every build — no binary fixture is committed.
+val deviceFixtureClasspath: Configuration by configurations.creating {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+    // Just the fixture jar itself — its SDK/Kotlin deps resolve at runtime
+    // through the DexClassLoader parent on device, and must not be dexed in.
+    isTransitive = false
+}
+
+val deviceFixtureAssetsDir = layout.buildDirectory.dir("generated/deviceFixtureAssets")
+
+val deviceFixtureDex = tasks.register("deviceFixtureDex") {
+    group = "verification"
+    description = "Dex the device-isolation fixture plugin into an androidTest asset."
+    val dexOutDir = layout.buildDirectory.dir("generated/deviceFixtureDex").get().asFile
+    inputs.files(deviceFixtureClasspath)
+    outputs.file(File(deviceFixtureAssetsDir.get().asFile, "device-fixture.dex"))
+    doLast {
+        val jarFile = deviceFixtureClasspath.files.single { it.extension == "jar" }
+        val d8 = File(android.sdkDirectory, "build-tools/${android.buildToolsVersion}/d8")
+        // compileSdk is 35 (above); --lib only guides desugaring checks.
+        val androidJar = File(android.sdkDirectory, "platforms/android-35/android.jar")
+        dexOutDir.deleteRecursively()
+        dexOutDir.mkdirs()
+        // Missing-class warnings are expected: the fixture references SDK and
+        // Kotlin types that resolve at runtime through the DexClassLoader's
+        // parent (the app classloader).
+        exec {
+            commandLine(
+                d8.absolutePath, "--release", "--min-api", "26",
+                "--lib", androidJar.absolutePath,
+                "--output", dexOutDir.absolutePath,
+                jarFile.absolutePath,
+            )
+        }
+        val assetDir = deviceFixtureAssetsDir.get().asFile
+        assetDir.mkdirs()
+        File(dexOutDir, "classes.dex").copyTo(File(assetDir, "device-fixture.dex"), overwrite = true)
+    }
+}
+
+android.sourceSets.getByName("androidTest") {
+    assets.srcDir(deviceFixtureAssetsDir)
+}
+tasks.matching { it.name == "mergeDebugAndroidTestAssets" }.configureEach {
+    dependsOn(deviceFixtureDex)
+}
+
 dependencies {
     // MCOS internal modules. The SDK is the UI-free Android host runtime —
     // any app can embed it and ship its own UI (the demo shell in
@@ -87,4 +146,15 @@ dependencies {
     // Unit tests (bridges + transports + loaders — plain JVM, no Robolectric)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+
+    // Instrumented on-device tests: the Binder isolation verification suite
+    // (BinderIsolationDeviceTest) — production CompositionRoot + real
+    // :mcos_plugin process split, run against attached hardware.
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.kotlinx.coroutines.test)
+    // Fixture plugin: constants (id, marker) shared with the test + its jar
+    // feeds the deviceFixtureDex task via the dedicated configuration.
+    androidTestImplementation(project(":plugins:mcos-plugin-devicefixture"))
+    deviceFixtureClasspath(project(":plugins:mcos-plugin-devicefixture"))
 }
