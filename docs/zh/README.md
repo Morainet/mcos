@@ -22,6 +22,7 @@
 | 09 | [插件市场](./09-marketplace.md) | 分发、签名、配方 |
 | 10 | [路线图](./10-roadmap.md) | MVP → V1 → 生态 |
 | 11 | [实现状态](./11-implementation-status.md) | Spec ↔ 实现路线图（已建 vs 待建） |
+| 12 | [索引服务端](./12-index-server.md) | 公共市场索引服务端：REST 契约、评审门禁、密钥轮换、运营手册 |
 | — | [仓库与模块](./REPOSITORIES.md) | 模块依赖图与索引 |
 
 ## 相关

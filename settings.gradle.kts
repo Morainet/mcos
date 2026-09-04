@@ -25,6 +25,10 @@ include(":mcos-marketplace")
 include(":mcos-android-sdk")
 include(":mcos-android")
 include(":mcos-server")
+// P3 marketplace index server (12-index-server.md): zero third-party runtime
+// deps; hosts the discovery index + publisher review pipeline + signed
+// blocklist that every client fetches. Not published (application module).
+include(":mcos-index-server")
 // BOM for the published artifacts (java-platform, no sources).
 include(":mcos-bom")
 include(":plugins:mcos-plugin-hello")

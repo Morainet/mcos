@@ -20,6 +20,7 @@ Official design documentation for **Mobile Command OS (MCOS)** — architecture,
 | 09 | [Marketplace](./09-marketplace.md) | Distribution, signing, recipes |
 | 10 | [Roadmap](./10-roadmap.md) | MVP → V1 → ecosystem |
 | 11 | [Implementation Status](./11-implementation-status.md) | Spec ↔ implementation roadmap (what is built vs. planned) |
+| 12 | [Index Server](./12-index-server.md) | Public marketplace index server: REST contract, review gates, key rotation, ops |
 | — | [Repositories](./REPOSITORIES.md) | Module dependency graph & index |
 
 ## Related
