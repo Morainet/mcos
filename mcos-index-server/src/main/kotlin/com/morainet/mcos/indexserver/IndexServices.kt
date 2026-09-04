@@ -199,10 +199,11 @@ internal class IndexServices(
                 )
             }
         }
-        // Gate 7: secret containment — scan the artifact for `{{secret.*}}`
-        // markers / `x-mcos-secret` (server side of the validator's scan).
-        val text = artifactBytes.toString(Charsets.ISO_8859_1)
-        if (SECRET_RE.containsMatchIn(text)) {
+        // Gate 7: secret containment — scan the artifact's DECOMPRESSED entries
+        // for `{{secret.*}}` markers / `x-mcos-secret` (a compressed byte scan
+        // would never see inside zip payloads). Only small textual entries are
+        // scanned; oversized/binary entries are skipped.
+        if (containsSecretLiteral(artifactBytes)) {
             extraFails += GateCheck.fail(
                 7, "Secret containment",
                 "artifact contains '{{secret.*}}' or 'x-mcos-secret' literals",
@@ -645,6 +646,41 @@ internal class IndexServices(
             downloadCount = 0,
             safetyScore = 0f,
         )
+    }
+
+    /** Gate 7 scan (12-index-server §6): secret literals inside zip entries. */
+    private fun containsSecretLiteral(artifactBytes: ByteArray): Boolean {
+        if (SECRET_RE.containsMatchIn(artifactBytes.toString(Charsets.ISO_8859_1))) return true
+        return try {
+            var found = false
+            java.util.zip.ZipInputStream(java.io.ByteArrayInputStream(artifactBytes)).use { zip ->
+                var entry = zip.nextEntry
+                while (entry != null && !found) {
+                    val out = java.io.ByteArrayOutputStream()
+                    val chunk = ByteArray(4096)
+                    var total = 0
+                    var read = zip.read(chunk)
+                    while (read >= 0) {
+                        out.write(chunk, 0, read)
+                        total += read
+                        if (total > 8 * 1024 * 1024) break
+                        read = zip.read(chunk)
+                    }
+                    if (total <= 8 * 1024 * 1024 &&
+                        SECRET_RE.containsMatchIn(out.toString("ISO-8859-1"))
+                    ) {
+                        found = true
+                    }
+                    zip.closeEntry()
+                    entry = zip.nextEntry
+                }
+            }
+            found
+        } catch (e: Exception) {
+            // The .mcos was already validated upstream (zip header + manifest
+            // decode); a scan failure here must not fabricate a reject.
+            false
+        }
     }
 
     private fun relevance(sub: Submission, tokens: List<String>): Int {

@@ -21,7 +21,7 @@ import java.nio.file.StandardCopyOption
  */
 internal class IndexRegistry private constructor(
     val root: Path,
-    private val doc: RegistryDocument,
+    private var doc: RegistryDocument,
 ) {
     companion object {
         fun open(root: Path): IndexRegistry {
@@ -71,6 +71,10 @@ internal class IndexRegistry private constructor(
     fun <T> mutate(block: (RegistryDocument) -> Pair<RegistryDocument, T>): T =
         synchronized(lock) {
             val (next, result) = block(doc)
+            // Advance the in-memory state BEFORE persisting so that subsequent
+            // reads inside this process observe the mutation even if the disk
+            // write fails (read-after-write consistency).
+            doc = next
             persist(next)
             result
         }

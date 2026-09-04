@@ -88,50 +88,60 @@ object Multipart {
     fun parse(body: ByteArray, contentType: String): Map<String, FormPart> {
         val boundary = extractBoundary(contentType)
             ?: throw ApiException(400, "SCHEMA_VIOLATION", "multipart/form-data requires a boundary")
-        val boundaryBytes = ("--$boundary").toByteArray(Charsets.ISO_8859_1)
+        val marker = ("--$boundary").toByteArray(Charsets.ISO_8859_1)
         val parts = mutableMapOf<String, FormPart>()
-        var cursor = 0
-        val needle = boundaryBytes
+        // Scan part by part. Every marker starts a new part's headers — the
+        // marker we found as "end" of part N is also the "start" of part N+1
+        // (each delimiter line closes one part and opens the next), so we
+        // resume scanning AT that marker rather than after it.
+        var searchFrom = 0
         while (true) {
-            val next = indexOf(body, needle, cursor)
-            if (next < 0) break
-            var start = next + needle.size
-            if (start + 1 < body.size && body[start].toInt() == '\r'.code && body[start + 1].toInt() == '\n'.code) {
-                start += 2
-            }
-            val end = indexOf(body, needle, start)
-            if (end < 0) break
+            val partStart = indexOf(body, marker, searchFrom)
+            if (partStart < 0) break
+            val afterMarker = partStart + marker.size
+            // Epilogue `--boundary--`: no more parts.
+            if (startsWith(body, afterMarker, "--")) break
+            // Content begins after the boundary line's CRLF.
+            var contentStart = afterMarker
+            if (isCrlf(body, contentStart)) contentStart += 2
+            val partEnd = indexOf(body, marker, contentStart)
+            if (partEnd < 0) break
 
-            // Header block ends at CRLF CRLF.
-            val headerEnd = indexOf(body, "\r\n\r\n".toByteArray(), start)
-            if (headerEnd < 0 || headerEnd > end) {
-                cursor = end + 1
+            val headerEnd = indexOf(body, "\r\n\r\n".toByteArray(), contentStart)
+            if (headerEnd < 0 || headerEnd > partEnd) {
+                // Malformed part (no header terminator): skip to the next marker.
+                searchFrom = partEnd
                 continue
             }
-            val headers = String(body.copyOfRange(start, headerEnd), Charsets.ISO_8859_1)
-            val contentStart = headerEnd + 4
-            var contentEnd = end
-            // Trim the trailing CRLF before the boundary.
-            if (contentEnd >= 2 &&
-                body[contentEnd - 2].toInt() == '\r'.code &&
-                body[contentEnd - 1].toInt() == '\n'.code
-            ) {
-                contentEnd -= 2
-            }
-            val name = headers.split(';').map { it.trim() }
-                .firstOrNull { it.startsWith("name=") }
+            val headers = String(body.copyOfRange(contentStart, headerEnd), Charsets.ISO_8859_1)
+            val contentBase = headerEnd + 4
+            var contentEnd = partEnd
+            // Trim ONE trailing CRLF written before the next boundary.
+            if (isCrlf(body, contentEnd - 2)) contentEnd -= 2
+            if (contentEnd < contentBase) contentEnd = contentBase
+
+            val tokens = headers.split(';').map { it.trim() }
+            val name = tokens.firstOrNull { it.startsWith("name=") }
                 ?.removePrefix("name=")?.trim('"')
-                ?.let { it }
             if (name != null) {
-                val fileName = headers.split(';').map { it.trim() }
-                    .firstOrNull { it.startsWith("filename=") }
+                val fileName = tokens.firstOrNull { it.startsWith("filename=") }
                     ?.removePrefix("filename=")?.trim('"')
-                parts[name] = FormPart(name, fileName, body.copyOfRange(contentStart, contentEnd))
+                parts[name] = FormPart(name, fileName, body.copyOfRange(contentBase, contentEnd))
             }
-            cursor = end + 1
+            searchFrom = partEnd
         }
         return parts
     }
+
+    private fun startsWith(haystack: ByteArray, offset: Int, needle: String): Boolean {
+        val bytes = needle.toByteArray(Charsets.ISO_8859_1)
+        if (offset < 0 || offset + bytes.size > haystack.size) return false
+        for (i in bytes.indices) if (haystack[offset + i] != bytes[i]) return false
+        return true
+    }
+
+    private fun isCrlf(bytes: ByteArray, at: Int): Boolean =
+        at >= 0 && at + 1 < bytes.size && bytes[at].toInt() == '\r'.code && bytes[at + 1].toInt() == '\n'.code
 
     private fun extractBoundary(contentType: String): String? {
         return contentType.split(';')

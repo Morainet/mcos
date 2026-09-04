@@ -246,9 +246,15 @@ class CiGateEngine(
         if (registry.knownCommandIds.isEmpty()) {
             return listOf(GateCheck.pass(10, "Namespace arbitration"))
         }
+        // Commands the publishing plugin itself declared on its PREVIOUS release
+        // are its own namespace — re-declaring them on an update is fine. Only a
+        // command claimed by a DIFFERENT existing plugin conflicts (02 §4.4).
+        val previous = registry.previous
+        val previousOwned: Set<String> =
+            if (previous != null) previous.commandVersions.keys else emptySet()
         val conflicts = manifest.commands
             .map { it.id }
-            .filter { it in registry.knownCommandIds }
+            .filter { it in registry.knownCommandIds && it !in previousOwned }
         if (conflicts.isNotEmpty()) {
             return conflicts.map { id ->
                 GateCheck.fail(

@@ -23,4 +23,6 @@ dependencies {
     // Interop tests drive the server with the real shipped client.
     testImplementation(project(":mcos-marketplace"))
     testImplementation(project(":mcos-security"))
+    // MarketplaceIndex is suspend-only; runBlocking needs coroutines on the compile classpath.
+    testImplementation(libs.kotlinx.coroutines.core)
 }
