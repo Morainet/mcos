@@ -3,6 +3,6 @@
   "error": {
     "code": "PARSE_ERROR",
     "message": "Unterminated invocation — expected ')' before end of input (protocol §18).",
-    "location": { "line": 1, "column": 23 }
+    "location": { "line": 1, "column": 26 }
   }
 }

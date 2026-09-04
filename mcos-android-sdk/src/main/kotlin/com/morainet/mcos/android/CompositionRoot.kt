@@ -23,6 +23,7 @@ import com.morainet.mcos.marketplace.MarketplaceHttpTransport
 import com.morainet.mcos.marketplace.PluginInstaller
 import com.morainet.mcos.marketplace.RecipeInstaller
 import com.morainet.mcos.marketplace.RecipeSignatureVerifier
+import com.morainet.mcos.runtime.core.plugin.McosPackage
 import com.morainet.mcos.runtime.core.plugin.PluginLoader
 import com.morainet.mcos.runtime.core.events.EventBus
 import com.morainet.mcos.runtime.core.events.TypedEventBus

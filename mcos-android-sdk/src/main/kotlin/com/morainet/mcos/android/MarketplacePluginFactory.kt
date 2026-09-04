@@ -4,6 +4,7 @@ import com.morainet.mcos.plugin.camera.CameraPlugin
 import com.morainet.mcos.plugin.files.FilesPlugin
 import com.morainet.mcos.plugin.hello.HelloPlugin
 import com.morainet.mcos.plugin.system.SystemPlugin
+import com.morainet.mcos.runtime.core.plugin.McosPackage
 import com.morainet.mcos.sdk.McosPlugin
 
 /**

@@ -16,6 +16,10 @@ docs/fixtures/<case-id>/
   expected.error.json     # negative: error envelope the parser must emit
 ```
 
+A trailing line terminator on `input.dsl` is a file convention, not DSL
+content — end-of-input errors point one past the last character of the DSL
+text (02 §16), so the final newline is stripped before parsing.
+
 ## Positive (round-trip DSL → IR)
 
 | Case | Covers |

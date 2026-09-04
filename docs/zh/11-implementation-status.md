@@ -3,7 +3,7 @@
 > **语言:** [English](../en/11-implementation-status.md) · 中文（当前）
 
 > **Status:** Living document  
-> **Last Updated:** 2026-09-03  
+> **Last Updated:** 2026-09-04  
 > **Audience:** 需要了解**什么是仅规范、什么仍待构建**的贡献者与评估者。
 
 MCOS 已交付 **P1 MVP 与全部 P2 退出标准**（[10 §5.6.1](./10-roadmap.md)）：命令协议、运行时、插件 SDK 与外壳已用 Kotlin 实现，分布在 `mcos-sdk`、`mcos-runtime`、`mcos-android` 与四个插件中；多轮 Agent 循环（2026-08-24）与事件触发配方（2026-08-25）补齐了检查清单。下表将每个子系统标记为 **已实现 / 部分 / 未开始**，并引用落地代码的 commit；仍为纯规范的行就是剩余工作。
@@ -28,20 +28,21 @@ mcos/
 ├── doc/                  # Early Chinese brainstorm notes
 ├── mcos-sdk/             # 插件契约（McosPlugin、CommandHandler、…）+ Memory/ResolveResult 类型
 ├── mcos-security/        # Publisher 密钥、ArtifactVerifier、PluginTrustGate、SecretResolver、CrashQuarantine、AuditLog（InMemory + FileAuditLog 持久化、可选 HMAC 导出签名）、EnterprisePolicy
-├── mcos-runtime-core/    # Parser → IR、Registry、Executor、Permission、Workflow、EventBus、Memory、PluginLoader、core.api 管线类型
+├── mcos-runtime-core/    # Parser → IR、Registry、Executor、Permission、Workflow、EventBus、Memory、PluginLoader、McosPackage（.mcos 清单读取器）、core.api 管线类型
 ├── mcos-runtime/         # McosRuntime 门面（api）
 ├── mcos-llm/             # Planner 桥（LlmPlanner、providers、grammar、探活）
 ├── mcos-marketplace/     # MarketplaceIndex、PluginInstaller、配方商店、SearchRanking
 ├── mcos-android-sdk/     # 无 UI Android 宿主 SDK（组合根、接收器、host services、动态加载）
 ├── mcos-android/         # 构建在 SDK 上的 Compose 演示壳（可替换 UI；包 …android.demo）
+├── mcos-conformance/     # 可执行一致性门禁（10 §6.4）：4 套件 · 48 用例，镜像 09 §5.1 市场 CI 门禁
 ├── mcos-server/          # 独立自托管同步端点（SyncBlobTransport REST 契约 + Bearer 认证，仅存不透明 blob）
 ├── plugins/              # hello、system、camera、files
 ├── README.md / README.zh-CN.md / CHANGELOG.md / CONTRIBUTING.md / LICENSE
 ```
 
-- **源代码模块：** ✅ 13 个（sdk、security、runtime-core、runtime、llm、marketplace、android-sdk、android、server + 4 插件），见 §2
+- **源代码模块：** ✅ 14 个（sdk、security、runtime-core、runtime、llm、marketplace、android-sdk、android、conformance、server + 4 插件），见 §2
 - **构建系统：** ✅ Gradle Kotlin DSL 多模块（JDK 17、Kotlin 2.0.21、AGP 8.7.3、minSdk 26）
-- **Golden fixture：** ✅ 8 个用例（[`docs/fixtures/`](../fixtures/) 下 5 正向 + 3 负向）——由 `DslParserTest` 执行并通过
+- **Golden fixture：** ✅ 8 个用例（[`docs/fixtures/`](../fixtures/) 下 5 正向 + 3 负向）——由 `DslParserTest` 与 `:mcos-conformance` 的 `dsl` 套件执行并通过（48/48 绿，经 `./gradlew :mcos-conformance:conformance`）
 
 ---
 
@@ -67,6 +68,7 @@ mcos/
 | `mcos-plugin-files` | `file.*`、`photo.search`、`photo.compress` | P1 |
 | `mcos-plugin-iot` | `home.*`、`iot.*`（Home Assistant / Tuya / Matter） | P2 |
 | `mcos-plugin-mcp` | MCP 客户端适配器 → `mcp.*` | P2 spike / P3 production |
+| `mcos-conformance` | 可执行一致性门禁——插件作者提交前本地运行的套件，镜像市场 CI（09 §5.1） | ✅ P3 社区（item 51） |
 
 `mcos-server` 已不再是计划模块——它已作为 `mcos-server/` 落地（§3 Memory 行），覆盖 P3「同步」职责；市场索引**客户端**已随 `mcos-marketplace/` 落地（应用内搜索/安装已接入 `mcos-android`），索引服务端部署与远程策略下发仍为 P3 剩余项。
 
@@ -255,4 +257,8 @@ mcos/
 
 49. ✅ **§8.5 接线——workflow `requiresDevices` 驱动设备互斥图（03 §8.5, 05 §5.0）**——收掉 item 48 记录的最大诚实边界：§8.5 原语已落地，但没有任何东西声明或解析设备。**IR（05 §5.0）：** `WorkflowStep.Command` 增加 `requiresDevices: List<String>`（末位默认值——既有全部构造点零改动），`WorkflowJson.parseCommand` 解码 `string[]` 字段（缺省 → `[]`，非字符串项丢弃——解码器容忍惯例）。**解析（03 §8.5"经 device-id 字段从 args 解析"）：** 新 `executor/DeviceSemantics`——纯扫描命令 `inputSchema`，收集带 `x-mcos-semantic: "device"` 属性（02 §5.3 / 04 §4.5 canonical `deviceId` 约定）且 args 中为字符串的值；`Executor.deviceSemanticIds(commandId, args)` 是薄的 registry 支撑查询（未知命令 → 空——后续 execute 自行上报 `UNKNOWN_COMMAND`）。**强制：** `WorkflowEngine` 默认持有真实 `DeviceMutexMap`（构造器默认——门面引擎与全部测试引擎零接线即得），把每个命令步骤——初始派发 + 其一次确认重执行，一步一持有、绝不跨步——包进 `withDevices(runId, 声明 ∪ 语义, 排序)`；同 run 获取被拒落为**失败步骤**，携带结构化 02 §8.3 形状（`CONFLICT`/`device_locked`、`heldDevice`/`requestedDevice`/`runId`），并行 `cancelOnFailure` 与 try-补偿等控制流正常接管，而非以 `WORKFLOW_INVALID` 中止整跑。**原语硬化：** `DeviceMutexMap` 在等待任何设备锁**之前**经短簿记锁登记 run 意图——两个同 run 并发获取（声明不相交设备的并行分支此前可同时越过持有检查、双持并踩坏 held-by-run 簿记）现在确定性拒绝后者。**诚实边界：** 设备互斥键按字面取值——`x-mcos-ref` 自然语言值按同一拼写串行而非其规范化 Memory id（规范化属完整 Stage-4 Expand，Executor 管线尚无该 Stage；按拼写串行仍成立）；扁平（非 workflow）命令运行不加设备锁（§8.5 是 workflow 步骤机制）；as-built 嵌套树仅在 `Command` 承载该字段（05 §5.0 亦只在 invoke 字段表声明；控制步跨子树持有与 "MUST NOT hold across a step boundary" 相悖）。另修复：SC13 的 episode 断言在 `withTimeout` 内一次性求值 `episodes.poll()` 而非等待 `Dispatchers.Default` 回调——全量套件负载下 flaky，改为正确的等待循环。测试 **+17**（`DeviceSemanticsTest` DS1-DS7——纯扫描含非字符串/空白/其他语义忽略 + registry 支撑与未知命令查询 · `WorkflowDeviceMutexTest` WD1-WD6——跨 run 声明串行、不相交设备不阻塞、声明 ∪ 语义并集门控（两半分别由独立 gated 持有者证明）、纯语义门控、并行同设备确定性 CONFLICT 恰一成功分支、顺序同设备步间释放 · `DeviceMutexMapTest` DM7-DM8——并发同 run 不相交设备拒绝 + 意图路径上的 02 错误形状 · `WorkflowJsonTest` +2）。基线 1402/1590 → **1419/1607**。Per [03](./03-runtime.md) §8.5、[05](./05-workflow.md) §5.0、[02](./02-command-protocol.md) §5.3。*(与 EN 镜像。)*按 [03](./03-runtime.md) §8、[02](./02-command-protocol.md) §错误形态。*（英文版为权威。）*
 
-**下一步（建议）：** 真机验证 + 激活——在真机/模拟器上验证整条 §8.1-§8.3 Binder 链（`:mcos_plugin` 进程切分、`getCallingUid` 身份、运行中杀进程的崩溃隔离、死后续绑、manifest-only 安装的插件经全链接执行），然后在演示宿主翻起 `processIsolation = true`——items 44+45 已落地完整缝（激活 + manifest-only 注册）；持久调度栈（item 33-35）与 item-38 权限对话框的真机验证——Doze 下 exact-alarm 触发、进程被杀后的冷启动触发、开机重布防、location/WRITE_SETTINGS 提示流；市场运营侧——公共索引服务端部署与密钥轮换手册（运营方真实 Ed25519 锚已落入 `TrustAnchors`，由 `TrustAnchorsConsistencyTest` 指纹钉死——引导已完成）；宿主能力补全——系统选择器授予沙箱外文件访问（04 §6.1 🟡）；文档欠账——将 `11-implementation-status` item 30-36 镜像进中文树（EN 为权威）。
+50. ✅ **§8 Binder 真机内核验证——BD1-BD6 + DF1-DF4 + RSA-PSS 双名兜底（08 §8）**——08-security §8 item 50（切片 4/4）：items 36-45 落地的整条 `host.isolation/` 链（RPC 层 + 字节传输 + 激活缝 + manifest-only 注册）终于在真机上钉死，收掉 JVM 端触不到的 §8.1-§8.3 隔离边界——主进程不再携带任何插件 dex；`:mcos_plugin` split + Binder 是规范点名的隔离缝。**真机测试套件** `mcos-android-sdk/androidTest/…BinderIsolationDeviceTest`——六条 case BD1-BD6，走生产 `CompositionRoot(processIsolation = true)` + 真 `:mcos_plugin` 进程切分 + 真 `PluginInstaller` 链：BD1 断言 `pluginFactory { error(...) }` 桩不在主进程执行（manifest-only 终结点）；BD2 经 `ActivityManager.runningAppProcesses` 验证首次 invoke 后插件进程 pid ≠ 宿主 pid；BD3 经 §8.3 命名空间沙箱门面 park，断言 marker 记录的 pid 是插件进程 pid；BD4 运行中 `Process.killProcess` 杀插件进程——本次 run 以 `RunFailed("Isolated process call failed")` 失败而宿主存活并服务下一次 invoke；BD5 下次 invoke 经 `linkToDeath` 透明重绑到**新** pid；BD6 损坏 staged artifact，重绑后得到诚实的 `RunFailed("failed to load in the plugin process")`。**Fixture 插件** `:plugins:mcos-plugin-devicefixture`（不发布、不进 BOM、不进 android-sdk 默认集）：最小 `McosPlugin`，仅暴露 `mcos.plugin.devicefixture.{echo,park}` 两条 `read`-class 命令；`park` 先经 `ctx.services.sandbox` 写入 `park-entered.txt` 再 sleep——marker 即 kill-mid-run 的同步点；纯 JVM `DeviceIsolatedPluginTest` 覆盖 DF1-DF4。**Gradle 任务 `deviceFixtureDex`**（mcos-android-sdk）：用 `build-tools/d8 --release --min-api 26 --lib android-35.jar` 把 fixture jar 转 dex 注入 `androidTest` assets（dex 二进制不入库）；`deviceFixtureClasspath` 配置 `isTransitive = false`，SDK/Kotlin 运行时在 `DexClassLoader` parent（app classloader）解析、绝不被 dex 进。**`ArtifactVerifier.rsaPssSignature()` 双名兜底**（`mcos-security`）：通用 `RSASSA-PSS` 识别失败时回退摘要钉死的 `SHA256withRSA/PSS`（部分 OEM Android 10 只注册后者——真机验证机上观察）；两组参数（SHA-256 + MGF1(SHA-256) + 32 字节 salt + trailer 0x01）锁定同一构造，一名签名另一名验签互操作。**本地运行**：`sh gradlew :mcos-android-sdk:connectedDebugAndroidTest`（需挂载设备；CI 仅 `assembleDebugAndroidTest` 编译，无模拟器门禁）。**诚实边界**：same-UID only——`:mcos_plugin` split 与本 app 共享 UID，foreign-uid 拒绝仍由 JVM `BinderIdentityPolicyTest` 罩着，需第二个 APK 才能在真机上具体跑；单设备验证（Android 10 / API 29），非模拟器矩阵；fixture 类在 instrumentation classloader 上可见，但套件证明的是**执行 + 沙箱 + 崩溃隔离在独立插件进程**——主进程 dex-独占由 item 45 的 manifest-only 注册路径强制。按 [08](./08-security.md) §8。*（与 EN 镜像。）*
+
+51. ✅ **一致性测试套件——新模块 `mcos-conformance` + `McosPackage` 迁入 runtime-core（10 §6.4, 09 §5.1）**——P3 社区交付物：插件作者提交 marketplace 前在本地跑同一套门禁，报告形态与 CI 一致。**新模块 `mcos-conformance`**（纯 JVM `kotlin.jvm`；不发布——10 §6.4 的 "published as executable artifact" 由 `run` JavaExec 满足）：`ConformanceCli` 六个入口（`list` / `run --output human|json|junit` / `baseline-add` / `baseline-check`——CI 门禁别名 `./gradlew :mcos-conformance:conformance` 跑全部套件 + baseline 漂移检查，仅全绿时 exit 0），四个套件 48 用例：`dsl`（8——02 §16 golden fixtures round-trip + reject，走真实 `DslParser`）、`manifest`（14——09 §5.1 gates 1/2/3/7，打 `McosPackage.readPluginManifest`）、`trust`（20——gate 8 + 08 §6/§7：`ArtifactVerifier` 管线矩阵、`PluginTrustGate` 决策矩阵、`BlocklistVerifier`）、`ir`（6——02 §7 IR 结构不变量）。报告三形态 human / JSON / JUnit XML；baseline 漂移 exit 2；baseline JSON 在 `build/` 下（CI 先 `baseline-add` 一次，再以 `baseline-check` 门禁）。**`McosPackage` 迁移** android-sdk → `mcos-runtime-core/plugin/`（与 `PluginLoader` 同包）：zip+JSON 读取器本就是无 Android 依赖的纯 JVM；host 特有的 `DexPluginLoader` 留在 android-sdk——模块切分终于与依赖方向一致，conformance 无需 Android 工具链。调用点（`CompositionRoot` / `MarketplacePluginFactory` / `IsolatedPluginProcessService` / `DynamicPluginLoadingTest`）换 import，零行为变化。**套件逼出的生产修复（fail-closed）**：`McosPackage.extractEntry` 在 `ZipInputStream` 之前先验 zip `PK` 魔数（`ZipInputStream` 对非 zip 字节静默找不到条目——坏包此前误报为 "plugin.json missing" 而非 "not a readable zip"）；`McosPackage.decodeCommands` 新增包内重复 command id 拒绝（09 §5.1 gate 3——此前只有市场层检查）；`Parser` 三条错误文案补 `§` 前缀与已发布 fixture 对齐（§6.1 / §6.2 / §18）。**规范勘误**：02 §6.7 的 EOF 示例算术有误——`camera.capture(quality=80` 是 25 字符报第 26 列（原文写"22 字符 → 第 23 列"）；fixture `08-malformed/expected.error.json` 随之修正，`docs/fixtures/README.md` 现记录 `input.dsl` 尾部换行是文件约定、解析前剥离（输入结束错误指向 DSL 文本最后一字符后一列）。**诚实边界**：套件断言当前实现——fixture 期望即规范，故意的解析器变更必须在同一 commit 里移动 fixture；不新增 Gradle 单测（conformance 用例不进测试基线——1419/1607 不变；48/48 信号由一致性门禁守护）；套件只驱动公开生产入口（无测试缝），gate 4 诚实性启发式与 gates 9-11（AV 扫描、命名空间仲裁、min-runtime 索引状态）仍在市场侧。按 [10](./10-roadmap.md) §6.4、[09](./09-marketplace.md) §5.1、[02](./02-command-protocol.md) §16。*（与 EN 镜像。）*
+
+**下一步（建议）：** 持久调度栈（item 33-35）与 item-38 权限对话框的真机验证——Doze 下 exact-alarm 触发、进程被杀后的冷启动触发、开机重布防、location/WRITE_SETTINGS 提示流；市场运营侧——公共索引服务端部署与密钥轮换手册（运营方真实 Ed25519 锚已落入 `TrustAnchors`，由 `TrustAnchorsConsistencyTest` 指纹钉死——引导已完成）；宿主能力补全——系统选择器授予沙箱外文件访问（04 §6.1 🟡）；文档欠账——将 `11-implementation-status` item 30-36 镜像进中文树（EN 为权威）。

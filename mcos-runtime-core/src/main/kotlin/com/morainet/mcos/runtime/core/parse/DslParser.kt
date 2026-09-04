@@ -2,7 +2,11 @@ package com.morainet.mcos.runtime.core.parse
 
 import com.morainet.mcos.runtime.core.ir.*
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.encodeToJsonElement
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -81,12 +85,28 @@ object DslParser {
     fun toJson(ir: ExecutionIr): String {
         return when (ir) {
             is ExecutionIr.Invoke -> json.encodeToString(IrInvoke.serializer(), ir.invoke)
-            is ExecutionIr.Sequence -> json.encodeToString(IrSequence.serializer(), ir.sequence)
+            is ExecutionIr.Sequence -> json.encodeToString(
+                JsonElement.serializer(),
+                canonicalSequence(ir.sequence),
+            )
             is ExecutionIr.Workflow -> json.encodeToString(
                 JsonElement.serializer(),
                 ir.body
             )
         }
+    }
+
+    /**
+     * Canonical sequence wire form (02 §7.2): `dslVersion` is carried once,
+     * at the sequence level — the per-step echo of the [IrInvoke] default is
+     * dropped so each step serializes as `{type, id, args}`.
+     */
+    private fun canonicalSequence(sequence: IrSequence): JsonElement {
+        val element = json.encodeToJsonElement(IrSequence.serializer(), sequence).jsonObject
+        val steps = element["steps"]?.jsonArray
+            ?.map { step -> JsonObject(step.jsonObject.toMap() - "dslVersion") }
+            ?: return element
+        return JsonObject(element + ("steps" to JsonArray(steps)))
     }
 
     /**

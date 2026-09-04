@@ -1,4 +1,4 @@
-package com.morainet.mcos.android
+package com.morainet.mcos.runtime.core.plugin
 
 import com.morainet.mcos.sdk.CommandManifestEntry
 import com.morainet.mcos.sdk.PermissionEntry
@@ -151,11 +151,18 @@ object McosPackage {
 
     private fun decodeCommands(element: JsonElement?): List<CommandManifestEntry> {
         val array = element as? JsonArray ?: return emptyList()
+        val seenIds = mutableSetOf<String>()
         return array.mapIndexed { index, item ->
             val obj = item as? JsonObject
                 ?: throw FormatException("$MANIFEST_ENTRY commands[$index] is not an object")
             val commandId = (obj["id"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
                 ?: throw FormatException("$MANIFEST_ENTRY commands[$index] missing required 'id'")
+            // Gate 3 (09 §5.1, 02 §4.4): duplicate ids within one package are
+            // an ambiguity the executor cannot resolve — fail the decode,
+            // never register twice.
+            if (!seenIds.add(commandId)) {
+                throw FormatException("$MANIFEST_ENTRY commands[$index] duplicate command id '$commandId'")
+            }
 
             fun s(name: String, default: String): String =
                 (obj[name] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() } ?: default
@@ -200,6 +207,13 @@ object McosPackage {
 
     /** Returns the bytes of the zip entry named [name], or null if absent. */
     private fun extractEntry(artifact: ByteArray, name: String): ByteArray? {
+        // ZipInputStream never throws on non-zip input — it just finds no
+        // entries, which would misreport a corrupt package as "$name
+        // missing". Zip archives always start with the "PK" magic (local
+        // file header PK\x03\x04, empty archive PK\x05\x06), so gate on it.
+        if (artifact.size < 4 || artifact[0] != 'P'.code.toByte() || artifact[1] != 'K'.code.toByte()) {
+            throw FormatException(".mcos package is not a readable zip")
+        }
         return try {
             ZipInputStream(ByteArrayInputStream(artifact)).use { zis ->
                 var entry = zis.nextEntry

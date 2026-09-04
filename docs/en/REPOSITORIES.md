@@ -28,6 +28,7 @@ flowchart BT
     asdk["mcos-android-sdk<br/>(host SDK · UI-free)"]
     app["mcos-android<br/>(Compose demo shell)"]
     srv["mcos-server<br/>(self-hosted sync)"]
+    cf["mcos-conformance<br/>(conformance gate)"]
 
     sec --> sdk
     core --> sdk
@@ -46,6 +47,10 @@ flowchart BT
     cam --> sdk
     files --> sdk
     mcp --> sdk
+    cf --> sdk
+    cf --> sec
+    cf --> core
+    cf --> mkt
     asdk --> sdk
     asdk --> sec
     asdk --> core
@@ -67,7 +72,7 @@ flowchart BT
     srv -.->|"test-only"| core
 ```
 
-Read bottom-up: `mcos-sdk` is the leaf contract layer; everything depends on it. `mcos-runtime-core` (with `mcos-security`) holds the kernel subsystems; `mcos-runtime` is the facade that `api`-exports `sdk`/`security`/`runtime-core`/`marketplace`; `mcos-llm` deliberately depends **only** on `sdk` + `runtime-core` (never the facade — the Planner must be usable headless, see [01 §7](./01-architecture.md)); `mcos-server` has no compile-time project dependencies (runtime-core appears in tests only, dashed); `mcos-android-sdk` aggregates the facade, llm, marketplace, and the reference built-in plugin set **without any UI code** — it is the library an integrating app embeds; `mcos-android` is the Compose demo shell built on top (it keeps its own direct edges to the modules its ViewModel/test code touches, plus the MCP adapter plugin).
+Read bottom-up: `mcos-sdk` is the leaf contract layer; everything depends on it. `mcos-runtime-core` (with `mcos-security`) holds the kernel subsystems; `mcos-runtime` is the facade that `api`-exports `sdk`/`security`/`runtime-core`/`marketplace`; `mcos-llm` deliberately depends **only** on `sdk` + `runtime-core` (never the facade — the Planner must be usable headless, see [01 §7](./01-architecture.md)); `mcos-server` has no compile-time project dependencies (runtime-core appears in tests only, dashed); `mcos-conformance` is a developer-facing CLI tool (nothing depends on it — it fans out to sdk/security/runtime-core/marketplace to mirror the 09 §5.1 marketplace CI gates locally); `mcos-android-sdk` aggregates the facade, llm, marketplace, and the reference built-in plugin set **without any UI code** — it is the library an integrating app embeds; `mcos-android` is the Compose demo shell built on top (it keeps its own direct edges to the modules its ViewModel/test code touches, plus the MCP adapter plugin).
 
 ---
 
@@ -216,6 +221,17 @@ Read bottom-up: `mcos-sdk` is the leaf contract layer; everything depends on it.
 | Stack | Kotlin/JVM · JDK 17 · zero third-party runtime deps |
 | Spec | [07-memory.md](./07-memory.md) §11.0 |
 
+### `mcos-conformance` — Executable conformance gate (developer tool)
+
+| | |
+|---|---|
+| Path | `mcos-conformance/` |
+| Package | `com.morainet.mcos.conformance` |
+| Role | The suites a plugin author runs locally before submitting to the marketplace, mirroring the marketplace CI gates (09 §5.1): `dsl` (02 §16 golden fixtures), `manifest` (gates 1/2/3/7 via `McosPackage.readPluginManifest`), `trust` (gate 8 + 08 §6/§7), `ir` (02 §7 invariants) — 48 cases with human / JSON / JUnit XML reports and a baseline drift gate. Not a library and **not published** — the 10 §6.4 "published as executable artifact" obligation is met by the `run` JavaExec (`./gradlew :mcos-conformance:conformance`). |
+| Depends on | `:mcos-sdk`, `:mcos-security`, `:mcos-runtime-core`, `:mcos-marketplace`; junit + kotlin-test (tests only) |
+| Stack | Kotlin/JVM · JDK 17 · JavaExec CLI |
+| Spec | [10-roadmap.md](./10-roadmap.md) §6.4, [09-marketplace.md](./09-marketplace.md) §5.1 |
+
 ---
 
 ## 3. Planned Modules (later phases)
@@ -225,7 +241,7 @@ Read bottom-up: `mcos-sdk` is the leaf contract layer; everything depends on it.
 | `mcos-plugin-iot` | `home.*`, `iot.*` (Home Assistant / Tuya / Matter) | P2 |
 | `mcos-plugin-mcp` | MCP client adapter → `mcp.*` commands | P2 spike / P3 production |
 
-`mcos-server` shipped as `mcos-server/` (see §2) covering the **sync** role; marketplace index and remote policy remain P3.
+`mcos-server` shipped as `mcos-server/` (see §2) covering the **sync** role; `mcos-conformance` shipped as `mcos-conformance/` (see §2) covering the **P3 community conformance** role; marketplace index and remote policy remain P3.
 
 ---
 

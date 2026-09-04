@@ -336,7 +336,7 @@ Error `location: {line, column}` follows these rules so implementations produce 
 2. **Column is counted in Unicode code points**, not UTF-16 code units and not bytes. A multi-byte character (e.g. `空`, 3 UTF-8 bytes / 1 code point) advances the column by **1**.
 3. **The location points to the start of the offending token** (the first character that begins the error), not the end and not the character after. Example: in `camera.capture("front")` the positional-arg error points at column 16 — the opening `"` of `"front"`.
 4. **Newline handling:** `\r\n` counts as a single line break (column resets on `\n`). A lone `\r` also resets the column.
-5. **End-of-input errors** (e.g. unterminated invocation) point at the column **one past the last character** of input. Example: `camera.capture(quality=80` (22 chars) reports column 23.
+5. **End-of-input errors** (e.g. unterminated invocation) point at the column **one past the last character** of input. Example: `camera.capture(quality=80` (25 chars) reports column 26.
 6. The `message` string is human-readable and MAY vary between implementations; the `code` and `location` MUST be exact for conformance, **except** for errors whose detection point is itself ambiguous — conformance suites MUST accept a tolerance of **±1 column** for the nested-call error (the parser detects the nesting at the `(` that follows the inner identifier, which is 1 column into the nested token; both the token-start column and the inner-`(` column are acceptable). This exception applies only to the nested-invocation case; all other locations must be exact.
 
 ### 6.8 Number Literal Bounds

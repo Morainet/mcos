@@ -1,6 +1,7 @@
 package com.morainet.mcos.android
 
 import com.morainet.mcos.plugin.hello.HelloPlugin
+import com.morainet.mcos.runtime.core.plugin.McosPackage
 import com.morainet.mcos.sdk.McosPlugin
 import com.morainet.mcos.sdk.SideEffectClass
 import org.junit.Assert.assertArrayEquals

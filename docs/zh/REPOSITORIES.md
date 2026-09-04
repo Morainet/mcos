@@ -28,6 +28,7 @@ flowchart BT
     asdk["mcos-android-sdk<br/>(宿主 SDK · 无 UI)"]
     app["mcos-android<br/>(Compose 演示壳)"]
     srv["mcos-server<br/>(自托管同步)"]
+    cf["mcos-conformance<br/>(一致性门禁)"]
 
     sec --> sdk
     core --> sdk
@@ -46,6 +47,10 @@ flowchart BT
     cam --> sdk
     files --> sdk
     mcp --> sdk
+    cf --> sdk
+    cf --> sec
+    cf --> core
+    cf --> mkt
     asdk --> sdk
     asdk --> sec
     asdk --> core
@@ -67,7 +72,7 @@ flowchart BT
     srv -.->|"仅测试"| core
 ```
 
-从下往上读：`mcos-sdk` 是最底层的契约层，所有模块都依赖它。`mcos-runtime-core`（连同 `mcos-security`）承载内核子系统；`mcos-runtime` 是门面，以 `api` 导出 `sdk`/`security`/`runtime-core`/`marketplace`；`mcos-llm` 刻意**只**依赖 `sdk` + `runtime-core`（绝不依赖门面——Planner 必须可以脱离外壳独立使用，见 [01 §7](./01-architecture.md)）；`mcos-server` 无编译期项目依赖（runtime-core 仅出现在测试中，虚线）；`mcos-android-sdk` 聚合门面、llm、marketplace 与参考内置插件集，但**不含任何 UI 代码**——它是集成方 App 嵌入的库；`mcos-android` 是构建其上的 Compose 演示壳（对 ViewModel/测试代码用到的模块保留直接边，外加 MCP 适配插件）。
+从下往上读：`mcos-sdk` 是最底层的契约层，所有模块都依赖它。`mcos-runtime-core`（连同 `mcos-security`）承载内核子系统；`mcos-runtime` 是门面，以 `api` 导出 `sdk`/`security`/`runtime-core`/`marketplace`；`mcos-llm` 刻意**只**依赖 `sdk` + `runtime-core`（绝不依赖门面——Planner 必须可以脱离外壳独立使用，见 [01 §7](./01-architecture.md)）；`mcos-server` 无编译期项目依赖（runtime-core 仅出现在测试中，虚线）；`mcos-conformance` 是开发者侧 CLI 工具（无任何模块依赖它——它扇出到 sdk/security/runtime-core/marketplace，在本地镜像 09 §5.1 市场 CI 门禁）；`mcos-android-sdk` 聚合门面、llm、marketplace 与参考内置插件集，但**不含任何 UI 代码**——它是集成方 App 嵌入的库；`mcos-android` 是构建其上的 Compose 演示壳（对 ViewModel/测试代码用到的模块保留直接边，外加 MCP 适配插件）。
 
 ---
 
@@ -216,6 +221,17 @@ flowchart BT
 | 技术栈 | Kotlin/JVM · JDK 17 · 零第三方运行时依赖 |
 | 规范 | [07-memory.md](./07-memory.md) §11.0 |
 
+### `mcos-conformance` — 可执行一致性门禁（开发者工具）
+
+| | |
+|---|---|
+| 路径 | `mcos-conformance/` |
+| 包名 | `com.morainet.mcos.conformance` |
+| 职责 | 插件作者提交 marketplace 前本地运行的套件，镜像市场 CI 门禁（09 §5.1）：`dsl`（02 §16 golden fixtures）、`manifest`（gates 1/2/3/7，经 `McosPackage.readPluginManifest`）、`trust`（gate 8 + 08 §6/§7）、`ir`（02 §7 不变量）——48 用例，报告 human / JSON / JUnit XML + baseline 漂移门禁。不是库、**不发布**——10 §6.4 的 "published as executable artifact" 义务由 `run` JavaExec 满足（`./gradlew :mcos-conformance:conformance`）。 |
+| 依赖 | `:mcos-sdk`、`:mcos-security`、`:mcos-runtime-core`、`:mcos-marketplace`；junit + kotlin-test（仅测试） |
+| 技术栈 | Kotlin/JVM · JDK 17 · JavaExec CLI |
+| 规范 | [10-roadmap.md](./10-roadmap.md) §6.4、[09-marketplace.md](./09-marketplace.md) §5.1 |
+
 ---
 
 ## 3. 计划模块（后续阶段）
@@ -225,7 +241,7 @@ flowchart BT
 | `mcos-plugin-iot` | `home.*`、`iot.*`（Home Assistant / Tuya / Matter） | P2 |
 | `mcos-plugin-mcp` | MCP 客户端适配器 → `mcp.*` 命令 | P2 spike / P3 production |
 
-`mcos-server` 已作为 `mcos-server/` 落地（见 §2），覆盖「同步」职责；市场索引与远程策略仍为 P3。
+`mcos-server` 已作为 `mcos-server/` 落地（见 §2），覆盖「同步」职责；`mcos-conformance` 已作为 `mcos-conformance/` 落地（见 §2），覆盖「P3 社区一致性」职责；市场索引与远程策略仍为 P3。
 
 ---
 

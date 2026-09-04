@@ -36,3 +36,9 @@ include(":plugins:mcos-plugin-iot")
 // Device-verification fixture (not published, not in the android-sdk runtime
 // set): BinderIsolationDeviceTest dexes its jar into a signed .mcos artifact.
 include(":plugins:mcos-plugin-devicefixture")
+// P3 conformance test suite (spec §6.4 community; 09-marketplace §5.1): the
+// runnable artifact plugin authors invoke before submitting to the marketplace,
+// mirroring the marketplace CI gates. Pure JVM (kotlin.jvm) — the manifest
+// gate reader (McosPackage) lives in :mcos-runtime-core, so this module never
+// needs the Android toolchain; JavaExec tasks drive the CLI.
+include(":mcos-conformance")

@@ -10,6 +10,16 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### Conformance 测试套件 + `McosPackage` 迁入 runtime-core（2026-09-04）
+
+P3 社区项（10 §6.4）落地：插件作者提交 marketplace 前可在本地运行与 CI 同构的门禁套件（09 §5.1）；同时把 `.mcos` 清单读取器从 android-sdk 上移到 runtime-core，让 conformance 无需 Android 工具链。
+
+- **新模块 `mcos-conformance`**（纯 JVM `kotlin.jvm`；不发布、不进 BOM——"published as executable artifact" 由 `run` JavaExec 满足）：`ConformanceCli` 六入口（`list` / `run --output human|json|junit` / `baseline-add` / `baseline-check`），CI 门禁别名 `./gradlew :mcos-conformance:conformance` = 全套件 + baseline 漂移检查（漂移 exit 2，仅全绿 exit 0），报告三形态 human / JSON / JUnit XML。四个套件 48 用例：`dsl`（8 · 02 §16 golden fixtures round-trip + reject，走真实 `DslParser`）、`manifest`（14 · 09 §5.1 gates 1/2/3/7，打 `McosPackage.readPluginManifest`）、`trust`（20 · gate 8 + 08 §6/§7：`ArtifactVerifier` 管线矩阵 + `PluginTrustGate` 决策矩阵 + `BlocklistVerifier`）、`ir`（6 · 02 §7 IR 结构不变量）。**48/48 绿。**
+- **`McosPackage` 迁移**：android-sdk → `mcos-runtime-core/plugin/`（与 `PluginLoader` 同包）——zip+JSON 读取器本就零 Android 依赖；host 特有的 `DexPluginLoader` 留在 android-sdk，模块切分与依赖方向对齐。调用点（`CompositionRoot` / `MarketplacePluginFactory` / `IsolatedPluginProcessService` / `DynamicPluginLoadingTest`）换 import，零行为变化。
+- **套件逼出的生产修复（fail-closed）**：`McosPackage.extractEntry` 先验 zip `PK` 魔数（`ZipInputStream` 对非 zip 字节静默找不到条目——坏包曾误报 "plugin.json missing" 而非 "not a readable zip"）；`McosPackage.decodeCommands` 新增包内重复 command id 拒绝（09 §5.1 gate 3，此前只有市场层检查）；`Parser` 三条错误文案补 `§` 前缀与已发布 fixture 对齐（§6.1 / §6.2 / §18）。
+- **规范勘误**：02 §6.7（中英）EOF 示例算术修正——`camera.capture(quality=80` 是 25 字符报第 26 列（原文误写 22/23）；fixture `08-malformed/expected.error.json` 同步为 26；`docs/fixtures/README.md` 记录 `input.dsl` 尾部换行是文件约定、解析前剥离。
+- **诚实边界**（详见 `11-implementation-status` item 51）：套件断言当前实现——fixture 期望即规范，故意改解析器须同 commit 移动 fixture；conformance 用例不进 Gradle 测试基线（1419/1607 不变），48/48 信号由一致性门禁守护；gate 4 诚实性启发式与 gates 9-11 仍在市场侧（需中心索引/AV 状态）。
+
 ### §8 Binder 内核真机验证 — BD1-BD6 + DF1-DF4 + RSA-PSS 双名兜底 (2026-09-03)
 
 08-security §8 item 50（切片 4/4）—— items 36-45 落地的整条 `host.isolation/` 链（RPC 层 + 字节传输 + 激活缝 + manifest-only 注册）终于在真机上钉死了 §8.1-§8.3 这一层 JVM 端触不到的隔离边界。主进程不再携带任何插件 dex；`:mcos_plugin` split + Binder 是规范点名的隔离缝。

@@ -4,7 +4,7 @@ import android.app.Service
 import android.content.Intent
 import android.os.IBinder
 import com.morainet.mcos.android.DexPluginLoader
-import com.morainet.mcos.android.McosPackage
+import com.morainet.mcos.runtime.core.plugin.McosPackage
 import com.morainet.mcos.runtime.core.error.McosErrorCode
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.buildJsonObject
