@@ -102,6 +102,7 @@ internal object IndexTestKit {
 internal class ServerFixture(
     private val withOperatorKey: Boolean = true,
     private val withAvDenylist: Boolean = true,
+    private val avScannerCommand: String? = null,
 ) : AutoCloseable {
 
     private val dir: Path = Files.createTempDirectory("mcos-index-server-test")
@@ -143,7 +144,9 @@ internal class ServerFixture(
             adminToken = adminToken,
             operatorPrivatePem = operatorPrivatePem,
             operatorPublicPem = operatorPublicPem,
+            port = 0, // ephemeral: parallel tests must not collide on 8877
             avDenylistFile = avDenylistFile,
+            avScannerCommand = avScannerCommand,
         )
         port = server.start()
         baseUrl = "http://127.0.0.1:$port"

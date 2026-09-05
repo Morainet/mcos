@@ -8,7 +8,6 @@ import com.morainet.mcos.marketplace.MarketplacePermissionEntry
 import com.morainet.mcos.marketplace.PackageMetadata
 import com.morainet.mcos.marketplace.SearchResponse
 import com.morainet.mcos.marketplace.review.ArtifactScan
-import com.morainet.mcos.marketplace.review.AvVerdict
 import com.morainet.mcos.marketplace.review.CiGateEngine
 import com.morainet.mcos.marketplace.review.CiReviewReport
 import com.morainet.mcos.marketplace.review.GateCheck
@@ -43,7 +42,10 @@ internal class IndexServices(
     private val operatorKey: java.security.KeyPair?,
     private val avDenylistFile: Path?,
     private val artifactDir: Path,
+    private val avScannerCommand: String? = null,
 ) {
+    private val avScanner: AvScanner = CompositeAvScanner(avDenylistFile, avScannerCommand)
+
     init {
         Files.createDirectories(artifactDir)
     }
@@ -210,8 +212,10 @@ internal class IndexServices(
                 manifest.id,
             )
         }
-        // Gate 9: AV seam (hash denylist scanner; no engine ⇒ UNSCANNED).
-        val scan = avVerdict(artifactBytes)
+        // Gate 9: AV seam (sha256 denylist + optional external scanner command;
+        // no engine ⇒ UNSCANNED). The external scanner reads a real path, so the
+        // bytes are staged to a scratch file for the duration of the scan.
+        val scan = scanArtifact(artifactBytes)
 
         // Registry snapshot for gates 5/10/11 excludes this submission.
         val prior = doc.submissions
@@ -532,7 +536,7 @@ internal class IndexServices(
             return
         }
         Files.createDirectories(telemetryFile.parent)
-        appendLine("telemetry.ndjson", """{"packageId":${q(packageId)},"version":${q(version)},"event":${q(event)},"anonymizedClientId":${q(clientId)},"timestamp":${q(timestamp)}}""")
+        appendLine("telemetry.ndjson", """{"packageId":"${q(packageId)}","version":"${q(version)}","event":"${q(event)}","anonymizedClientId":"${q(clientId)}","timestamp":"${q(timestamp)}"}""")
         if (event == "install") {
             registry.mutate { doc ->
                 var updated = false
@@ -578,13 +582,17 @@ internal class IndexServices(
     private fun isBlocked(snapshot: RegistrySnapshot, packageId: String): Boolean =
         snapshot.blocklist.any { it.packageId == packageId }
 
-    private fun avVerdict(bytes: ByteArray): ArtifactScan {
-        val denylist = avDenylistFile?.let { loadSha256Denylist(it) } ?: emptySet()
-        val sha = sha256Hex(bytes)
-        return when {
-            sha in denylist -> ArtifactScan(AvVerdict.MALICIOUS, "sha256-denylist")
-            avDenylistFile != null && Files.exists(avDenylistFile) -> ArtifactScan(AvVerdict.CLEAN, "sha256-denylist")
-            else -> ArtifactScan.Unscanned
+    /**
+     * Stages the artifact to a scratch file (external scanners read a real path)
+     * and delegates to the composite AV seam. The scratch file is always removed.
+     */
+    private fun scanArtifact(bytes: ByteArray): ArtifactScan {
+        val scratch = Files.createTempFile(artifactDir, "avscan-", ".mcos")
+        return try {
+            Files.write(scratch, bytes)
+            avScanner.scan(scratch, bytes)
+        } finally {
+            runCatching { Files.deleteIfExists(scratch) }
         }
     }
 
@@ -696,6 +704,10 @@ internal class IndexServices(
 
     private fun Submission.decodeMetadata(): PackageMetadata =
         IndexJson.document.decodeFromString(PackageMetadata.serializer(), metadataJson)
+            // downloadCount is a live counter on the submission, mutated by
+            // install telemetry after metadataJson was frozen at submit time —
+            // overlay it so discovery reflects the current count, not 0.
+            .copy(downloadCount = downloadCount)
 
     private fun Submission.name(): String = decodeMetadata().name
 

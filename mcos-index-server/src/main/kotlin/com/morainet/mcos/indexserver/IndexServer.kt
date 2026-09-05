@@ -34,8 +34,10 @@ class IndexServer(
     adminToken: String,
     operatorPrivatePem: Path?,
     operatorPublicPem: Path?,
-    port: Int = 8877,
+    private val port: Int = 8877,
+    private val bindHost: String = "127.0.0.1",
     avDenylistFile: Path? = null,
+    avScannerCommand: String? = null,
 ) {
     private val registry: IndexRegistry = IndexRegistry.open(dataDir)
     private val artifactDir: Path = dataDir.resolve("artifacts")
@@ -46,13 +48,14 @@ class IndexServer(
         operatorKey = operatorKey,
         avDenylistFile = avDenylistFile,
         artifactDir = artifactDir,
+        avScannerCommand = avScannerCommand,
     )
 
     private val router = HttpRouter()
     private var server: HttpServer? = null
 
     fun start(): Int {
-        val http = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        val http = HttpServer.create(InetSocketAddress(bindHost, port), 0)
         http.executor = Executors.newFixedThreadPool(8)
         registerRoutes()
         http.createContext("/") { exchange -> dispatch(exchange) }
