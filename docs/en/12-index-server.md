@@ -243,8 +243,9 @@ sh gradlew :mcos-index-server:installDist
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--port` | `8877` | HTTP port. |
+| `--bind-host` | `127.0.0.1` | Bind address. Loopback by default; `0.0.0.0` only behind a reverse proxy. |
 | `--data-dir` | `data/index` | Registry persistence directory (created if missing). |
-| `--keys-dir` | `<data-dir>/keys` | Seed dir for initial publisher/operator public keys (`.pem`/`.json`). |
+| `--keys-dir` | `<data-dir>/keys` | Seed dir for the operator PEM (`operator-private.pem` + `operator-public.pem`); absent private half ⇒ boots read-only, blocklist signing disabled. |
 | `--admin-token` | env `MCOS_INDEX_ADMIN_TOKEN` | Operator token; blank → startup refuses (same posture as `mcos-server`). |
 
 TLS terminates at a reverse proxy (Caddy/nginx); the Bearer tokens protect the API and
