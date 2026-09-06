@@ -40,6 +40,23 @@ data class SecurityConfig(
     val quarantine: CrashQuarantine,
     val enterprisePolicy: EnterprisePolicySource,
     val auditLog: AuditLog,
+
+    /**
+     * Fail-closed Stage-10 audit ([03-runtime.md §13.3], [08-security.md
+     * §14]): when `true`, a run whose audit record cannot be durably written
+     * fails with `INTERNAL` instead of silently dropping the record — the
+     * enterprise "disk full (audit) fails the run" posture. When `false`
+     * (the default) the Stage-10 write is best-effort: a failing sink never
+     * changes the command's outcome.
+     *
+     * Durability is reported by the sink via [AuditLog.appendVerified]; a
+     * sink that cannot satisfy fail-closed answers `false` — [NullAuditLog]
+     * always does (a "no audit trail" sink can never confirm), an unstarted
+     * [com.morainet.mcos.security.audit.InMemoryAuditLog] does (records
+     * would be silently lost), and an unwritable
+     * [com.morainet.mcos.security.audit.FileAuditLog] does.
+     */
+    val auditFailClosed: Boolean = false,
 ) {
     companion object {
         /** Production posture — every control real. */
@@ -178,6 +195,14 @@ object NoopCrashQuarantine : CrashQuarantine {
 object NullAuditLog : AuditLog {
     override fun append(record: RunRecord) { /* inert by design */ }
     override suspend fun flush() { /* nothing pending */ }
+
+    /**
+     * A "no audit trail" sink can never satisfy fail-closed audit — report
+     * failure so combining [SecurityConfig.auditFailClosed] with this sink
+     * fails runs loudly instead of pretending records were kept.
+     */
+    override suspend fun appendVerified(record: RunRecord): Boolean = false
+
     override fun start() { /* inert by design */ }
     override fun stop() { /* inert by design */ }
     override fun getRuns(): List<RunRecord> = emptyList()

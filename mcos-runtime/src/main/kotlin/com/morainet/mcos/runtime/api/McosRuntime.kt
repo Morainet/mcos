@@ -1043,6 +1043,11 @@ class McosRuntime internal constructor(
         // or FileAuditLog (persistence across restarts).
         private var auditLog: AuditLog = NullAuditLog
 
+        // Fail-closed Stage-10 audit (03-runtime.md §13.3): when true, a run
+        // whose audit record cannot be durably written fails with INTERNAL.
+        // Off by default (best-effort audit on the hot path).
+        private var auditFailClosed: Boolean = false
+
         // Scheduler tuning (03-runtime.md §8). The defaults are the normative
         // §8.2/§8.4 numbers; hosts resize for their device class.
         private var schedulerConfig: SchedulerConfig = SchedulerConfig()
@@ -1106,6 +1111,17 @@ class McosRuntime internal constructor(
         fun withAuditLog(auditLog: AuditLog) = apply { this.auditLog = auditLog }
 
         /**
+         * Enable fail-closed Stage-10 audit (03-runtime.md §13.3): a run whose
+         * audit record cannot be durably written fails with `INTERNAL` instead
+         * of silently dropping the record. Wires the *default* executor and
+         * workflow engine (the [SecurityConfig] this builder assembles); a
+         * host injecting its own via [withExecutor] / [withWorkflowEngine]
+         * sets the flag on those components directly — see [withExecutor].
+         * Defaults to `false` (best-effort audit).
+         */
+        fun withAuditFailClosed(enabled: Boolean = true) = apply { this.auditFailClosed = enabled }
+
+        /**
          * Tune the Stage-7 scheduler (03-runtime.md §8): lane capacity, the
          * §8.2 concurrency caps (global / per-plugin / destructive), backpressure
          * threshold and rejection backoff. The [InvocationLimiter] caps are
@@ -1157,6 +1173,7 @@ class McosRuntime internal constructor(
                 quarantine = quarantine,
                 enterprisePolicy = enterprisePolicySource,
                 auditLog = auditLog,
+                auditFailClosed = auditFailClosed,
             )
             val exec = executor ?: Executor(
                 reg,
@@ -1218,7 +1235,11 @@ class McosRuntime internal constructor(
 
             // The workflow engine defaults to the same executor, so control
             // flow steps and flat commands share one execution pipeline.
-            val wfEngine = workflowEngine ?: WorkflowEngine(exec, auditLog)
+            val wfEngine = workflowEngine ?: WorkflowEngine(
+                exec,
+                auditLog,
+                auditFailClosed = auditFailClosed,
+            )
 
             // Default trust pipeline: fail-closed PluginTrustGate over an
             // empty in-memory key store. Hosts that verify marketplace

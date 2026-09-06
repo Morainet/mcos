@@ -38,7 +38,17 @@ import java.util.UUID
 class WorkflowEngine(
     private val executor: Executor,
     private val auditLog: AuditLog = NullAuditLog,
-    private val deviceMutexMap: DeviceMutexMap = DeviceMutexMap()
+    private val deviceMutexMap: DeviceMutexMap = DeviceMutexMap(),
+    /**
+     * Fail-closed Stage-10 audit ([03-runtime.md §13.3]): when `true`, a
+     * workflow whose aggregate run record cannot be durably written is
+     * reported FAILED (an `INTERNAL` step) instead of returning a success
+     * for a run whose audit trail was silently dropped. Defaults to `false`
+     * (best-effort audit, matching [Executor]'s default posture). Per-command
+     * Stage-10 writes inside steps are governed by the [Executor]'s own
+     * security configuration.
+     */
+    private val auditFailClosed: Boolean = false,
 ) {
 
     /**
@@ -101,30 +111,53 @@ class WorkflowEngine(
 
         val totalDurationMs = System.currentTimeMillis() - startTime
 
-        // Record audit
-        auditLog.append(
-            RunRecord(
-                runId = runId,
-                timestamp = startTime,
-                source = "WORKFLOW",
-                steps = collectedSteps.map { step ->
-                    StepRecord(
-                        commandId = step.commandId ?: "workflow",
-                        pluginId = "workflow",
-                        ok = step.ok,
-                        code = step.code,
-                        message = step.message?.take(200),
-                        durationMs = step.durationMs
-                    )
-                },
-                totalDurationMs = totalDurationMs,
-                outcome = when (outcome) {
-                    WorkflowOutcome.COMPLETED -> RunOutcome.OK
-                    WorkflowOutcome.FAILED -> RunOutcome.FAILED
-                    WorkflowOutcome.CANCELLED -> RunOutcome.CANCELLED
-                }
-            )
+        // Record audit. Under auditFailClosed the aggregate Stage-10 write
+        // failing fails the run itself (03-runtime.md §13.3): a workflow
+        // whose record was silently dropped must not be reported COMPLETED.
+        // The step-level audit writes already happened inside the Executor
+        // (each governed by its own security configuration).
+        val runRecord = RunRecord(
+            runId = runId,
+            timestamp = startTime,
+            source = "WORKFLOW",
+            steps = collectedSteps.map { step ->
+                StepRecord(
+                    commandId = step.commandId ?: "workflow",
+                    pluginId = "workflow",
+                    ok = step.ok,
+                    code = step.code,
+                    message = step.message?.take(200),
+                    durationMs = step.durationMs
+                )
+            },
+            totalDurationMs = totalDurationMs,
+            outcome = when (outcome) {
+                WorkflowOutcome.COMPLETED -> RunOutcome.OK
+                WorkflowOutcome.FAILED -> RunOutcome.FAILED
+                WorkflowOutcome.CANCELLED -> RunOutcome.CANCELLED
+            }
         )
+        val auditOk = if (auditFailClosed) {
+            auditLog.appendVerified(runRecord)
+        } else {
+            auditLog.append(runRecord)
+            true
+        }
+        if (!auditOk && outcome == WorkflowOutcome.COMPLETED) {
+            // The sink refused the record — never report a clean success for
+            // a run whose audit trail was dropped. (A run already FAILED or
+            // CANCELLED stays as it is: it is already not a false success.)
+            outcome = WorkflowOutcome.FAILED
+            collectedSteps.add(
+                WorkflowStepResult(
+                    commandId = null,
+                    ok = false,
+                    code = McosErrorCode.INTERNAL.name,
+                    message = "Workflow run record could not be written (auditFailClosed=true)",
+                    durationMs = 0
+                )
+            )
+        }
 
         return WorkflowResult(
             runId = runId,

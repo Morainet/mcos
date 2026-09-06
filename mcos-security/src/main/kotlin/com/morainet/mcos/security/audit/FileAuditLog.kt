@@ -48,6 +48,7 @@ class FileAuditLog(
 
     private sealed interface ChannelMsg {
         data class Record(val record: RunRecord) : ChannelMsg
+        data class Verified(val record: RunRecord, val done: CompletableDeferred<Boolean>) : ChannelMsg
         data class Flush(val done: CompletableDeferred<Unit>) : ChannelMsg
     }
 
@@ -85,6 +86,7 @@ class FileAuditLog(
                         msg.done.complete(Unit)
                     }
                     is ChannelMsg.Record -> writeRecord(msg.record)
+                    is ChannelMsg.Verified -> msg.done.complete(writeRecordChecked(msg.record))
                 }
             }
         }
@@ -110,6 +112,24 @@ class FileAuditLog(
     override fun append(record: RunRecord) {
         val redacted = record.copy(ir = record.ir?.let { redactSecrets(it) })
         channel.trySend(ChannelMsg.Record(redacted))
+    }
+
+    /**
+     * Fail-closed Stage-10 append ([03-runtime.md §13.3]): [append] plus a
+     * durability confirmation from the single writer. The writer answers
+     * `true` only when it actually wrote and flushed the line to the backing
+     * file; an unwritable file, a failed write, or a dead writer answers
+     * `false`, and a fail-closed host fails the run rather than silently
+     * dropping the record. Hosts without fail-closed audit keep the
+     * non-blocking [append].
+     */
+    override suspend fun appendVerified(record: RunRecord): Boolean {
+        val redacted = record.copy(ir = record.ir?.let { redactSecrets(it) })
+        val job = writerJob
+        if (job == null || !job.isActive) return false
+        val done = CompletableDeferred<Boolean>()
+        if (!channel.trySend(ChannelMsg.Verified(redacted, done)).isSuccess) return false
+        return done.await()
     }
 
     /**
@@ -190,19 +210,34 @@ class FileAuditLog(
     }
 
     private fun writeRecord(record: RunRecord) {
+        writeRecordChecked(record)
+    }
+
+    /**
+     * Append [record] to the in-memory index and the backing file, answering
+     * whether the file write actually succeeded (the durability signal
+     * [appendVerified] awaits). Writer-thread only. A failed write keeps the
+     * record in the in-memory index — the log degrades to memory-only for
+     * [append] traffic — but answers `false` so a fail-closed caller never
+     * treats a dropped record as persisted.
+     */
+    private fun writeRecordChecked(record: RunRecord): Boolean {
         records.add(record)
         val w = writer ?: openWriter()
+        var ok = false
         if (w != null) {
             try {
                 w.write(AUDIT_JSON.encodeToString(record))
                 w.write("\n")
                 w.flush()
+                ok = true
             } catch (_: IOException) {
                 runCatching { w.close() }
                 writer = null
             }
         }
         evict()
+        return ok
     }
 
     private fun evict() {

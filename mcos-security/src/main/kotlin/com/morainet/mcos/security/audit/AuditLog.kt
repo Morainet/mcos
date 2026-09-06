@@ -87,6 +87,30 @@ interface AuditLog {
      */
     suspend fun flush()
 
+    /**
+     * Append [record] and — when the sink can observe its own persistence —
+     * confirm that it was durably recorded (the fail-closed Stage-10 write of
+     * [03-runtime.md §13.3]). Returns `true` when the record was accepted for
+     * durable storage, `false` when the sink could not persist it.
+     *
+     * The default implementation is the historical fire-and-forget [append]
+     * and reports success: sinks that cannot observe persistence have nothing
+     * to verify. Sinks that CAN observe write failures MUST override it —
+     * [FileAuditLog] answers from its single writer (an unwritable file /
+     * failed write / dead writer → `false`), [NullAuditLog] deliberately
+     * answers `false` because a "no audit trail" sink can never satisfy
+     * fail-closed, and [InMemoryAuditLog] answers whether a live writer
+     * accepted the record.
+     *
+     * Callers honour this only when fail-closed audit is configured
+     * ([SecurityConfig.auditFailClosed]); the default hot path keeps the
+     * non-blocking [append].
+     */
+    suspend fun appendVerified(record: RunRecord): Boolean {
+        append(record)
+        return true
+    }
+
     /** Start any background writer. Must be idempotent. */
     fun start()
 
@@ -304,6 +328,21 @@ class InMemoryAuditLog : AuditLog {
     override fun append(record: RunRecord) {
         val redacted = record.copy(ir = record.ir?.let { redactSecrets(it) })
         writerChannel.trySend(ChannelMsg.Record(redacted))
+    }
+
+    /**
+     * Fail-closed Stage-10 append ([03-runtime.md §13.3]). In-memory storage
+     * cannot observe disk durability, so "verified" means the live
+     * single-writer accepted the record into its queue. With no running
+     * writer (never [start]ed, or already [stop]ped) the record would be
+     * silently lost, so this reports `false` — a fail-closed host must not
+     * let an in-memory sink that is not draining pretend otherwise.
+     */
+    override suspend fun appendVerified(record: RunRecord): Boolean {
+        val redacted = record.copy(ir = record.ir?.let { redactSecrets(it) })
+        val job = writerJob
+        if (job == null || !job.isActive) return false
+        return writerChannel.trySend(ChannelMsg.Record(redacted)).isSuccess
     }
 
     /**

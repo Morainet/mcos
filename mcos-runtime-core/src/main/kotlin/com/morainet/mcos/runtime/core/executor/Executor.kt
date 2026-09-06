@@ -434,30 +434,48 @@ class Executor(
 
         // Stage 10 — Audit recording
         val durationMs = System.currentTimeMillis() - startTime
-        security.auditLog.append(
-            RunRecord(
-                runId = runId,
-                timestamp = startTime,
-                source = source,
-                commandId = entry.descriptor.id,
-                steps = listOf(
-                    StepRecord(
-                        commandId = entry.descriptor.id,
-                        pluginId = entry.descriptor.pluginId,
-                        ok = result is CommandResult.Ok,
-                        code = (result as? CommandResult.Err)?.code,
-                        message = (result as? CommandResult.Err)?.message?.take(200),
-                        durationMs = durationMs,
-                        artifacts = (result as? CommandResult.Ok)?.artifacts?.map {
-                            ArtifactRecord(it.type, it.uri, it.mimeType)
-                        } ?: emptyList()
-                    )
-                ),
-                totalDurationMs = durationMs,
-                outcome = outcome
-            )
+        val record = RunRecord(
+            runId = runId,
+            timestamp = startTime,
+            source = source,
+            commandId = entry.descriptor.id,
+            steps = listOf(
+                StepRecord(
+                    commandId = entry.descriptor.id,
+                    pluginId = entry.descriptor.pluginId,
+                    ok = result is CommandResult.Ok,
+                    code = (result as? CommandResult.Err)?.code,
+                    message = (result as? CommandResult.Err)?.message?.take(200),
+                    durationMs = durationMs,
+                    artifacts = (result as? CommandResult.Ok)?.artifacts?.map {
+                        ArtifactRecord(it.type, it.uri, it.mimeType)
+                    } ?: emptyList()
+                )
+            ),
+            totalDurationMs = durationMs,
+            outcome = outcome
         )
 
+        // auditFailClosed (03-runtime.md §13.3): when configured, the run
+        // itself fails with INTERNAL if the Stage-10 write cannot be durably
+        // recorded — never silently drop the audit record. Off by default,
+        // where append stays fire-and-forget on the hot path.
+        val auditOk = if (security.auditFailClosed) {
+            security.auditLog.appendVerified(record)
+        } else {
+            security.auditLog.append(record)
+            true
+        }
+        if (!auditOk) {
+            val original = result as? CommandResult.Err
+            return CommandResult.Err(
+                code = McosErrorCode.INTERNAL.name,
+                message = "Command '${entry.descriptor.id}' " +
+                    (if (original != null) "failed (${original.code}) " else "succeeded ") +
+                    "but its audit record could not be written (auditFailClosed=true)",
+                retryable = false,
+            )
+        }
         return result
     }
 

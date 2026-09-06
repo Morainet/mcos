@@ -10,6 +10,16 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### fail-closed Stage-10 审计 — `auditFailClosed` 接线（2026-09-06）
+
+03 §13.3 / 08 §14 的收口（item 54）：此前 `AuditLog` 的 Stage-10 写是 fire-and-forget——磁盘满等写失败被静默吞掉，规范里"enterprise 下可配置 fail-closed（run 以 `INTERNAL` 失败）"没有代码路径。本切片把持久化确认与 fail-closed 决策接上。
+
+- **Sink 契约**：`AuditLog.appendVerified(record)`——`append` 的可挂起持久化确认变体，默认即历史 fire-and-forget（永远成功），只有能观察持久化的 sink 覆盖它：`FileAuditLog` 由单写者在行真正写入并 flush 后作答（不可写路径 / 写失败 / 写者已死 → `false`；失败仍保留内存索引，非 fail-closed 流量与从前一致降级 memory-only）；`InMemoryAuditLog` 回答活动写者是否接收（未 start / 已 stop → `false`）；`NullAuditLog` 刻意永远 `false`（空 sink 无法满足 fail-closed——配错即响亮失败）。
+- **强制**：`SecurityConfig.auditFailClosed`（默认 `false`）驱动 Executor Stage 10——置位时记录写需确认，拒绝 → run 以 `Err INTERNAL` 失败（message 点名 `auditFailClosed=true`）；`WorkflowEngine` 对聚合记录取自己的 `auditFailClosed`——写拒绝把本应 COMPLETED 的 workflow 翻 FAILED + INTERNAL 步骤。
+- **facade**：`McosRuntime.Builder.withAuditFailClosed(true)` 接线默认 executor/引擎；`withExecutor`/`withWorkflowEngine` 注入方在组件上直接置位（builder 已注明）。
+- **测试 +13 JVM**：`AuditFailClosedTest` 6（sink 语义）· `AuditFailClosedWiringTest` 5（Executor/WorkflowEngine 强制）· `McosRuntimeAuditFailClosedTest` 2（facade 端到端：置位 → `RunFailed` 点名 auditFailClosed；默认 → 同一 run `RunSucceeded`）。**基线 1444/1632 → 1457/1645**。
+- **诚实边界**：内存/空 sink 的 "verified" 只保证活写者接收，非磁盘持久化（加密落盘仍待 SQLCipher 切片）；ack 路径依赖写者存活——与既有 `flush()` 同款风险姿态。
+
 ### 远程企业策略下发 — `HttpEnterprisePolicySource` + mcos-server `/enterprise/policy` 管理通道（2026-09-06）
 
 08 §13.3 的 P3 剩余项收口：此前企业策略只能经 fixed/file 源送达，"经 `mcos-server` 或 MDM 下发"这条通道没有代码。本切片把它做成纯 JVM、可整链验证的交付。
