@@ -24,12 +24,26 @@ class AvScannerTest {
         return p
     }
 
-    /** Writes an executable shell wrapper that ignores stdin and prints [verdict]. */
+    /**
+     * Returns a launchable scanner command for the host OS — a `/bin/sh`
+     * wrapper on Unix, a `cmd /c` batch wrapper on Windows (no `/bin/sh`
+     * exists there). Either wrapper ignores stdin and prints [verdict].
+     */
     private fun scannerScript(dir: Path, verdict: String, exitCode: Int = 0): String {
-        val script = dir.resolve("scanner.sh")
-        Files.writeString(script, "#!/bin/sh\ncat > /dev/null\necho $verdict\nexit $exitCode\n")
-        script.toFile().setExecutable(true)
-        return "/bin/sh ${script.absolutePathString()}"
+        val isWindows = System.getProperty("os.name").startsWith("Windows", ignoreCase = true)
+        return if (isWindows) {
+            val script = dir.resolve("scanner.cmd")
+            Files.writeString(
+                script,
+                "@echo off\r\nset /p line=\r\necho $verdict\r\nexit /b $exitCode\r\n",
+            )
+            "cmd /c ${script.absolutePathString()}"
+        } else {
+            val script = dir.resolve("scanner.sh")
+            Files.writeString(script, "#!/bin/sh\ncat > /dev/null\necho $verdict\nexit $exitCode\n")
+            script.toFile().setExecutable(true)
+            "/bin/sh ${script.absolutePathString()}"
+        }
     }
 
     @Test
@@ -96,10 +110,7 @@ class AvScannerTest {
         val dir = tempDir()
         // The scanner flags everything malicious; the artifact bytes are unknown
         // ahead of time, so this proves the seam runs during submission.
-        val script = dir.resolve("scanner.sh")
-        Files.writeString(script, "#!/bin/sh\ncat > /dev/null\necho MALICIOUS\n")
-        script.toFile().setExecutable(true)
-        ServerFixture(withAvDenylist = false, avScannerCommand = "/bin/sh ${script.absolutePathString()}").use { s ->
+        ServerFixture(withAvDenylist = false, avScannerCommand = scannerScript(dir, "MALICIOUS")).use { s ->
             val alpha = s.createPublisherSession("alpha")
             val submission = s.submitPackage(alpha, pluginManifest("com.example.alpha", "1.0.0"))
             assertTrue(

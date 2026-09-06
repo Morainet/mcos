@@ -100,7 +100,7 @@ dependencyResolutionManagement {
 ```kotlin
 // build.gradle.kts — consume via the BOM so every module stays version-aligned
 dependencies {
-    implementation(platform("io.github.morainet:mcos-bom:0.0.3"))
+    implementation(platform("io.github.morainet:mcos-bom:0.0.4"))
     implementation("io.github.morainet:mcos-android-sdk")
 }
 ```
@@ -122,7 +122,7 @@ That's it — the SDK's manifest merge brings in the receivers, permissions, Fil
 
 ```kotlin
 dependencies {
-    implementation(platform("io.github.morainet:mcos-bom:0.0.3"))
+    implementation(platform("io.github.morainet:mcos-bom:0.0.4"))
     implementation("io.github.morainet:mcos-runtime")  // JVM host (server / CLI / desktop)
     // implementation("io.github.morainet:mcos-sdk")   // plugin authors: contracts only
 }

@@ -84,7 +84,7 @@ class DirectorySandbox(root: Path) : SandboxFileService {
         if (!Files.isDirectory(target)) return emptyList()
         return Files.list(target).use { stream ->
             stream.sorted().map { entryPath ->
-                val relative = root.relativize(entryPath).toString()
+                val relative = root.relativize(entryPath).toString().replace('\\', '/')
                 SandboxEntry(
                     path = relative,
                     isDir = Files.isDirectory(entryPath),
@@ -101,7 +101,7 @@ class DirectorySandbox(root: Path) : SandboxFileService {
         requireSegment(suffix)
         Files.createDirectories(root)
         val created = Files.createTempFile(root, prefix.ifEmpty { "mcos" }, suffix)
-        return root.relativize(created).toString()
+        return root.relativize(created).toString().replace('\\', '/')
     }
 
     // ─── Path safety ───────────────────────────────────────────────────

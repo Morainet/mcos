@@ -8,7 +8,11 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ---
 
-## [Unreleased]
+## [0.0.4] - 2026-09-06
+
+*首个 JVM 全量发布：11 个 library + BOM 一起进入 Central（此前 v0.0.1–v0.0.3 仅为 `mcos-android-sdk` 的 Central 冒烟）。本段切片 = origin/main 之上的三个提交：item 53 远程企业策略下发、item 54 fail-closed Stage-10 审计、item 55 调度器热调参；主线上早于这三者的其余累积代码（item 45–52 等）随本版首次发布、未另作 changelog 分段。*
+
+发布门禁期间另收录两处修复：`DirectorySandbox.list/tempFile` 输出统一为虚拟 `/` 分隔路径（Windows JVM 下不再泄出原生 `\`，返回值可回喂 `read`/`write`，Android 行为零变化）；`mcos-index-server` 的 `AvScannerTest` 外部扫描器 wrapper 改为按宿主 OS 生成（Windows 走 `cmd /c` 批处理），裁决语义不变。
 
 ### 调度器运行时热调参 — `RunScheduler.reconfigure`（2026-09-06）
 
@@ -39,6 +43,8 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 - **测试 +25 JVM**：`HttpEnterprisePolicySourceTest` H1-H11 · `JdkEnterprisePolicyHttpTransportTest` JT1-JT4 · `PolicyEndpointTest` EP1-EP10（live-server + 真实客户端链互操作：401/404 fail-closed、上传校验、鉴权、删除幂等、重启持久化、热更新）。**基线 1419/1607 → 1444/1632**。
 - **诚实边界**：MDM（Android Enterprise）臂属设备侧，待 Android `HttpURLConnection` 传输（或 managed-config 源）后续接入，本仓库无需模拟器或 MDM；源内无后台调度器——宿主启动调一次 `current()` 即预热；§13.3 第 5 步的 ConfigChanged 审计记录仍是宿主消费侧（源发生命周期事件）。
 - **文档**：08-security §13.3 as-built（en/zh）· `11-implementation-status` §6 补回 item 52 条目（index-server + 共享 `CiGateEngine` + `market` 套件回填）并新增 item 53（远程策略下发，en/zh 镜像）· REPOSITORIES（en/zh）"远程策略下发仍为 P3" → 已落地 · `mcos-server/README.md` REST 表 + 企业策略通道章节。
+
+## [Unreleased]
 
 ### Conformance "market" 套件 — 作者侧驱动共享 `CiGateEngine`（2026-09-06）
 
