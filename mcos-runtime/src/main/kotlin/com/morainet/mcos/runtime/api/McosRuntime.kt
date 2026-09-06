@@ -461,6 +461,21 @@ class McosRuntime internal constructor(
     fun schedulerMetrics(): SchedulerMetrics = scheduler.metrics()
 
     /**
+     * Hot-retune the scheduler's live knobs (03-runtime.md §19.1 "hot-reload" —
+     * the documented scheduler hot-retuning delta). Mirrors the scheduler-level
+     * semantics exactly: a raised cap applies to runs that acquire after the
+     * change (extra per-lane workers are spawned), a lowered cap never
+     * interrupts in-flight runs, and builder-time fields (lane capacity, drain
+     * grace, and the per-plugin/destructive caps the default Executor's limiter
+     * was sized with) must stay unchanged — an attempt to change them is refused
+     * loudly. See [RunScheduler.reconfigure] for the full contract.
+     *
+     * @param new Desired scheduler config (its builder-time fields must match).
+     * @return The previously-active config, so the host can log the transition.
+     */
+    fun reconfigureScheduler(new: SchedulerConfig): SchedulerConfig = scheduler.reconfigure(new)
+
+    /**
      * Access the memory facade.
      */
     fun memory(): MemoryFacade = memory

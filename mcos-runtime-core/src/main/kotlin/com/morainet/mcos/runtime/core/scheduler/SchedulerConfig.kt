@@ -5,10 +5,16 @@ package com.morainet.mcos.runtime.core.scheduler
  * sourced from 08-security.md §10.1) plus the §8.4 fairness/backpressure constants.
  *
  * The three concurrency caps are normative defaults; every field is constructor-tunable
- * so a host can size the scheduler for its device class. Live retuning after [start]
- * is NOT supported (semaphores are fixed at construction) — the hot-reload scenario of
- * 03 §"hot-reload" (`maxParallel` applies to runs enqueued after the change) is host
- * work and deliberately out of scope.
+ * so a host can size the scheduler for its device class. A live-retuning subset can be
+ * hot-applied at runtime via [RunScheduler.reconfigure] (03 §19.1 "hot-reload": a raised
+ * `maxParallel` applies to runs that acquire after the change, in-flight runs are NOT
+ * interrupted). The live subset is [maxConcurrentInvokes] (validated to §19.1's 1..16
+ * range), [backpressureThreshold], [initialRetryMs] and [maxRetryMs]. [laneCapacity],
+ * [drainGraceMs] and the two per-plugin caps ([maxConcurrentPerPlugin],
+ * [maxConcurrentDestructive]) stay builder-time — channels/worker structure and the
+ * Executor's [InvocationLimiter] are fixed at construction — and reconfigure refuses a
+ * config that changes any of them, so a host can never drift the live scheduler apart
+ * from the limiter sized at startup.
  *
  * @param maxConcurrentInvokes Max parallel run bodies globally (§8.2: default 4).
  *        Enforced by the shared semaphore acquired before dispatch (§8.4).

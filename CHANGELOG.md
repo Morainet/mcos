@@ -10,6 +10,15 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### 调度器运行时热调参 — `RunScheduler.reconfigure`（2026-09-06）
+
+03 §19.1 "hot-reload" 的代码落地（item 55）：`SchedulerConfig` 顶部与 §5 行曾诚实标注 "热调参仅限构建期（信号量与 worker 构建时固定）"，本切片把该缺口收掉，保留诚实边界（通道容量/每插件 limiter 仍构建期固定，漂移响亮拒绝）。
+
+- **原语 `scheduler/RunConcurrencyGate`**：取代全局 `Semaphore(maxConcurrentInvokes)` 的可调大小计数门——上调先把新许可交给等待者（FIFO）；下调只收回空闲许可，在飞许可绝不回收（§19.1：在飞 run 不被中断，并发随 body 结束衰减到新上限）；排队中取消的等待者自行摘出（无许可泄漏）。
+- **`RunScheduler.reconfigure(new)`**：返回先前 config 供宿主记录；`maxConcurrentInvokes` 校验到 §19.1 的 1..16（非法值 `IllegalArgumentException` 响亮拒绝、绝不静默取整）；实时应用全局上限（重设闸门 + 为上调用补足每通道 worker，防构建期池饿死）、退避曲线（自下一次拒绝计算生效：500 ms → 1 s 基线同一升级 500 → 2 000 ms）、背压阈值。构建期字段（`laneCapacity`/`drainGraceMs`/每插件上限）变化即拒绝——调度器与启动时定尺寸的 Executor limiter 永不静默分叉。
+- **facade**：`McosRuntime.reconfigureScheduler(new)`；注入自定义调度器的宿主直接调 `reconfigure`。诚实边界：调度器级旋钮——完整 §19 RuntimeConfig 来源/优先级管理器留待后续切片。
+- **测试 +12 JVM**：`RunConcurrencyGateTest` 6（可调上限语义）· `RunSchedulerRetuneTest` 4（热上调/热下调/退避重调/非法与关停后拒绝）· `McosRuntimeSchedulerRetuneTest` 2（facade 重调 + 返回旧 config、构建期漂移与关停后拒绝）。**基线 1457/1645 → 1469/1657**。
+
 ### fail-closed Stage-10 审计 — `auditFailClosed` 接线（2026-09-06）
 
 03 §13.3 / 08 §14 的收口（item 54）：此前 `AuditLog` 的 Stage-10 写是 fire-and-forget——磁盘满等写失败被静默吞掉，规范里"enterprise 下可配置 fail-closed（run 以 `INTERNAL` 失败）"没有代码路径。本切片把持久化确认与 fail-closed 决策接上。

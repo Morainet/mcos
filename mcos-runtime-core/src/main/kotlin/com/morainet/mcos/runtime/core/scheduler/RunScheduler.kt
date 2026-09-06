@@ -19,7 +19,6 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
@@ -41,8 +40,9 @@ import kotlinx.coroutines.withTimeoutOrNull
  * ## Concurrency (§8.2 / §8.4)
  * Each lane has a dedicated worker pool (sized by [SchedulerConfig.maxConcurrentInvokes])
  * so a saturated `background` lane cannot starve `interactive` — there is no strict
- * priority across lanes. The global cap is a shared [Semaphore] acquired before the
- * body dispatch and released on completion. Waiting for a permit never counts against
+ * priority across lanes. The global cap is a shared [RunConcurrencyGate] acquired
+ * before the body dispatch and released on completion; the gate is resizable at
+ * runtime via [reconfigure] (03 §19.1). Waiting for a permit never counts against
  * the command timeout (the Executor's `withTimeout` starts inside the body).
  *
  * ## Backpressure (§8.4)
@@ -66,6 +66,14 @@ import kotlinx.coroutines.withTimeoutOrNull
  * and in-flight work [SchedulerConfig.drainGraceMs] to finish before cancelling the
  * remainder. Returns the runIds whose bodies never ran so the caller can publish
  * terminal events for them.
+ *
+ * ## Live retuning (03 §19.1)
+ * [reconfigure] hot-applies a live subset of [SchedulerConfig] ([maxConcurrentInvokes],
+ * [backpressureThreshold], [initialRetryMs], [maxRetryMs]) after [start]. A raised cap
+ * applies to bodies that acquire after the change (extra per-lane workers are spawned
+ * so a raised cap is not starved by the construction-time pool); lowering never
+ * interrupts in-flight runs — the gate revokes idle permits only and concurrency
+ * decays as bodies finish.
  *
  * @param config Tuning knobs; see [SchedulerConfig].
  * @param onBackpressure Invoked when a lane enters a sustained-backpressure episode
@@ -107,16 +115,23 @@ class RunScheduler(
         val channel: Channel<QueuedItem> = Channel(capacity)
         val depth = AtomicInteger(0)
         val inFlight = AtomicInteger(0)
+
+        /** Workers currently draining this lane (construction pool + top-ups). */
+        val workers = AtomicInteger(0)
     }
 
-    private class BackoffTracker(private val initialMs: Long, private val maxMs: Long) {
+    private class BackoffTracker {
         private val mutex = Any()
 
         /** Access-order LRU: rejection counts per submission fingerprint, bounded. */
         private val rejections = LinkedHashMap<String, Int>(16, 0.75f, true)
 
-        /** Record one more rejection of [key] and return its §8.4 backoff hint. */
-        fun nextRetryMs(key: String): Long = synchronized(mutex) {
+        /**
+         * Record one more rejection of [key] and return its §8.4 backoff hint.
+         * The caller passes the *live* initial/max so a [RunScheduler.reconfigure]
+         * applies from the next rejection computation on.
+         */
+        fun nextRetryMs(key: String, initialMs: Long, maxMs: Long): Long = synchronized(mutex) {
             if (rejections.size > MAX_TRACKED_KEYS) {
                 val entryIter = rejections.entries.iterator()
                 repeat(rejections.size - MAX_TRACKED_KEYS) {
@@ -143,8 +158,16 @@ class RunScheduler(
         LaneState(it, config.laneCapacity)
     }
 
-    private val globalSemaphore = Semaphore(config.maxConcurrentInvokes.coerceAtLeast(1))
-    private val backoff = BackoffTracker(config.initialRetryMs, config.maxRetryMs)
+    /**
+     * Live-retunable knobs (03 §19.1). Mutated only by [reconfigure]; every
+     * read is per-use, so a change applies from the next decision on.
+     */
+    @Volatile
+    private var liveConfig: SchedulerConfig = config
+
+    /** Resizable global-permit gate — [reconfigure] changes its ceiling. */
+    private val concurrencyGate = RunConcurrencyGate(config.maxConcurrentInvokes.coerceAtLeast(1))
+    private val backoff = BackoffTracker()
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
 
     private val queuedRuns = ConcurrentHashMap<String, QueuedItem>()
@@ -171,9 +194,21 @@ class RunScheduler(
      */
     fun start() {
         if (!started.compareAndSet(false, true)) return
-        val workersPerLane = config.maxConcurrentInvokes.coerceAtLeast(1)
+        spawnWorkers(liveConfig.maxConcurrentInvokes.coerceAtLeast(1))
+    }
+
+    /**
+     * Spin up per-lane workers until each lane has [targetPerLane]. Called from
+     * [start] (construction pool) and from [reconfigure] when a raised cap needs
+     * more workers than the construction-time pool (so a hot-raised cap is never
+     * starved by worker shortage — every lane keeps at least `cap` workers, which
+     * also preserves the "one saturated lane alone can reach the cap" property).
+     * Shrinks never retire workers — extra workers simply wait on the lane channel.
+     */
+    private fun spawnWorkers(targetPerLane: Int) {
         for (state in lanes.values) {
-            repeat(workersPerLane) {
+            while (state.workers.get() < targetPerLane) {
+                state.workers.incrementAndGet()
                 workers.add(
                     scope.launch {
                         for (item in state.channel) {
@@ -226,11 +261,12 @@ class RunScheduler(
         val outcome = state.channel.trySend(item)
         if (outcome.isFailure) {
             queuedRuns.remove(runId)
-            val retryAfterMs = backoff.nextRetryMs(fingerprint)
+            val cfg = liveConfig
+            val retryAfterMs = backoff.nextRetryMs(fingerprint, cfg.initialRetryMs, cfg.maxRetryMs)
             return SubmitResult.Rejected(
                 code = McosErrorCode.RATE_LIMITED.name,
                 retryAfterMs = retryAfterMs,
-                message = "Scheduler lane '$lane' is full (capacity ${config.laneCapacity}); " +
+                message = "Scheduler lane '$lane' is full (capacity ${cfg.laneCapacity}); " +
                     "retry after ${retryAfterMs}ms",
             )
         }
@@ -284,6 +320,68 @@ class RunScheduler(
     )
 
     /**
+     * Hot-retune the live scheduler knobs (03 §19.1 "hot-reload" semantics —
+     * `maxParallel` applies to runs enqueued/acquiring after the change;
+     * in-flight runs are NOT interrupted).
+     *
+     * Live-applied: [SchedulerConfig.maxConcurrentInvokes] (validated to §19.1's
+     * 1..16 range), [SchedulerConfig.backpressureThreshold],
+     * [SchedulerConfig.initialRetryMs], [SchedulerConfig.maxRetryMs].
+     *
+     * Builder-time fields ([SchedulerConfig.laneCapacity],
+     * [SchedulerConfig.drainGraceMs], [SchedulerConfig.maxConcurrentPerPlugin],
+     * [SchedulerConfig.maxConcurrentDestructive]) must equal the values in force —
+     * the lane channels are fixed at construction and the Executor's
+     * [InvocationLimiter] is sized at startup, so this slice refuses to drift the
+     * live scheduler apart from them silently. Refused loudly ([IllegalArgumentException])
+     * — never silently coerced, per §19.1's "an invalid config is rejected".
+     * After [shutdown] admission is closed and a reconfigure is refused.
+     *
+     * A raised cap spawns the extra per-lane workers it needs ([spawnWorkers]);
+     * lowering a cap never revokes an in-flight permit — [RunConcurrencyGate]
+     * cuts idle permits only and concurrency decays as bodies finish.
+     *
+     * @param new The desired full config (its builder-time fields must match).
+     * @return The previously-active config, so the host can log the transition.
+     */
+    fun reconfigure(new: SchedulerConfig): SchedulerConfig {
+        require(!shutdownFlag.get()) { "Scheduler is shut down; cannot reconfigure" }
+        require(new.maxConcurrentInvokes in 1..MAX_CONCURRENT_INVOKES) {
+            "maxConcurrentInvokes must be in 1..$MAX_CONCURRENT_INVOKES (03 §19.1); got ${new.maxConcurrentInvokes}"
+        }
+        require(new.backpressureThreshold >= 1) {
+            "backpressureThreshold must be >= 1; got ${new.backpressureThreshold}"
+        }
+        require(new.initialRetryMs >= 1) { "initialRetryMs must be >= 1; got ${new.initialRetryMs}" }
+        require(new.maxRetryMs >= new.initialRetryMs) {
+            "maxRetryMs (${new.maxRetryMs}) must be >= initialRetryMs (${new.initialRetryMs})"
+        }
+        val previous = liveConfig
+        val fixedMismatch = listOf(
+            "laneCapacity" to (previous.laneCapacity to new.laneCapacity),
+            "drainGraceMs" to (previous.drainGraceMs to new.drainGraceMs),
+            "maxConcurrentPerPlugin" to (previous.maxConcurrentPerPlugin to new.maxConcurrentPerPlugin),
+            "maxConcurrentDestructive" to (previous.maxConcurrentDestructive to new.maxConcurrentDestructive),
+        ).firstOrNull { it.second.first != it.second.second }
+        if (fixedMismatch != null) {
+            throw IllegalArgumentException(
+                "SchedulerConfig.${fixedMismatch.first} is builder-time (channels and the " +
+                    "Executor limiter are fixed at construction); reconfigure can only change " +
+                    "maxConcurrentInvokes, backpressureThreshold, initialRetryMs and maxRetryMs"
+            )
+        }
+        liveConfig = new
+        concurrencyGate.resize(new.maxConcurrentInvokes)
+        if (started.get()) spawnWorkers(new.maxConcurrentInvokes)
+        return previous
+    }
+
+    companion object {
+        /** §19.1 `maxParallel` validation ceiling. */
+        const val MAX_CONCURRENT_INVOKES = 16
+    }
+
+    /**
      * Shut down: reject further enqueues, give queued + in-flight work
      * [SchedulerConfig.drainGraceMs] to finish, then cancel the remainder.
      * Idempotent.
@@ -296,7 +394,7 @@ class RunScheduler(
         lanes.values.forEach { it.channel.close() }
         val pending = (workers.toList() + runningJobs.values.toList())
         val drained = runBlocking {
-            withTimeoutOrNull(config.drainGraceMs) {
+            withTimeoutOrNull(liveConfig.drainGraceMs) {
                 pending.joinAll()
                 true
             } ?: false
@@ -357,7 +455,7 @@ class RunScheduler(
             return
         }
         val waitStart = timeSource()
-        globalSemaphore.acquire()
+        concurrencyGate.acquire()
         val waitMs = timeSource() - waitStart
         semaphoreAcquisitions.incrementAndGet()
         semaphoreLastWaitMs = waitMs
@@ -367,7 +465,7 @@ class RunScheduler(
             item.body()
         } finally {
             state.inFlight.decrementAndGet()
-            globalSemaphore.release()
+            concurrencyGate.release()
             queuedRuns.remove(item.runId)
             item.gate.complete()
         }
@@ -380,7 +478,7 @@ class RunScheduler(
      * "sustained" qualifier is approximated by episode edges, not duration.
      */
     private fun maybeUpdateBackpressure(state: LaneState, depth: Int) {
-        val entered = if (depth > config.backpressureThreshold) {
+        val entered = if (depth > liveConfig.backpressureThreshold) {
             pressuredLanes.add(state.lane)
         } else {
             pressuredLanes.remove(state.lane)
