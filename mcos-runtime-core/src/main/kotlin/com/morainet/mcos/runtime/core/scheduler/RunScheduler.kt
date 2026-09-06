@@ -392,7 +392,17 @@ class RunScheduler(
     fun shutdown(): List<String> {
         if (!shutdownFlag.compareAndSet(false, true)) return emptyList()
         lanes.values.forEach { it.channel.close() }
-        val pending = (workers.toList() + runningJobs.values.toList())
+        // Snapshot with the hasNext-first iterator protocol. Kotlin's
+        // Collection.toList() short-circuits a size==1 receiver to
+        // `iterator().next()` WITHOUT a hasNext() first, and a
+        // ConcurrentHashMap's weakly-consistent value iterator whose traversal
+        // starts empty (the last entry was removed concurrently by a finishing
+        // worker between size() and next()) then throws NoSuchElementException.
+        // Iterating with explicit hasNext()/next() is race-free here.
+        val pending = buildList {
+            synchronized(workers) { addAll(workers) }
+            for (job in runningJobs.values) add(job)
+        }
         val drained = runBlocking {
             withTimeoutOrNull(liveConfig.drainGraceMs) {
                 pending.joinAll()

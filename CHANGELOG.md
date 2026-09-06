@@ -12,7 +12,7 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 *首个 JVM 全量发布：11 个 library + BOM 一起进入 Central（此前 v0.0.1–v0.0.3 仅为 `mcos-android-sdk` 的 Central 冒烟）。本段切片 = origin/main 之上的三个提交：item 53 远程企业策略下发、item 54 fail-closed Stage-10 审计、item 55 调度器热调参；主线上早于这三者的其余累积代码（item 45–52 等）随本版首次发布、未另作 changelog 分段。*
 
-发布门禁期间另收录两处修复：`DirectorySandbox.list/tempFile` 输出统一为虚拟 `/` 分隔路径（Windows JVM 下不再泄出原生 `\`，返回值可回喂 `read`/`write`，Android 行为零变化）；`mcos-index-server` 的 `AvScannerTest` 外部扫描器 wrapper 改为按宿主 OS 生成（Windows 走 `cmd /c` 批处理），裁决语义不变。
+发布门禁期间另收录三处修复：`DirectorySandbox.list/tempFile` 输出统一为虚拟 `/` 分隔路径（Windows JVM 下不再泄出原生 `\`，返回值可回喂 `read`/`write`，Android 行为零变化）；`mcos-index-server` 的 `AvScannerTest` 外部扫描器 wrapper 改为按宿主 OS 生成（Windows 走 `cmd /c` 批处理），裁决语义不变；`RunScheduler.shutdown` 快照并发在飞 job 的 `ConcurrentHashMap` 时改用 hasNext 优先迭代——Kotlin `Collection.toList()` 对 `size==1` 走 `iterator().next()` 捷径跳过 `hasNext()`，恰好撞上 finishing worker 的并发 `remove` 时弱一致迭代器会抛 `NoSuchElementException`（CI 与本地各复现于 `McosRuntimeSchedulerTest` S1/S2 的 tearDown，属 shutdown 自身竞态而非用例断言）。
 
 ### 调度器运行时热调参 — `RunScheduler.reconfigure`（2026-09-06）
 
