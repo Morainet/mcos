@@ -252,7 +252,7 @@ Read bottom-up: `mcos-sdk` is the leaf contract layer; everything depends on it.
 | `mcos-plugin-iot` | `home.*`, `iot.*` (Home Assistant / Tuya / Matter) | ✅ shipped (2026-08-31) |
 | `mcos-plugin-mcp` | MCP client adapter → `mcp.*` commands | P2 spike / P3 production |
 
-`mcos-server` shipped as `mcos-server/` (see §2) covering the **sync** role; `mcos-conformance` shipped as `mcos-conformance/` (see §2) covering the **P3 community conformance** role; marketplace index **host** shipped as `mcos-index-server/` (see §2); remote policy distribution remains P3.
+`mcos-server` shipped as `mcos-server/` (see §2) covering the **sync** role; `mcos-conformance` shipped as `mcos-conformance/` (see §2) covering the **P3 community conformance** role; marketplace index **host** shipped as `mcos-index-server/` (see §2); remote policy distribution shipped as `HttpEnterprisePolicySource` + an `EnterprisePolicyHttpTransport` seam (default JVM transport in `mcos-runtime-core`) + the mcos-server `/enterprise/policy` management channel (08 §13.3, [11-implementation-status.md §6](./11-implementation-status.md) item 53).
 
 ---
 

@@ -252,7 +252,7 @@ flowchart BT
 | `mcos-plugin-iot` | `home.*`、`iot.*`（Home Assistant / Tuya / Matter） | ✅ 已交付（2026-08-31） |
 | `mcos-plugin-mcp` | MCP 客户端适配器 → `mcp.*` 命令 | P2 spike / P3 production |
 
-`mcos-server` 已作为 `mcos-server/` 落地（见 §2），覆盖「同步」职责；`mcos-conformance` 已作为 `mcos-conformance/` 落地（见 §2），覆盖「P3 社区一致性」职责；市场索引**宿主**已作为 `mcos-index-server/` 落地（见 §2）；远程策略下发仍为 P3。
+`mcos-server` 已作为 `mcos-server/` 落地（见 §2），覆盖「同步」职责；`mcos-conformance` 已作为 `mcos-conformance/` 落地（见 §2），覆盖「P3 社区一致性」职责；市场索引**宿主**已作为 `mcos-index-server/` 落地（见 §2）；远程策略下发已落地为 `HttpEnterprisePolicySource` + `EnterprisePolicyHttpTransport` 传输缝（默认 JVM 传输在 `mcos-runtime-core`）+ mcos-server `/enterprise/policy` 管理通道（08 §13.3，[11-implementation-status.md §6](./11-implementation-status.md) item 53）。
 
 ---
 

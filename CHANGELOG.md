@@ -10,6 +10,17 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### 远程企业策略下发 — `HttpEnterprisePolicySource` + mcos-server `/enterprise/policy` 管理通道（2026-09-06）
+
+08 §13.3 的 P3 剩余项收口：此前企业策略只能经 fixed/file 源送达，"经 `mcos-server` 或 MDM 下发"这条通道没有代码。本切片把它做成纯 JVM、可整链验证的交付。
+
+- **`HttpEnterprisePolicySource`**（`mcos-security`）：HTTP(S) 周期拉取策略文档，逐字执行 §13.3 语义——节奏按 `refreshIntervalMs` 节流（默认 3 600 000 ms = 规范的"每 1 小时"，间隔是两次网络拉取间的最短间距，首次访问必拉，拉取跑在 `current()` 调用线程上、绝不抛错）；传输失败/非 2xx → 服务上一份好策略并发 `PolicyFetchFailed`，无缓存 → `FAIL_CLOSED`；解析/版本失败 → `FAIL_CLOSED` + 携带肇事文档 SHA-256 指纹的 `PolicyParseFailed`；成功 → `PolicyUpdated`（旧/新版本 + 签发方）；内容未变（同 SHA-256）由缓存供出、不重复解析也不重发事件；解析失败后保持 `FAIL_CLOSED` 直到再次拿到可解析字节再恢复（H10 钉死"服务器重发与缓存完全相同字节"的边界——FAIL_CLOSED 是状态不是粘性缓存）。拉取缝 `EnterprisePolicyHttpTransport`（fun interface，MUST NOT throw）。
+- **`JdkEnterprisePolicyHttpTransport`**（`mcos-runtime-core`）：默认 JVM 实现——`java.net.http`、可选 bearer token、5 s 连接 / 15 s 请求超时、非 2xx 折入 `Failure`。Android 无 `java.net.http`，Android 宿主稍后自供 `HttpURLConnection` 传输（与 `SyncBlobTransport`/`LlmHttpTransport` 同款缝切分）。
+- **`mcos-server` 管理通道**：新增 `PUT|GET|DELETE /enterprise/policy`，挂在既有强制 Bearer token 面上——blob 服务器**唯一**会解析的文档：`PUT` 用 `EnterprisePolicy.parse` 校验，畸形/不支持版本 JSON 拒 400（运营方笔误上传即被拦下，而不是推给客户端让它们下次拉取时 fail closed）、超大（> 1 MiB）拒 413、落已知槽位且重启持久化。
+- **测试 +25 JVM**：`HttpEnterprisePolicySourceTest` H1-H11 · `JdkEnterprisePolicyHttpTransportTest` JT1-JT4 · `PolicyEndpointTest` EP1-EP10（live-server + 真实客户端链互操作：401/404 fail-closed、上传校验、鉴权、删除幂等、重启持久化、热更新）。**基线 1419/1607 → 1444/1632**。
+- **诚实边界**：MDM（Android Enterprise）臂属设备侧，待 Android `HttpURLConnection` 传输（或 managed-config 源）后续接入，本仓库无需模拟器或 MDM；源内无后台调度器——宿主启动调一次 `current()` 即预热；§13.3 第 5 步的 ConfigChanged 审计记录仍是宿主消费侧（源发生命周期事件）。
+- **文档**：08-security §13.3 as-built（en/zh）· `11-implementation-status` §6 补回 item 52 条目（index-server + 共享 `CiGateEngine` + `market` 套件回填）并新增 item 53（远程策略下发，en/zh 镜像）· REPOSITORIES（en/zh）"远程策略下发仍为 P3" → 已落地 · `mcos-server/README.md` REST 表 + 企业策略通道章节。
+
 ### Conformance "market" 套件 — 作者侧驱动共享 `CiGateEngine`（2026-09-06）
 
 09 §5.1 的"本地过 → CI 过"闭环补上最后一环：此前 marketplace-only 门（gate 4/5/6/9/10/11）只由 index-server 服务端经 `CiGateEngine` 驱动，conformance 作者侧只能跑到 gate 1/2/3/7/8 与 DSL/IR。现在作者在提交前就能复现**同一生产类**的裁决（`CiGateEngine` docstring 预设的 "market" suite 落地）。

@@ -1152,6 +1152,23 @@ Enterprise policy is delivered via `mcos-server` (MCOS's own management channel)
 
 **Fail-closed is non-negotiable.** A device that cannot reach its policy server must not fall back to "no policy" (which would be the most permissive state). It falls back to the most restrictive state.
 
+> **As-built (item 53):** the "delivered via `mcos-server`" arm ships as
+> `HttpEnterprisePolicySource` (mcos-security) over an `EnterprisePolicyHttpTransport` seam,
+> with the default JVM transport `JdkEnterprisePolicyHttpTransport` (mcos-runtime-core), and
+> `mcos-server` hosts the document at `PUT|GET|DELETE /enterprise/policy` (same mandatory
+> Bearer auth; upload-time validation refuses malformed JSON with 400, oversized docs with
+> 413). Fetch cadence = `refreshIntervalMs` (default 3 600 000 ms — step 1's "every 1 hour"),
+> with the interval as the minimum spacing between network fetches, driven by `current()`
+> calls; steps 3-5 above are the source's semantics (parse/version failure → FAIL_CLOSED +
+> `policy_parse_failed`-equivalent lifecycle event carrying the SHA-256 fingerprint of the
+> offending document; fetch failure → last good policy, else FAIL_CLOSED; successful parse →
+> `PolicyUpdated` lifecycle event). The MDM (Android Enterprise) arm is device-side and not
+> yet implemented in this repo — Android hosts supply an `HttpURLConnection` transport (and,
+> where MDM managed config is used, a managed-config source) in a follow-up. Coverage:
+> mcos-security `HttpEnterprisePolicySourceTest` H1-H11 · mcos-runtime-core
+> `JdkEnterprisePolicyHttpTransportTest` JT1-JT4 · mcos-server `PolicyEndpointTest` EP1-EP10
+> (live-server interop with the real client chain). *(Mirrored in ZH.)*
+
 ### 13.4 Enterprise & User Policy Merge Rule
 
 When both enterprise policy and user settings are present, the merge rule is **most-restrictive-wins**:

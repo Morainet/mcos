@@ -1153,6 +1153,8 @@ data class EnterprisePolicy(
 
 **Fail-closed 是不可妥协的。** 无法连接到策略服务器的设备绝不能回退到“无策略”（那将是最宽松的状态）。它回退到最严格的状态。
 
+> **As-built（item 53）：**“经 `mcos-server` 下发”这条臂已落地为 `HttpEnterprisePolicySource`（mcos-security）+ `EnterprisePolicyHttpTransport` 传输缝，默认 JVM 传输是 `JdkEnterprisePolicyHttpTransport`（mcos-runtime-core）；`mcos-server` 在 `PUT|GET|DELETE /enterprise/policy` 承载该文档（同款强制 Bearer 认证；上传时校验——畸形 JSON 拒 400、超大文档拒 413）。拉取节奏 = `refreshIntervalMs`（默认 3 600 000 ms，即第 1 步的"every 1 hour"），该间隔是两次网络拉取之间的最短间距，由 `current()` 调用驱动；上方第 3-5 步即源的语义（解析/版本失败 → FAIL_CLOSED + 携带肇事文档 SHA-256 指纹的 `policy_parse_failed` 等价生命周期事件；拉取失败 → 上一份好策略，无缓存则 FAIL_CLOSED；解析成功 → `PolicyUpdated` 生命周期事件）。MDM（Android Enterprise）这条臂属设备侧、本仓库暂未实现——Android 宿主将在后续提供 `HttpURLConnection` 传输（若用 MDM managed config，则为 managed-config 源）。覆盖：mcos-security `HttpEnterprisePolicySourceTest` H1-H11 · mcos-runtime-core `JdkEnterprisePolicyHttpTransportTest` JT1-JT4 · mcos-server `PolicyEndpointTest` EP1-EP10（真实客户端链的 live-server 互操作）。*（与 EN 镜像。）*
+
 ### 13.4 企业与用户策略合并规则
 
 当企业策略和用户设置同时存在时，合并规则是 **最严格者胜出**：
