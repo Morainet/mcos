@@ -221,13 +221,24 @@ flowchart BT
 | 技术栈 | Kotlin/JVM · JDK 17 · 零第三方运行时依赖 |
 | 规范 | [07-memory.md](./07-memory.md) §11.0 |
 
+### `mcos-index-server` — 索引宿主（服务端应用）
+
+| | |
+|---|---|
+| 路径 | `mcos-index-server/` |
+| 包名 | `com.morainet.mcos.indexserver` |
+| 职责 | P3 marketplace 索引**宿主**（12-index-server §5/§8.1）：发现索引 + 发布者提交 → 评审 → 发布流程，跑在**共享评审引擎** `CiGateEngine`（09 §5.1 gate 2/4/5/6/9/10/11，服务端评估）上；`Registry` 持久化 + Bearer admin/publisher 认证、运营方 Ed25519 `/v1/blocklist` 签名（含紧急吊销 / unlist）、**gate-9 AV 缝**（外部扫描命令 `MCOS_AV_SCANNER_CMD` 或 sha256 `av-denylist.txt`；无 → `UNSCANNED` → 人工评审）。设备拉取索引 + 签名 blocklist。 |
+| 依赖 | `:mcos-marketplace`（共享评审引擎）；JDK `com.sun.net.httpserver` |
+| 技术栈 | Kotlin/JVM · JDK 17 · 零第三方运行时依赖 |
+| 规范 | [12-index-server.md](./12-index-server.md) §5、§8.1 |
+
 ### `mcos-conformance` — 可执行一致性门禁（开发者工具）
 
 | | |
 |---|---|
 | 路径 | `mcos-conformance/` |
 | 包名 | `com.morainet.mcos.conformance` |
-| 职责 | 插件作者提交 marketplace 前本地运行的套件，镜像市场 CI 门禁（09 §5.1）：`dsl`（02 §16 golden fixtures）、`manifest`（gates 1/2/3/7，经 `McosPackage.readPluginManifest`）、`trust`（gate 8 + 08 §6/§7）、`ir`（02 §7 不变量）——48 用例，报告 human / JSON / JUnit XML + baseline 漂移门禁。不是库、**不发布**——10 §6.4 的 "published as executable artifact" 义务由 `run` JavaExec 满足（`./gradlew :mcos-conformance:conformance`）。 |
+| 职责 | 插件作者提交 marketplace 前本地运行的套件，镜像市场 CI 门禁（09 §5.1）：`dsl`（02 §16 golden fixtures）、`manifest`（gates 1/2/3/7，经 `McosPackage.readPluginManifest`）、`trust`（gate 8 + 08 §6/§7）、`ir`（02 §7 不变量）、`market`（09 §5.1 gate 4/5/6/9/10/11，经共享评审引擎 `CiGateEngine`）——65 用例，报告 human / JSON / JUnit XML + baseline 漂移门禁。不是库、**不发布**——10 §6.4 的 "published as executable artifact" 义务由 `run` JavaExec 满足（`./gradlew :mcos-conformance:conformance`）。 |
 | 依赖 | `:mcos-sdk`、`:mcos-security`、`:mcos-runtime-core`、`:mcos-marketplace`；junit + kotlin-test（仅测试） |
 | 技术栈 | Kotlin/JVM · JDK 17 · JavaExec CLI |
 | 规范 | [10-roadmap.md](./10-roadmap.md) §6.4、[09-marketplace.md](./09-marketplace.md) §5.1 |
@@ -238,10 +249,10 @@ flowchart BT
 
 | 模块 | 职责 | 目标阶段 |
 |--------|------|--------------|
-| `mcos-plugin-iot` | `home.*`、`iot.*`（Home Assistant / Tuya / Matter） | P2 |
+| `mcos-plugin-iot` | `home.*`、`iot.*`（Home Assistant / Tuya / Matter） | ✅ 已交付（2026-08-31） |
 | `mcos-plugin-mcp` | MCP 客户端适配器 → `mcp.*` 命令 | P2 spike / P3 production |
 
-`mcos-server` 已作为 `mcos-server/` 落地（见 §2），覆盖「同步」职责；`mcos-conformance` 已作为 `mcos-conformance/` 落地（见 §2），覆盖「P3 社区一致性」职责；市场索引与远程策略仍为 P3。
+`mcos-server` 已作为 `mcos-server/` 落地（见 §2），覆盖「同步」职责；`mcos-conformance` 已作为 `mcos-conformance/` 落地（见 §2），覆盖「P3 社区一致性」职责；市场索引**宿主**已作为 `mcos-index-server/` 落地（见 §2）；远程策略下发仍为 P3。
 
 ---
 

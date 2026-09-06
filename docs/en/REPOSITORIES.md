@@ -221,13 +221,24 @@ Read bottom-up: `mcos-sdk` is the leaf contract layer; everything depends on it.
 | Stack | Kotlin/JVM · JDK 17 · zero third-party runtime deps |
 | Spec | [07-memory.md](./07-memory.md) §11.0 |
 
+### `mcos-index-server` — Index host (server application)
+
+| | |
+|---|---|
+| Path | `mcos-index-server/` |
+| Package | `com.morainet.mcos.indexserver` |
+| Role | P3 marketplace index **host** (12-index-server §5/§8.1): discovery index + publisher submission → review → publish flow running the **shared review engine** `CiGateEngine` (09 §5.1 gates 2/4/5/6/9/10/11, server-side), `Registry` persistence + Bearer admin/publisher auth, operator Ed25519 `/v1/blocklist` signing (plus emergency key revoke / unlist), and the **gate-9 AV seam** (external scanner command `MCOS_AV_SCANNER_CMD` or a sha256 `av-denylist.txt`; none → `UNSCANNED` → human review). Devices poll the index + signed blocklist. |
+| Depends on | `:mcos-marketplace` (shared review engine); JDK `com.sun.net.httpserver` |
+| Stack | Kotlin/JVM · JDK 17 · zero third-party runtime deps |
+| Spec | [12-index-server.md](./12-index-server.md) §5, §8.1 |
+
 ### `mcos-conformance` — Executable conformance gate (developer tool)
 
 | | |
 |---|---|
 | Path | `mcos-conformance/` |
 | Package | `com.morainet.mcos.conformance` |
-| Role | The suites a plugin author runs locally before submitting to the marketplace, mirroring the marketplace CI gates (09 §5.1): `dsl` (02 §16 golden fixtures), `manifest` (gates 1/2/3/7 via `McosPackage.readPluginManifest`), `trust` (gate 8 + 08 §6/§7), `ir` (02 §7 invariants) — 48 cases with human / JSON / JUnit XML reports and a baseline drift gate. Not a library and **not published** — the 10 §6.4 "published as executable artifact" obligation is met by the `run` JavaExec (`./gradlew :mcos-conformance:conformance`). |
+| Role | The suites a plugin author runs locally before submitting to the marketplace, mirroring the marketplace CI gates (09 §5.1): `dsl` (02 §16 golden fixtures), `manifest` (gates 1/2/3/7 via `McosPackage.readPluginManifest`), `trust` (gate 8 + 08 §6/§7), `ir` (02 §7 invariants), `market` (09 §5.1 gates 4/5/6/9/10/11 via the shared review engine `CiGateEngine`) — 65 cases with human / JSON / JUnit XML reports and a baseline drift gate. Not a library and **not published** — the 10 §6.4 "published as executable artifact" obligation is met by the `run` JavaExec (`./gradlew :mcos-conformance:conformance`). |
 | Depends on | `:mcos-sdk`, `:mcos-security`, `:mcos-runtime-core`, `:mcos-marketplace`; junit + kotlin-test (tests only) |
 | Stack | Kotlin/JVM · JDK 17 · JavaExec CLI |
 | Spec | [10-roadmap.md](./10-roadmap.md) §6.4, [09-marketplace.md](./09-marketplace.md) §5.1 |
@@ -238,10 +249,10 @@ Read bottom-up: `mcos-sdk` is the leaf contract layer; everything depends on it.
 
 | Module | Role | Target phase |
 |--------|------|--------------|
-| `mcos-plugin-iot` | `home.*`, `iot.*` (Home Assistant / Tuya / Matter) | P2 |
+| `mcos-plugin-iot` | `home.*`, `iot.*` (Home Assistant / Tuya / Matter) | ✅ shipped (2026-08-31) |
 | `mcos-plugin-mcp` | MCP client adapter → `mcp.*` commands | P2 spike / P3 production |
 
-`mcos-server` shipped as `mcos-server/` (see §2) covering the **sync** role; `mcos-conformance` shipped as `mcos-conformance/` (see §2) covering the **P3 community conformance** role; marketplace index and remote policy remain P3.
+`mcos-server` shipped as `mcos-server/` (see §2) covering the **sync** role; `mcos-conformance` shipped as `mcos-conformance/` (see §2) covering the **P3 community conformance** role; marketplace index **host** shipped as `mcos-index-server/` (see §2); remote policy distribution remains P3.
 
 ---
 

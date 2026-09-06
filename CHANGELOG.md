@@ -10,6 +10,25 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### Conformance "market" 套件 — 作者侧驱动共享 `CiGateEngine`（2026-09-06）
+
+09 §5.1 的"本地过 → CI 过"闭环补上最后一环：此前 marketplace-only 门（gate 4/5/6/9/10/11）只由 index-server 服务端经 `CiGateEngine` 驱动，conformance 作者侧只能跑到 gate 1/2/3/7/8 与 DSL/IR。现在作者在提交前就能复现**同一生产类**的裁决（`CiGateEngine` docstring 预设的 "market" suite 落地）。
+
+- **新套件 `market`**（`mcos-conformance/.../market/MarketConformanceSuite.kt`，17 用例）：用共享 `CiGateEngine`（`mcos-marketplace/review`，index-server review pipeline 跑的就是它）跑手建 manifest + registry 快照，断言裁决语义——首发布全绿 APPROVED、保留前缀 gate 2 拒绝、gate 4 诚实性两类告警升级 HUMAN_REVIEW、gate 5 单调性/命令耦合、gate 6 语言包完整性、gate 9 扫描裁决、gate 10 首占仲裁（含"重声明自己上版的命令不冲突"）、gate 11 未来运行时/单调 minRuntime，以及 09 §5.2 升级优先级（任一 error 压过 warning → CI_REJECTED）。
+- **Registry 状态语义（作者侧）**：空 `RegistrySnapshot` = 首次发布（无此前已批准事实源时的正确默认）；更新路径用 `PreviousRelease` 显式给出上版版本/命令版本/minRuntime。真实仲裁仍以服务端注册表为准——本套件是裁决规则的本地可执行规范。
+- **Gate 9 诚实性钉死**：默认 `ArtifactScan.Unscanned` → 升级 HUMAN_REVIEW（`"not scanned"`），永不伪造干净通过；MALICIOUS → CI_REJECTED。Fail 的 detail 携带引擎实际 `CiReviewReport`（pretty JSON），作者能直接看到是哪个 gate 因为什么文案触发。
+- **注册**：`ConformanceCli.allSuites()` 加入第五套件；全套件 48 → 65 用例，**65/65 绿**（`list` / `run` / baseline 机制自动纳入，无需改 CLI）。
+- **诚实边界**：作者侧快照是手建的（作者知道自己上版发了什么）；服务端跨插件命名仲裁（gate 10 的 `knownCommandIds`）仍由 index 注册表决定，本套件用固定夹具把规则本身可执行化。
+
+### 文档同步到代码现状（2026-09-06）
+
+状态文档此前已落后：`mcos-index-server` 与 IoT 插件代码早已落地，但 `11-implementation-status.md` 仍标 ⬜（§5 Plugins 行写 "⬜ IoT + Intent"、Marketplace 行写 "public search index hosting remains P3"）。刷新 en + zh（含 `REPOSITORIES.md` 参考卡）：
+
+- **IoT**：§2/§5/REPOSITORIES 从 `⬜ P2` 改为 `✅ shipped (2026-08-31)`（8 条命令：`home.device.list`、`home.light.on/off/set`、`home.scene.apply`/`movie`/`sleep`、`iot.ac.set`）。
+- **`mcos-index-server`**：加入模块树与 REPOSITORIES 参考卡——P3 索引宿主（`12-index-server.md` §5/§8.1）：发现索引 + 发布者提交 → 评审 → 发布，跑**共享评审引擎** `CiGateEngine`（09 §5.1 gate 2/4/5/6/9/10/11）、运营方 Ed25519 `/v1/blocklist` 签名与紧急吊销、gate-9 AV 缝；同步 §2 注释、§3 Marketplace 行、§5 Marketplace 行。剩余的是"公开部署"（运维事项，非代码缺口）与远程策略下发。
+- **conformance**：全部套件数引用更新为 **5 套件 · 65 用例**（`dsl` 8 / `manifest` 14 / `trust` 20 / `ir` 6 / `market` 17），`market` 套件注明驱动共享 `CiGateEngine`。
+- **诚实边界**：§6 带日期的历史 item 与 CHANGELOG 历史条目不改写（流水记录如实）；只刷新"活"状态断言与参考卡；zh 镜像同步。
+
 ### Conformance 测试套件 + `McosPackage` 迁入 runtime-core（2026-09-04）
 
 P3 社区项（10 §6.4）落地：插件作者提交 marketplace 前可在本地运行与 CI 同构的门禁套件（09 §5.1）；同时把 `.mcos` 清单读取器从 android-sdk 上移到 runtime-core，让 conformance 无需 Android 工具链。
