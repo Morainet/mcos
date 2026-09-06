@@ -1,6 +1,7 @@
 package com.morainet.mcos.plugin.devicefixture
 
 import com.morainet.mcos.sdk.*
+import java.io.File
 import java.nio.file.Files
 import kotlinx.coroutines.runBlocking
 import kotlinx.datetime.Instant
@@ -68,8 +69,21 @@ class DeviceIsolatedPluginTest {
         )
         val value = (result as CommandResult.Ok).value!!.jsonObject
         assertEquals("from-test", value["message"]!!.jsonPrimitive.content)
-        // /proc does not exist on a desktop JVM — pid is honestly null there.
-        assertTrue(value["pid"] is JsonNull)
+        // pid is the handler's honest observation of its own process: present and
+        // numeric wherever /proc/self/stat is readable (Android + Linux, which
+        // includes the Linux CI runner), JsonNull where it is not (macOS/Windows
+        // desktop JVM — /proc is Android/Linux-only). Assert the shape the host
+        // actually produces rather than hard-coding either platform.
+        val pid = value["pid"]
+        if (File("/proc/self/stat").isFile) {
+            assertIs<JsonPrimitive>(pid)
+            assertTrue(
+                pid.jsonPrimitive.content.toIntOrNull() != null,
+                "pid should be the handler's own numeric pid: $pid",
+            )
+        } else {
+            assertTrue(pid is JsonNull, "no /proc on this host, so pid must be honestly null: $value")
+        }
     }
 
     @Test
