@@ -1,6 +1,7 @@
 package com.morainet.mcos.android.demo
 
 import com.morainet.mcos.android.AppDeps
+import com.morainet.mcos.android.MutableUserRuntimeConfig
 import com.morainet.mcos.android.MarketplaceDeps
 import com.morainet.mcos.android.MarketplacePluginFactory
 import com.morainet.mcos.android.host.ActivityResultBridge
@@ -290,6 +291,7 @@ object TestMarketplace {
             auditLog = NullAuditLog,
             permissionKernel = permissionKernel,
             eventBus = eventBus,
+            userRuntimeConfig = MutableUserRuntimeConfig(),
             marketplace = MarketplaceDeps(
                 transport = transport,
                 keyStore = keyStore,
