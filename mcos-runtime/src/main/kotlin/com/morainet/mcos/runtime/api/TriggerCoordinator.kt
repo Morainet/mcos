@@ -39,17 +39,31 @@ internal class TriggerCoordinator(
     private val workflowStore: WorkflowStore,
     private val scheduleStore: ArmedScheduleStore = NullArmedScheduleStore,
     wakeScheduler: WakeScheduler? = null,
+    /**
+     * Live-read master switch for event triggers ([03-runtime.md §19]
+     * `eventTriggersEnabled`). Threaded into the [EventTriggerManager] so a
+     * `RuntimeConfigManager.apply` that disables event triggers takes effect
+     * immediately. Defaults to always-enabled.
+     */
+    eventTriggersEnabled: () -> Boolean = { true },
     private val fire: (workflowId: String, inputs: JsonObject, preAuthorized: Boolean, stepSource: String) -> Unit,
 ) {
     private val eventTriggers = EventTriggerManager(
         bus = eventBus,
         memory = memory,
         auditLog = auditLog,
+        enabled = eventTriggersEnabled,
     )
     private val scheduleTriggers = ScheduleTriggerManager(
         auditLog = auditLog,
         wakeScheduler = wakeScheduler,
     )
+
+    /** The event-trigger manager, for §19 background-fire budget retuning. */
+    fun eventTriggerManager(): EventTriggerManager = eventTriggers
+
+    /** The schedule-trigger manager, for §19 background-fire budget retuning. */
+    fun scheduleTriggerManager(): ScheduleTriggerManager = scheduleTriggers
 
     // Which workflows have an armed *schedule*, and whether the user
     // pre-authorized them — the durable subset persisted to [scheduleStore] so

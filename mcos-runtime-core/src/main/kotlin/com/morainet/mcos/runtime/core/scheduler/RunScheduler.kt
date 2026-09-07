@@ -165,6 +165,13 @@ class RunScheduler(
     @Volatile
     private var liveConfig: SchedulerConfig = config
 
+    /**
+     * The currently-active scheduler config ([03-runtime.md §19]). Read by
+     * `RuntimeConfigManager` to project the live `maxConcurrentInvokes` and to
+     * validate `RuntimeConfig.maxParallel` against it before an apply.
+     */
+    fun currentConfig(): SchedulerConfig = liveConfig
+
     /** Resizable global-permit gate — [reconfigure] changes its ceiling. */
     private val concurrencyGate = RunConcurrencyGate(config.maxConcurrentInvokes.coerceAtLeast(1))
     private val backoff = BackoffTracker()

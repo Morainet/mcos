@@ -10,6 +10,20 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### RuntimeConfig §19 — 源优先级聚合器 + 热加载扇出（2026-09-07）
+
+03 §19 的收口（item 57）：补齐 item 55 明确推迟的"更广的 §19 RuntimeConfig 源/优先级管理器"。此前 `RuntimeConfig` 仅存在于注释中,§19 的每个旋钮要么构建期冻结、要么无条件生效。
+
+- **新类型**（`mcos-security`）:`RedactionLevel { OFF, DEFAULT, STRICT }`（序数序 OFF<DEFAULT<STRICT 是承重设计——max 合并依赖它);`UserPolicy(confirmEveryNetwork, backgroundEventsRequireForeground, disableSessionGrants)` + OR 合并的 `or()`（08 §4.2,三者皆 upgrade-only);`RateLimits(maxInvokesPerMinute=60, maxDestructivePerHour=5, maxBackgroundFiresPerHour=20)`。
+- **热缝**:`redactSecrets(json, level)`——DEFAULT 逐字节等同历史遍历,STRICT 追加一遍对序列化行的正则扫描（抓住嵌在字符串值里、结构化遍历视作单一不透明串的秘密),OFF 原样返回（具名的响亮 opt-out);两个审计 sink 都新增每次 append 咨询的 `redactionLevel: () -> RedactionLevel` 供给器。`TokenBucketRateLimiter` 速率改 `@Volatile` + 返回旧快照的 `reconfigure(...)`（既有桶保状态,新速率作用于后续 refill——`RunScheduler.reconfigure` 的形状)。`EventTriggerManager`/`ScheduleTriggerManager` 新增 `@Volatile` `TriggerLimits` + `reconfigure`;`EventTriggerManager` 另加 `enabled: () -> Boolean` 门（`onEvent` 首行在禁用时早退——已武装触发器停火、重新启用即恢复;调度触发器刻意不设门,§19 只点名事件触发器)。`DefaultPermissionKernel` 新增 `userPolicy: () -> UserPolicy` 供给器:`confirmEveryNetwork` 不论缓存授权都把 NETWORK 命令升级为 CONFIRM_ONCE、`backgroundEventsRequireForeground` 对后台源升级所有类、`disableSessionGrants` 在授权时丢弃会话授权——皆 upgrade-only。`UnionEnterprisePolicySource(base, overlay)` 把 config 的 allow-list 组合进既有 item-23/53 执行链。
+- **Executor read-through**（经三个新 `SecurityConfig` 供给器,全默认当前行为）:`defaultTimeout`（停在 `CommandDescriptor.DEFAULT_TIMEOUT_MS` 默认的描述符合并到全局;显式描述符超时胜出——诚实边界是恰好钉在 60 000 的描述符与未设无法区分);`strictSchemaOutput`（开启时对 `outputSchema` 做调用后校验 → `SCHEMA_VIOLATION`,默认关);Stage-3 `commandAllowlist` 可见性门（解析出的 id 不匹配任何 glob → `UNKNOWN_COMMAND`;仅作用于 RuntimeConfig allow-list,item-23 的 Stage-6 `PERMISSION_DENIED` 不变——纵深防御)。
+- **聚合器**（`mcos-runtime-core/config`）:`RuntimeConfig`（校验——范围、`maxParallel`↔`scheduler.maxConcurrentInvokes` 一致性、非空 allow-list;非法配置抛 `INTERNAL`/`component=config`,绝不静默强转(§19.1);`normalized()` 在存在企业 allow-list 时把 `auditRedaction` 强升到至少 STRICT) + `RuntimeConfigManager`（持单一 `@Volatile` live 配置;两个可选拉取源 `mdm`/`user`;`merge` 施行 §19.1 优先级——非安全字段最高源胜、`auditRedaction`=max、`eventTriggersEnabled`=AND、allow-list=并集、`userPolicy`=OR;`apply` 校验→合并→施行 §19.1 allow-list 推迟(引用无当前已注册命令的 allow-list 被推迟、保留旧值、在审计中标注)→扇出到调度器/限流器/两个触发器管理器→换 live→追加恒审计的 `ConfigChanged` RunRecord(`runId="config"`、`source="SYSTEM"`、`commandId="config.changed"`、JSON 前后差异——`scheduler.backpressure` 范例);read-through 供给器无需 push)。
+- **门面**（`McosRuntime`）:`.withInitialRuntimeConfig` / `.withMdmConfigSource` / `.withUserConfigSource`、`runtimeConfig()` / `applyRuntimeConfig(cfg)`;builder 把 manager 供给器接入默认 Executor 的 `SecurityConfig` + 审计 sink 的 `redactionLevel` + kernel 的 `userPolicy`,并把宿主的 `enterprisePolicySource` 包进 `UnionEnterprisePolicySource`,使 config 的 allow-list 走单一执行链。**Android**（`CompositionRoot`):`MutableUserRuntimeConfig` 持有器支撑 `.withUserConfigSource`（宿主 Settings 推送用的简单内存持有器——不加 DataStore 依赖,与其他桥同属 JVM-不可测胶水边界)。
+- **测试 +~60 JVM**:`RedactionLevelTest` RL1-RL7、`UserPolicyKernelTest` UP1-UP9、`UnionEnterprisePolicySourceTest` UE1-UE7、`RateLimiterTest` R9-R11 · `RuntimeConfigTest` RC1-RC11、`RuntimeConfigManagerTest` CF1-CF12、`ExecutorRuntimeConfigTest` EC1-EC8、`EventTriggerManagerTest` TR16-TR18 · `McosRuntimeRuntimeConfigTest` RCF1-RCF4 门面 E2E。
+- **诚实边界**:STRICT 定义最小化(遍历 + 正则,规范未钉更多);显式 60 000 ms 描述符超时与未设无法区分;`eventTriggersEnabled` 只门事件触发器;注册表"策略允许清单视图"投影(§6.3/§6.4 UI)与 DataStore 后端用户源留待后续。
+
+---
+
 ### 审计落盘加密 — 逐行 AES-256-GCM `AuditCipher` 缝（2026-09-07）
 
 08 §14 / 03 §13.3 的收口（item 56）：§3 Audit 行里最后一个 ❌（"encryption at rest / SQLCipher 后续切片"）。不引入新存储栈——在既有 `FileAuditLog` JSONL 文件上做逐行 AEAD 信封,纯 JCA、可整测。

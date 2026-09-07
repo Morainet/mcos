@@ -140,4 +140,42 @@ class RateLimiterTest {
             assertIs<RateLimitResult.Allowed>(limiter.tryConsume("plugin.a", SideEffectClass.read))
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // R9-R11: §19 hot-retune (reconfigure)
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `R9-reconfigure returns the previous rates`() {
+        val limiter = TokenBucketRateLimiter(maxInvokesPerMinute = 60, maxDestructivePerHour = 5)
+        val previous = limiter.reconfigure(maxInvokesPerMinute = 10, maxDestructivePerHour = 2)
+        assertEquals(60, previous.maxInvokesPerMinute)
+        assertEquals(5, previous.maxDestructivePerHour)
+        assertEquals(10, limiter.maxInvokesPerMinute)
+        assertEquals(2, limiter.maxDestructivePerHour)
+    }
+
+    @Test
+    fun `R10-reconfigure applies to subsequent refills without resetting balances`() {
+        // Start with a tiny cap and exhaust it.
+        val limiter = TokenBucketRateLimiter(maxInvokesPerMinute = 1, maxDestructivePerHour = 100)
+        assertIs<RateLimitResult.Allowed>(limiter.tryConsume("plugin.a", SideEffectClass.read))
+        assertIs<RateLimitResult.Limited>(limiter.tryConsume("plugin.a", SideEffectClass.read))
+        // Raise the cap: the existing near-empty bucket keeps its balance
+        // (still limited right now), but the new rate governs the refill.
+        limiter.reconfigure(maxInvokesPerMinute = 600, maxDestructivePerHour = 100)
+        // A fresh plugin bucket is created at the NEW cap → allowed immediately.
+        assertIs<RateLimitResult.Allowed>(limiter.tryConsume("plugin.b", SideEffectClass.read))
+    }
+
+    @Test
+    fun `R11-reconfigure preserves an unrelated plugin's already-consumed state`() {
+        val limiter = TokenBucketRateLimiter(maxInvokesPerMinute = 2, maxDestructivePerHour = 100)
+        assertIs<RateLimitResult.Allowed>(limiter.tryConsume("plugin.a", SideEffectClass.read))
+        assertIs<RateLimitResult.Allowed>(limiter.tryConsume("plugin.a", SideEffectClass.read))
+        assertIs<RateLimitResult.Limited>(limiter.tryConsume("plugin.a", SideEffectClass.read))
+        // Lowering the cap must not resurrect plugin.a's exhausted bucket.
+        limiter.reconfigure(maxInvokesPerMinute = 1, maxDestructivePerHour = 100)
+        assertIs<RateLimitResult.Limited>(limiter.tryConsume("plugin.a", SideEffectClass.read))
+    }
 }

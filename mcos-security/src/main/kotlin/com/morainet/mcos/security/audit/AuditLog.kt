@@ -1,5 +1,6 @@
 package com.morainet.mcos.security.audit
 
+import com.morainet.mcos.security.RedactionLevel
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.serialization.SerialName
@@ -147,16 +148,31 @@ internal val REGEX_SECRET_PAIR = Regex(
 )
 
 /**
- * Redact known secret field names in an IR JSON string.
- * Implements the deterministic redaction walk from [03-runtime.md 13.3].
+ * Redact known secret field names in an IR JSON string, at the requested
+ * [level]. Implements the deterministic redaction walk from [03-runtime.md
+ * 13.3], now selectable per [03-runtime.md §19]'s hot-reloadable
+ * `auditRedaction`:
+ *
+ * - [RedactionLevel.OFF] — return [irJson] verbatim. The loud opt-out; secrets
+ *   are stored raw. No sink defaults to this.
+ * - [RedactionLevel.DEFAULT] — the historical structured walk (redact known
+ *   secret field names + `x-mcos-secret`-marked objects; regex fallback for
+ *   non-JSON `ir`). Byte-for-byte identical to the pre-§19 behaviour.
+ * - [RedactionLevel.STRICT] — the DEFAULT walk, then an additional
+ *   [REGEX_SECRET_PAIR] pass over the serialized result to catch `key: value`
+ *   secret pairs that survived the structured walk.
  *
  * Field names matching (case-insensitive, substring):
  * `password`, `token`, `secret`, `apikey`, `credential`,
  * `authorization`, `bearer`, `cookie` → value replaced with
  * `"***REDACTED***"`.
  */
-internal fun redactSecrets(irJson: String): String {
-    return try {
+internal fun redactSecrets(
+    irJson: String,
+    level: RedactionLevel = RedactionLevel.DEFAULT,
+): String {
+    if (level == RedactionLevel.OFF) return irJson
+    val walked = try {
         val element = Json.parseToJsonElement(irJson)
         val redacted = redactElement(element)
         AUDIT_JSON.encodeToString(JsonElement.serializer(), redacted)
@@ -166,6 +182,16 @@ internal fun redactSecrets(irJson: String): String {
         REGEX_SECRET_PAIR.replace(irJson) { mr ->
             "${mr.groupValues[1]}\"***REDACTED***\""
         }
+    }
+    return if (level == RedactionLevel.STRICT) {
+        // Defense-in-depth: a second regex pass over the serialized result
+        // catches `key: value` secret pairs the structured walk may have
+        // missed (e.g. secrets embedded inside a string value).
+        REGEX_SECRET_PAIR.replace(walked) { mr ->
+            "${mr.groupValues[1]}***REDACTED***${mr.groupValues[2]}"
+        }
+    } else {
+        walked
     }
 }
 
@@ -306,6 +332,14 @@ class InMemoryAuditLog : AuditLog {
      */
     var hmacKey: ByteArray? = null
 
+    /**
+     * Live-read redaction level ([03-runtime.md §19] `auditRedaction`). A
+     * supplier so `RuntimeConfigManager` can hot-swap the level between writes
+     * with no push; consulted on every [append]/[appendVerified]. Defaults to
+     * the historical [RedactionLevel.DEFAULT] walk.
+     */
+    var redactionLevel: () -> RedactionLevel = { RedactionLevel.DEFAULT }
+
     private var writerJob: Job? = null
 
     /**
@@ -337,7 +371,8 @@ class InMemoryAuditLog : AuditLog {
      * The record's `ir` field is redacted before storage.
      */
     override fun append(record: RunRecord) {
-        val redacted = record.copy(ir = record.ir?.let { redactSecrets(it) })
+        val level = redactionLevel()
+        val redacted = record.copy(ir = record.ir?.let { redactSecrets(it, level) })
         writerChannel.trySend(ChannelMsg.Record(redacted))
     }
 
@@ -350,7 +385,8 @@ class InMemoryAuditLog : AuditLog {
      * let an in-memory sink that is not draining pretend otherwise.
      */
     override suspend fun appendVerified(record: RunRecord): Boolean {
-        val redacted = record.copy(ir = record.ir?.let { redactSecrets(it) })
+        val level = redactionLevel()
+        val redacted = record.copy(ir = record.ir?.let { redactSecrets(it, level) })
         val job = writerJob
         if (job == null || !job.isActive) return false
         return writerChannel.trySend(ChannelMsg.Record(redacted)).isSuccess

@@ -1,6 +1,7 @@
 package com.morainet.mcos.security.permission
 
 import com.morainet.mcos.security.EnterprisePolicy
+import com.morainet.mcos.security.UserPolicy
 import com.morainet.mcos.sdk.*
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
@@ -197,6 +198,16 @@ interface PermissionKernel {
  */
 class DefaultPermissionKernel(
     private val grantStore: GrantStore = NullGrantStore,
+    /**
+     * Live-read user confirmation policy ([08-security.md §4.2],
+     * [03-runtime.md §19] `userPolicy`). A supplier so `RuntimeConfigManager`
+     * can hot-swap it between invocations with no push — effective on the next
+     * `authorize` call (spec §4.2 "effective next invocation"). Every flag is
+     * upgrade-only: it can only add confirmation, never remove one that the
+     * enterprise policy or the base matrix already demanded. Defaults to the
+     * empty [UserPolicy] — the pre-§19 behaviour.
+     */
+    private val userPolicy: () -> UserPolicy = { UserPolicy() },
 ) : PermissionKernel {
 
     // ─── Grant storage ───────────────────────────────────────────────────
@@ -244,18 +255,32 @@ class DefaultPermissionKernel(
         // Authorized result is downgraded to ConfirmationNeeded. Denials and
         // confirmations from the base pass stay as-is (a hard deny is never
         // softened into a mere confirmation).
-        val stricterClass = descriptor.sideEffectClass == SideEffectClass.network ||
-            descriptor.sideEffectClass == SideEffectClass.destructive
-        if (source in PermissionKernel.BACKGROUND_SOURCES && stricterClass &&
+        //
+        // 08-security.md §4.2: when the user opts into
+        // `backgroundEventsRequireForeground`, the upgrade widens to EVERY
+        // side-effect class (not just network/destructive) — no silent
+        // background execution at all. Opt-in, default off; upgrade-only.
+        if (source in PermissionKernel.BACKGROUND_SOURCES &&
             base is AuthorizationResult.Authorized
         ) {
-            return AuthorizationResult.ConfirmationNeeded(
-                commandId = descriptor.id,
-                reason = "Background trigger runs (event/schedule) always confirm " +
-                    descriptor.sideEffectClass.name + " commands (08 §4.0 step 4)",
-                missingPermissions = emptyList(),
-                sideEffectClass = descriptor.sideEffectClass
-            )
+            val stricterClass = descriptor.sideEffectClass == SideEffectClass.network ||
+                descriptor.sideEffectClass == SideEffectClass.destructive
+            val allClassesRequireForeground = userPolicy().backgroundEventsRequireForeground
+            if (stricterClass || allClassesRequireForeground) {
+                val reason = if (allClassesRequireForeground && !stricterClass) {
+                    "Background trigger runs (event/schedule) require confirmation for all " +
+                        "commands (user policy backgroundEventsRequireForeground, 08 §4.2)"
+                } else {
+                    "Background trigger runs (event/schedule) always confirm " +
+                        descriptor.sideEffectClass.name + " commands (08 §4.0 step 4)"
+                }
+                return AuthorizationResult.ConfirmationNeeded(
+                    commandId = descriptor.id,
+                    reason = reason,
+                    missingPermissions = emptyList(),
+                    sideEffectClass = descriptor.sideEffectClass
+                )
+            }
         }
         return base
     }
@@ -339,6 +364,12 @@ class DefaultPermissionKernel(
     }
 
     override fun grantSession(pluginId: String, permission: String) {
+        // User policy (08 §4.2): disableSessionGrants demotes a session grant
+        // to a single-invocation one — nothing is cached, so a CONFIRM_SESSION
+        // decision effectively becomes CONFIRM_ONCE (the next invocation
+        // re-confirms). Upgrade-only: it can only shorten a grant's life, never
+        // extend it. The grant is dropped entirely rather than persisted.
+        if (userPolicy().disableSessionGrants) return
         // Register the session marker BEFORE delegating, so the
         // write-through inside grant() already filters this permission out
         // of the durable snapshot — session grants never hit disk.
@@ -486,6 +517,14 @@ class DefaultPermissionKernel(
         enterprisePolicy: EnterprisePolicy? = null,
     ): Boolean {
         if (alwaysConfirm) return true
+
+        // User policy (08 §4.2): confirmEveryNetwork forces a confirmation for
+        // every NETWORK-class command regardless of any cached grant or
+        // auto-approve — the user wants to eyeball each outbound call.
+        // Upgrade-only; sits next to alwaysConfirm / enterprise force-confirm.
+        if (descriptor.sideEffectClass == SideEffectClass.network &&
+            userPolicy().confirmEveryNetwork
+        ) return true
 
         // Enterprise force-confirm (spec 08 §4.3): classes listed in
         // `forceConfirm` always require CONFIRM_ONCE — this upgrades an

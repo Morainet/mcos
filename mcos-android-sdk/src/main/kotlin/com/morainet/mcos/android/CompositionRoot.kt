@@ -14,6 +14,7 @@ import com.morainet.mcos.plugin.hello.HelloPlugin
 import com.morainet.mcos.plugin.system.SystemPlugin
 import com.morainet.mcos.android.host.AlarmManagerWakeScheduler
 import com.morainet.mcos.runtime.api.McosRuntime
+import com.morainet.mcos.runtime.core.config.RuntimeConfig
 import com.morainet.mcos.runtime.core.workflow.FileArmedScheduleStore
 import com.morainet.mcos.runtime.core.executor.Executor
 import com.morainet.mcos.marketplace.BlocklistVerifier
@@ -89,7 +90,29 @@ class AppDeps(
     val permissionKernel: PermissionKernel,
     /** System EventBus shared by the runtime and the Agent loop (agent.* events, 06 §11). */
     val eventBus: EventBus,
+    /**
+     * Host-pushable §19 user config ([03-runtime.md §19]). The host's Settings
+     * screen writes a new [RuntimeConfig] here and calls
+     * `runtime.applyRuntimeConfig(...)` (or lets the manager's user pull source
+     * read it on the next apply). A plain mutable holder — no DataStore
+     * dependency is added (the repo has none); persisting it across restarts is
+     * host glue, JVM-untestable like the other Android bridges.
+     */
+    val userRuntimeConfig: MutableUserRuntimeConfig,
 )
+
+/**
+ * A thread-safe mutable holder for the §19 user [RuntimeConfig] layer. Backs
+ * the runtime's user config pull source: the host sets [value] from its
+ * Settings UI, and the manager reads it (via [get]) on the next apply for the
+ * most-restrictive-wins merge. `null` means "no user overrides".
+ */
+class MutableUserRuntimeConfig {
+    @Volatile
+    var value: RuntimeConfig? = null
+
+    fun get(): RuntimeConfig? = value
+}
 
 /**
  * Marketplace dependencies (09-marketplace.md §7 install pipeline).
@@ -280,9 +303,21 @@ object CompositionRoot {
         // file-backed (tamper-evident via the state seed): consent survives
         // restarts, and a tampered/missing file fails closed (grants
         // nothing). Session grants never persist, by kernel design.
+        // §19 user config holder + a late-bound read of the runtime's manager
+        // (built inside McosRuntime, after this Executor). The suppliers below
+        // close over the holder so the injected Executor / kernel / audit sink
+        // all observe the live config once the runtime is built.
+        val userRuntimeConfig = MutableUserRuntimeConfig()
+        val runtimeHolder = arrayOfNulls<McosRuntime>(1)
+        fun liveRuntimeConfig(): RuntimeConfig =
+            runtimeHolder[0]?.runtimeConfig()?.current() ?: RuntimeConfig()
+
         val permissionKernel = DefaultPermissionKernel(
             FileGrantStore(File(appContext.filesDir, "permissions/grants.json"), stateHmacKey),
+            userPolicy = { liveRuntimeConfig().userPolicy },
         )
+        // The audit sink observes the live §19 redaction level.
+        auditLog.redactionLevel = { liveRuntimeConfig().auditRedaction }
 
         // ONE signer shared by the confirmation coordinator (signs the
         // post-approval retry AuthStamp) and the executor (verifies it).
@@ -349,6 +384,11 @@ object CompositionRoot {
             .withEventBus(eventBus)
             .withArmedScheduleStore(armedScheduleStore)
             .withWakeScheduler(wakeScheduler)
+            // §19 RuntimeConfig: seed with the default, and back the user layer
+            // with the host-pushable holder. No MDM source here — the
+            // EnterprisePolicySource above already carries the enterprise layer;
+            // a config-shaped MDM source can follow the same pattern later.
+            .withUserConfigSource { userRuntimeConfig.get() }
             // Wires the default WorkflowEngine's audit sink; the injected
             // executor below carries the same log via its SecurityConfig.
             .withAuditLog(auditLog)
@@ -359,12 +399,16 @@ object CompositionRoot {
                     // Full production posture; the enterprise policy, the
                     // persistent audit log, the shared permission kernel
                     // (holding the built-ins' grants), and the shared stamp
-                    // signer all reach the executor now.
+                    // signer all reach the executor now. The §19 read-through
+                    // suppliers observe the runtime's live config.
                     security = SecurityConfig.defaults().copy(
                         enterprisePolicy = enterprisePolicy,
                         auditLog = auditLog,
                         kernel = permissionKernel,
                         signer = authStampSigner,
+                        defaultTimeout = { liveRuntimeConfig().defaultTimeoutMs },
+                        strictSchemaOutput = { liveRuntimeConfig().strictSchemaOutput },
+                        commandAllowlist = { liveRuntimeConfig().enterpriseAllowlist },
                     ),
                     // null (default) → audited in-process fallback for
                     // non-BUILTIN plugins; the opt-in host (08 §8.1) routes
@@ -373,6 +417,7 @@ object CompositionRoot {
                 )
             )
             .build()
+        runtimeHolder[0] = runtime
 
         // Let the schedule alarm receiver reach this runtime (10 §6). Rebuilt
         // per Activity onCreate; the latest runtime wins.
@@ -390,6 +435,7 @@ object CompositionRoot {
             auditLog = auditLog,
             permissionKernel = permissionKernel,
             eventBus = eventBus,
+            userRuntimeConfig = userRuntimeConfig,
         )
     }
 

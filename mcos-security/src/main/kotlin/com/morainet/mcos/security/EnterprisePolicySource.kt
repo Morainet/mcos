@@ -186,3 +186,74 @@ class FileEnterprisePolicySource(
         return md.digest(data.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
     }
 }
+
+/**
+ * Composes a [base] enterprise policy source with a read-through [overlay]
+ * ([03-runtime.md §19]). The overlay carries the allow-lists sourced from a
+ * live `RuntimeConfig` (its `enterpriseAllowlist` / `networkAllowList`); the
+ * merge is **most-restrictive-wins** so the composition can only ever *tighten*
+ * what the base already enforces, never loosen it (spec §13.4, mirrored for the
+ * §19 overlay):
+ *
+ * - `allowCommands` / `networkAllow` — when *both* sides are non-empty, the
+ *   result is their **intersection** (a command must be permitted by both to
+ *   pass); when only one side constrains, that side's list is used; when
+ *   neither constrains (both empty), the result is empty (unconstrained).
+ * - `denyCommands` / `networkDeny` — **union** (a deny on either side denies).
+ * - `forceConfirm` — union (a force-confirm on either side applies).
+ * - boolean tightenings (`disableSideload`, `disableCloudMemorySync`,
+ *   `auditFailClosed`, `disableAllPluginNetwork`) — OR (either side may set).
+ * - `secretTtlDays` — the tighter (smaller) of the two when both set.
+ * - `version` / `issuedAt` / `issuedBy` — taken from [base] (the overlay is an
+ *   internal §19 projection, not a signed policy document).
+ *
+ * [current] reads both sides on every call, so it inherits the per-invoke
+ * immediacy of the underlying [base] (item 53's hot reload) and of the overlay
+ * supplier (the live `RuntimeConfig`). Never throws: an overlay returning null
+ * degrades to the base policy unchanged.
+ */
+class UnionEnterprisePolicySource(
+    private val base: EnterprisePolicySource,
+    private val overlay: () -> EnterprisePolicy?,
+) : EnterprisePolicySource {
+
+    override fun current(): EnterprisePolicy {
+        val b = base.current()
+        val o = overlay() ?: return b
+        return EnterprisePolicy(
+            allowCommands = intersectAllow(b.allowCommands, o.allowCommands),
+            denyCommands = (b.denyCommands + o.denyCommands).distinct(),
+            forceConfirm = (b.forceConfirm + o.forceConfirm).distinct(),
+            disableSideload = b.disableSideload || o.disableSideload,
+            disableCloudMemorySync = b.disableCloudMemorySync || o.disableCloudMemorySync,
+            auditFailClosed = b.auditFailClosed || o.auditFailClosed,
+            networkAllow = intersectAllow(b.networkAllow, o.networkAllow),
+            networkDeny = (b.networkDeny + o.networkDeny).distinct(),
+            disableAllPluginNetwork = b.disableAllPluginNetwork || o.disableAllPluginNetwork,
+            secretTtlDays = tighterTtl(b.secretTtlDays, o.secretTtlDays),
+            version = b.version,
+            issuedAt = b.issuedAt,
+            issuedBy = b.issuedBy,
+        )
+    }
+
+    private companion object {
+        /**
+         * Most-restrictive intersection of two allow-lists: an empty list means
+         * "no constraint from this side", so it yields to the other side; two
+         * non-empty lists intersect (both must permit). Two empty lists stay
+         * empty (unconstrained).
+         */
+        fun intersectAllow(a: List<String>, b: List<String>): List<String> = when {
+            a.isEmpty() -> b
+            b.isEmpty() -> a
+            else -> a.filter { it in b }.distinct()
+        }
+
+        fun tighterTtl(a: Int?, b: Int?): Int? = when {
+            a == null -> b
+            b == null -> a
+            else -> minOf(a, b)
+        }
+    }
+}

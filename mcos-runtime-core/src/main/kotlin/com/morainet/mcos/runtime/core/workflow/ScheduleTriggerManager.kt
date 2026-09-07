@@ -86,11 +86,30 @@ import java.util.concurrent.atomic.AtomicLong
  */
 class ScheduleTriggerManager(
     private val auditLog: AuditLog = NullAuditLog,
-    private val limits: TriggerLimits = TriggerLimits(),
+    limits: TriggerLimits = TriggerLimits(),
     private val clock: () -> Long = System::currentTimeMillis,
     private val pollMs: Long? = DEFAULT_POLL_MS,
     private val wakeScheduler: WakeScheduler? = null,
 ) {
+
+    /**
+     * Live-mutable background-fire budget ([03-runtime.md §19]
+     * `rateLimits.maxBackgroundFiresPerHour`). `@Volatile` so [reconfigure]'s
+     * push is visible to a concurrent poll; existing per-schedule fire windows
+     * keep their timestamps and the new cap applies to subsequent checks.
+     */
+    @Volatile
+    private var limits: TriggerLimits = limits
+
+    /**
+     * Hot-retune the background-fire budget ([03-runtime.md §19]). Returns the
+     * previous [TriggerLimits] so callers can log the delta.
+     */
+    fun reconfigure(limits: TriggerLimits): TriggerLimits {
+        val previous = this.limits
+        this.limits = limits
+        return previous
+    }
 
     /** One armed schedule and its fire bookkeeping. */
     private class ArmedSchedule(

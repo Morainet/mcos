@@ -93,8 +93,11 @@ class EventTriggerManagerTest {
         audit = RecordingAuditLog()
     }
 
-    private fun manager(limits: TriggerLimits = TriggerLimits(), clock: () -> Long = System::currentTimeMillis) =
-        EventTriggerManager(bus, memory, audit, limits, clock)
+    private fun manager(
+        limits: TriggerLimits = TriggerLimits(),
+        clock: () -> Long = System::currentTimeMillis,
+        enabled: () -> Boolean = { true },
+    ) = EventTriggerManager(bus, memory, audit, limits, clock, enabled)
 
     private fun eventTrigger(
         type: String,
@@ -504,6 +507,50 @@ class EventTriggerManagerTest {
         assertTrue(fired.ir!!.contains("workflow=wifi-vpn"))
         assertTrue(fired.ir!!.contains("event=wifi.connected"))
         assertTrue(fired.runId.startsWith("trigger:"))
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // TR16-TR18: §19 eventTriggersEnabled gate + reconfigure
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `TR16-disabled event triggers never fire and consume no rate slot`() = runBlocking {
+        var on = false
+        val manager = manager(enabled = { on })
+        arm(manager, "wf", eventTrigger("wifi.connected"))
+        // Disabled: matching events are ignored, nothing launches, no audit.
+        repeat(3) { bus.publishEvent(envelope("wifi.connected")) }
+        assertTrue(launched.isEmpty())
+        assertTrue(audit.records.none { it.commandId == "workflow.trigger_fired" })
+
+        // Re-enable: the still-armed trigger resumes on the next event.
+        on = true
+        bus.publishEvent(envelope("wifi.connected"))
+        assertEquals(1, launched.size)
+    }
+
+    @Test
+    fun `TR17-reconfigure retunes the background-fire budget for subsequent events`() = runBlocking {
+        val clock = 1_000_000L
+        val manager = manager(limits = TriggerLimits(maxBackgroundFiresPerHour = 1), clock = { clock })
+        arm(manager, "wf", eventTrigger("wifi.connected"))
+        bus.publishEvent(envelope("wifi.connected"))
+        bus.publishEvent(envelope("wifi.connected")) // 2nd is over the cap → skipped
+        assertEquals(1, launched.size)
+
+        // Raise the cap; a fresh armed trigger now fires more than once.
+        val previous = manager.reconfigure(TriggerLimits(maxBackgroundFiresPerHour = 5))
+        assertEquals(1, previous.maxBackgroundFiresPerHour)
+        arm(manager, "wf2", eventTrigger("battery.low"))
+        repeat(3) { bus.publishEvent(envelope("battery.low")) }
+        assertEquals(3, launched.count { it.first == "wf2" })
+    }
+
+    @Test
+    fun `TR18-reconfigure returns the previous limits`() = runBlocking {
+        val manager = manager(limits = TriggerLimits(maxBackgroundFiresPerHour = 7))
+        val previous = manager.reconfigure(TriggerLimits(maxBackgroundFiresPerHour = 20))
+        assertEquals(7, previous.maxBackgroundFiresPerHour)
     }
 
     private fun JsonElement?.jsonPrimitiveOrNull(): JsonPrimitive? = this as? JsonPrimitive
