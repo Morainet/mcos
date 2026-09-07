@@ -100,6 +100,35 @@ class McpAdapterTest {
         assertEquals("mcp.demo.read_file", discovery.plugin.manifest.commands.first().id)
     }
 
+    // ─── Per-tool enablement (04 §10 per-server, refined to per-tool) ──────────
+
+    @Test fun `AD6a full tool catalog is reported, mapped and unmapped`() = runBlocking {
+        val net = routing(onList = { rpcOk(twoToolListJson()) })
+        val discovery = McpAdapter.discover(McpClient(net, config.endpoint), config)
+        // Both tools appear in the catalog; only echo is mappable.
+        assertEquals(listOf("echo", "weird"), discovery.tools.map { it.name })
+        val echo = discovery.tools.single { it.name == "echo" }
+        val weird = discovery.tools.single { it.name == "weird" }
+        assertTrue(echo.mapped && echo.registered)
+        assertEquals("mcp.demo.echo", echo.commandId)
+        assertTrue(!weird.mapped && !weird.registered)
+    }
+
+    @Test fun `AD6b enabledTools filter registers only the selected tools`() = runBlocking {
+        val listJson = """
+            {"tools":[
+              {"name":"echo","inputSchema":{"type":"object","properties":{"t":{"type":"string"}}}},
+              {"name":"ping","inputSchema":{"type":"object","properties":{"t":{"type":"string"}}}}
+            ]}
+        """.trimIndent()
+        val net = routing(onList = { rpcOk(listJson) })
+        val discovery = McpAdapter.discover(McpClient(net, config.endpoint), config, enabledTools = setOf("echo"))
+        assertEquals(listOf("mcp.demo.echo"), discovery.plugin.manifest.commands.map { it.id })
+        // ping is still reported, just not registered.
+        assertTrue(discovery.tools.single { it.name == "ping" }.let { it.mapped && !it.registered })
+        assertNull(discovery.plugin.handlers()["mcp.demo.ping"])
+    }
+
     // ─── Proxy invoke ────────────────────────────────────────────────────────
 
     @Test fun `AD7 proxy invoke round-trips tool content into an Ok result`() = runBlocking {

@@ -55,6 +55,10 @@ import kotlinx.serialization.json.jsonPrimitive
  * @param classifier Lightweight utterance classifier used by
  *        [PlanMode.LATENCY_TIERED] routing (06 §13.1); defaults to the
  *        keyword/heuristic implementation.
+ * @param skills User-imported [Skill] packages rendered into a `## Skills`
+ *        section of the system prompt. Prompt-level augmentation only — the
+ *        command allow-list is unchanged; a skill just steers the model toward
+ *        the commands already registered (Claude-style skill packages).
  */
 class LlmPlanner(
     private val provider: LlmProvider,
@@ -65,6 +69,7 @@ class LlmPlanner(
     private val cloudFallbackEnabled: Boolean = false,
     private val recipes: List<Recipe> = emptyList(),
     private val classifier: UtteranceClassifier = UtteranceClassifier(),
+    private val skills: List<Skill> = emptyList(),
 ) {
 
     private val recipeMatcher: RecipeMatcher = RecipeMatcher(recipes)
@@ -88,6 +93,7 @@ class LlmPlanner(
             appendLine(buildCommandsSection(commands))
             appendLine()
             appendLine(buildMemorySection())
+            appendLine(buildSkillsSection())
             appendLine("## DSL Format (v0.1)")
             appendLine()
             appendLine("Output valid MCOS DSL. Every command uses named parameters:")
@@ -125,6 +131,7 @@ class LlmPlanner(
             appendLine(buildCommandsSection(commands))
             appendLine()
             appendLine(buildMemorySection())
+            appendLine(buildSkillsSection())
             appendLine("## Output Format (CONSTRAINED)")
             appendLine()
             appendLine("Reply with exactly one JSON object conforming to the IR JSON Schema that follows your instructions:")
@@ -216,6 +223,43 @@ class LlmPlanner(
             sb.appendLine("Semantic tags: ${tags.joinToString(", ")}")
         }
 
+        return sb.toString()
+    }
+
+    /**
+     * Render the enabled [skills] into a `## Skills` prompt section. Returns an
+     * empty string (no heading) when no skills are configured, so an empty list
+     * adds nothing to the prompt. Each skill's [Skill.instructions] is truncated
+     * to [Skill.MAX_INSTRUCTION_CHARS] so one long skill can't crowd out the
+     * command list.
+     */
+    private fun buildSkillsSection(): String {
+        if (skills.isEmpty()) return ""
+        val sb = StringBuilder()
+        sb.appendLine("## Skills")
+        sb.appendLine()
+        sb.appendLine(
+            "The user imported these skills — extra guidance for specific kinds of request. " +
+                "When a request falls within a skill's scope (see its description), follow that " +
+                "skill's instructions. Skills never add new commands; only the commands listed " +
+                "above may be used.",
+        )
+        for (skill in skills) {
+            sb.appendLine()
+            sb.appendLine("### ${skill.name}")
+            if (skill.description.isNotBlank()) sb.appendLine("  ${skill.description}")
+            val body = skill.instructions.trim()
+            if (body.isNotEmpty()) {
+                sb.appendLine()
+                sb.appendLine(
+                    if (body.length > Skill.MAX_INSTRUCTION_CHARS) {
+                        body.take(Skill.MAX_INSTRUCTION_CHARS) + "\n…(truncated)"
+                    } else {
+                        body
+                    },
+                )
+            }
+        }
         return sb.toString()
     }
 

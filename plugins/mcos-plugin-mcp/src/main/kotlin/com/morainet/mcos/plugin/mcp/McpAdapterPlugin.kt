@@ -37,8 +37,37 @@ data class McpServerConfig(
 /** A tool that was discovered but not registered because its schema is unmappable (§12.4). */
 data class SkippedTool(val toolName: String, val unmappedType: String, val reason: String)
 
-/** The outcome of bridging one server: a ready-to-register plugin plus the tools it had to drop. */
-data class McpDiscovery(val plugin: McpBridgedPlugin, val skipped: List<SkippedTool>)
+/**
+ * A tool advertised by the server's `tools/list`, whether or not it was
+ * bridged. Lets a host present the full catalog so the user can enable/disable
+ * individual tools (04 §10 per-server, refined to per-tool).
+ *
+ * @property name The MCP tool name as advertised.
+ * @property description The tool's description, if any.
+ * @property commandId The MCOS command id it maps to (`mcp.<server>.<tool>`).
+ * @property mapped True when its input schema was convertible (so it *can* be
+ *   bridged); false for a tool that would always be skipped (§12.4).
+ * @property registered True when it was actually registered in this discovery
+ *   (mapped AND selected by the `enabledTools` filter).
+ */
+data class DiscoveredMcpTool(
+    val name: String,
+    val description: String?,
+    val commandId: String,
+    val mapped: Boolean,
+    val registered: Boolean,
+)
+
+/**
+ * The outcome of bridging one server: a ready-to-register plugin, the tools it
+ * had to drop, and the full [tools] catalog (mapped + unmapped) so a host can
+ * offer per-tool enablement.
+ */
+data class McpDiscovery(
+    val plugin: McpBridgedPlugin,
+    val skipped: List<SkippedTool>,
+    val tools: List<DiscoveredMcpTool> = emptyList(),
+)
 
 /**
  * Bridges a single MCP server into the command bus. Discovery runs *before*
@@ -65,48 +94,74 @@ object McpAdapter {
         net: NetService,
         config: McpServerConfig,
         secretLookup: suspend (String) -> String? = { null },
+        enabledTools: Set<String>? = null,
     ): McpDiscovery {
         val discoveryToken = config.secretKey?.let { secretLookup(it) } ?: config.token
         val discoveryHeaders = discoveryToken
             ?.let { mapOf("Authorization" to "Bearer $it") }
             ?: emptyMap()
-        return discover(McpClient(net, config.endpoint, discoveryHeaders), config)
+        return discover(McpClient(net, config.endpoint, discoveryHeaders), config, enabledTools = enabledTools)
     }
 
     /**
      * Discovery against an injected [client] (used by tests). All synthesized
      * handlers share one [breaker] so a run of failures against the server
      * gates the whole `mcp.<server>.*` namespace, not one command at a time.
+     *
+     * @param enabledTools When non-null, only tools whose name is in this set
+     *   are registered (per-tool enablement); the rest are still reported in
+     *   [McpDiscovery.tools] with `registered = false`. Null registers every
+     *   mappable tool (the default, unfiltered behavior).
      */
     suspend fun discover(
         client: McpClient,
         config: McpServerConfig,
         breaker: McpCircuitBreaker = McpCircuitBreaker(),
+        enabledTools: Set<String>? = null,
     ): McpDiscovery {
         val tools = client.listTools()
         val commands = mutableListOf<CommandManifestEntry>()
         val handlers = mutableMapOf<String, CommandHandler>()
         val skipped = mutableListOf<SkippedTool>()
+        val catalog = mutableListOf<DiscoveredMcpTool>()
         val proxyHeaders = proxyAuthHeaders(config)
 
         for (tool in tools) {
             val commandId = "mcp.${config.id}.${sanitize(tool.name)}"
+            val selected = enabledTools == null || tool.name in enabledTools
             when (val conv = McpSchemaConverter.convert(tool.inputSchema)) {
                 is McpSchemaConverter.Result.Converted -> {
-                    commands += CommandManifestEntry(
-                        id = commandId,
-                        version = "1.0.0",
-                        title = tool.name,
-                        description = tool.description ?: "MCP tool '${tool.name}' on ${config.id}",
-                        sideEffectClass = sideEffectOf(tool),
-                        timeoutMs = 30000,
-                        inputSchema = conv.inputSchema,
+                    if (selected) {
+                        commands += CommandManifestEntry(
+                            id = commandId,
+                            version = "1.0.0",
+                            title = tool.name,
+                            description = tool.description ?: "MCP tool '${tool.name}' on ${config.id}",
+                            sideEffectClass = sideEffectOf(tool),
+                            timeoutMs = 30000,
+                            inputSchema = conv.inputSchema,
+                        )
+                        handlers[commandId] = McpProxyHandler(config.endpoint, tool.name, proxyHeaders, breaker)
+                    }
+                    catalog += DiscoveredMcpTool(
+                        name = tool.name,
+                        description = tool.description,
+                        commandId = commandId,
+                        mapped = true,
+                        registered = selected,
                     )
-                    handlers[commandId] = McpProxyHandler(config.endpoint, tool.name, proxyHeaders, breaker)
                 }
-                is McpSchemaConverter.Result.Unmapped ->
+                is McpSchemaConverter.Result.Unmapped -> {
                     // Fail-closed: the tool is dropped, not silently degraded.
                     skipped += SkippedTool(tool.name, conv.unmappedType, conv.reason)
+                    catalog += DiscoveredMcpTool(
+                        name = tool.name,
+                        description = tool.description,
+                        commandId = commandId,
+                        mapped = false,
+                        registered = false,
+                    )
+                }
             }
         }
 
@@ -124,7 +179,7 @@ object McpAdapter {
             // their ids differ (mcp.<serverA>.* vs mcp.<serverB>.*).
             namespaces = listOf("mcp"),
         )
-        return McpDiscovery(McpBridgedPlugin(manifest, handlers), skipped)
+        return McpDiscovery(McpBridgedPlugin(manifest, handlers), skipped, catalog)
     }
 
     /**

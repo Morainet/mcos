@@ -10,6 +10,17 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### Skill 导入 + MCP 配置导入/逐工具勾选 + demo 结构重组（2026-09-07）
+
+Android demo shell 扩展能力接入:Claude 风格 **skill 包**导入、标准 `mcp.json` 批量导入与 **逐工具启用/禁用**,并把 demo 源码按功能分子目录、导航扩为五页。
+
+- **Skill 包**（`mcos-llm`）:新增 `Skill(id/name/description/instructions)`;`LlmPlanner` 增 `skills` 构造参数,`buildSkillsSection()` 把已启用 skill 渲染进 FREEFORM_JSON 与 CONSTRAINED 两个系统提示（`## Skills` 段,单条指令截断到 8k)。skill 只是提示级增强——不新增命令,仅引导模型使用已注册命令。
+- **Skill 存储与导入**（demo）:`SkillStore`(仿 `McpServerController` 的 SecureStore JSON 列表模式,key `skills`)+ `SkillParser` 支持 `SKILL.md`(YAML frontmatter + 正文)与 JSON 两种格式;新增 **Skills** 页粘贴导入、启用开关、删除、指令预览。`McosViewModel` 构建 chat/agent planner 时注入已启用 skill,skill 变更使 agent bridge 缓存失效重建。
+- **MCP 逐工具启用**（`plugins:mcos-plugin-mcp` + `mcos-android-sdk`):`McpAdapter.discover` 增 `enabledTools` 过滤与 `McpDiscovery.tools` 全量清单(含未映射工具);`McpServerRecord` 缓存 `tools`,`McpServerController.setToolEnabled()` 改选择并在 server 在线时按新过滤重注册;`McpServerBridge`/`BridgedMcpServer` 透传纯数据工具清单(SDK 不引 MCP 客户端类型)。
+- **MCP 配置导入**:`McpServerController.importJsonConfig()` 解析标准 `{"mcpServers": {...}}`,`url`/`endpoint` → 建 server、`headers.Authorization` 去 `Bearer ` 前缀存入 SecureStore、`command`(stdio)条目跳过并计数。
+- **五页导航**:`ShellPage` 扩为 Chat / Skills / MCP / Tools / Settings(≤5 恰满);MCP 由 Tools 内的卡片升为独立页(server 列表 + 展开逐工具勾选 + `mcp.json` 粘贴导入)。源码在 `com.morainet.mcos.android.demo` 下按 `shell/chat/skills/mcp/tools/settings/marketplace` 分目录(包名保持根 demo,`PackageBoundariesTest` 最长前缀匹配自动覆盖)。
+- **测试**:`SkillPromptTest`(mcos-llm)、`McpAdapterTest` AD6a/AD6b(工具过滤与清单)、`SkillStoreTest`/`McpJsonImportTest`、`McpShellWiringTest` 逐工具开关用例。
+
 ### Demo shell UI 重构 — 浅色主题 + 三页导航 + 多厂商 API 设置（2026-09-07）
 
 Android demo shell（`mcos-android`）的界面重做:从单页深色（OLED）终端布局改为简洁的 AI-native 浅色主题 + 底部三页导航,并新增真正的多厂商 LLM 设置。

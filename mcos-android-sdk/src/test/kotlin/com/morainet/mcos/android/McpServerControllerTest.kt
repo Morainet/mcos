@@ -52,13 +52,24 @@ class McpServerControllerTest {
         var discoverCalls = 0
             private set
 
-        override suspend fun discover(record: McpServerRecord, secretKey: String?): BridgedMcpServer {
+        var lastEnabledTools: Set<String>? = null
+            private set
+
+        override suspend fun discover(
+            record: McpServerRecord,
+            secretKey: String?,
+            enabledTools: Set<String>?,
+        ): BridgedMcpServer {
             discoverCalls++
             lastSecretKey = secretKey
+            lastEnabledTools = enabledTools
             if (record.id in failFor) throw IllegalStateException("endpoint unreachable: ${record.id}")
             return BridgedMcpServer(
                 plugin = HelloPlugin(),
                 skippedTools = listOf(SkippedBridgedTool("odd_tool", "oneOf", "unmappable keyword")),
+                tools = listOf(
+                    BridgedMcpTool("hello.world", "greets", "hello.world", mapped = true),
+                ),
             )
         }
 

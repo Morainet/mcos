@@ -8,6 +8,7 @@ import com.morainet.mcos.sdk.McosPlugin
 import com.morainet.mcos.sdk.SecureStore
 import com.morainet.mcos.security.permission.PermissionKernel
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -35,6 +36,28 @@ data class McpServerRecord(
     val endpoint: String,
     val enabled: Boolean,
     val pluginId: String? = null,
+    /**
+     * The server's discovered tool catalog, cached after the first successful
+     * enable so per-tool enable/disable and the UI list survive without a
+     * reconnect. Empty until the first discovery. A tool with `enabled = false`
+     * is not registered on the next enable (per-tool enablement); an unmapped
+     * tool (`mapped = false`) can never be registered.
+     */
+    val tools: List<McpToolRecord> = emptyList(),
+)
+
+/**
+ * One tool advertised by an MCP server, in persisted form. [enabled] is the
+ * user's per-tool choice (defaults to on); [mapped] records whether its schema
+ * was convertible at discovery — an unmapped tool stays visible in the UI but
+ * can never be registered (§12.4 fail-closed).
+ */
+data class McpToolRecord(
+    val name: String,
+    val description: String? = null,
+    val commandId: String,
+    val enabled: Boolean = true,
+    val mapped: Boolean = true,
 )
 
 /**
@@ -54,8 +77,11 @@ interface McpServerBridge {
      * @param secretKey SecureStore key holding the bearer token, or null when
      *        no token was configured; discovery authenticates with it, the
      *        synthesized handlers reference it as a `{{secret.*}}` template.
+     * @param enabledTools When non-null, only these tool names are registered
+     *        (per-tool enablement); the returned [BridgedMcpServer.tools] still
+     *        reports the full catalog. Null registers every mappable tool.
      */
-    suspend fun discover(record: McpServerRecord, secretKey: String?): BridgedMcpServer
+    suspend fun discover(record: McpServerRecord, secretKey: String?, enabledTools: Set<String>?): BridgedMcpServer
 
     /**
      * Registry id for [serverId] *without* running discovery — used when a
@@ -67,14 +93,30 @@ interface McpServerBridge {
     fun pluginIdFor(serverId: String): String? = null
 }
 
-/** One bridged server: the ready-to-register plugin plus the tools it had to drop. */
+/** One bridged server: the ready-to-register plugin, the tools it had to drop, and the full catalog. */
 data class BridgedMcpServer(
     val plugin: McosPlugin,
     val skippedTools: List<SkippedBridgedTool> = emptyList(),
+    /**
+     * The server's full advertised tool catalog (mapped + unmapped, registered
+     * or filtered out). The controller caches this into
+     * [McpServerRecord.tools]; empty means the bridge didn't report one (a
+     * legacy bridge), in which case the controller leaves the record's tools
+     * untouched.
+     */
+    val tools: List<BridgedMcpTool> = emptyList(),
 )
 
 /** A discovered tool that was not bridged because its schema is unmappable (02 §12.4). */
 data class SkippedBridgedTool(val toolName: String, val unmappedType: String, val reason: String)
+
+/** One advertised tool, as reported by the bridge (host-neutral — no MCP client types leak in). */
+data class BridgedMcpTool(
+    val name: String,
+    val description: String?,
+    val commandId: String,
+    val mapped: Boolean,
+)
 
 /** Outcome of [McpServerController.addServer]. */
 sealed interface McpAddResult {
@@ -110,6 +152,20 @@ sealed interface McpRemoveResult {
     data class Removed(val commandsUnregistered: Int) : McpRemoveResult
     data object Unknown : McpRemoveResult
 }
+
+/**
+ * Outcome of [McpServerController.importJsonConfig] — a tally of what an
+ * `mcpServers` config produced. [skippedStdio] counts stdio (command-based)
+ * entries this HTTP-only host cannot bridge; [invalid] counts malformed
+ * entries and a malformed top-level document (invalid = 1, all others 0).
+ */
+data class McpImportResult(
+    val added: Int = 0,
+    val duplicates: Int = 0,
+    val skippedStdio: Int = 0,
+    val invalid: Int = 0,
+    val addedIds: List<String> = emptyList(),
+)
 
 /**
  * Owns the MCP server list for a host process (04 §10): persistence (JSON
@@ -186,6 +242,68 @@ class McpServerController(
     }
 
     /**
+     * Toggle one tool of a server on or off (per-tool enablement). Persists the
+     * choice on the record; when the server is currently enabled it re-runs
+     * discovery+registration so the change takes effect live (the enable path
+     * re-registers the plugin with the new filter). Returns null for an unknown
+     * server or tool; [McpEnableResult.Disabled] when the change applied while
+     * the server was off (nothing to re-register).
+     */
+    suspend fun setToolEnabled(serverId: String, toolName: String, enabled: Boolean): McpEnableResult? {
+        ensureLoaded()
+        val record = records.find { it.id == serverId } ?: return null
+        if (record.tools.none { it.name == toolName }) return null
+        update(serverId) { r ->
+            r.copy(tools = r.tools.map { if (it.name == toolName) it.copy(enabled = enabled) else it })
+        }
+        val updated = records.find { it.id == serverId } ?: return null
+        // Re-register with the new filter only when the server is live.
+        return if (updated.enabled) enable(updated) else McpEnableResult.Disabled(0)
+    }
+
+    /**
+     * Import servers from a standard MCP client config (the `mcpServers` map
+     * used by Claude Desktop / Cursor et al.). Each entry with a `url` (or
+     * `endpoint`) is added as a streamable-HTTP server (disabled — connecting
+     * stays an explicit [setEnabled]); a bearer token is read from
+     * `headers.Authorization` (the `Bearer ` prefix is stripped) and stored in
+     * the SecureStore. Entries with a `command` (stdio transport) are counted
+     * as [McpImportResult.skippedStdio] — this host bridges HTTP servers only.
+     * A duplicate id is skipped and counted, never overwritten.
+     */
+    suspend fun importJsonConfig(text: String): McpImportResult {
+        ensureLoaded()
+        val root = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull()
+            ?: return McpImportResult(invalid = 1)
+        val servers = root["mcpServers"]?.let { it as? JsonObject }
+            ?: return McpImportResult(invalid = 1)
+
+        var added = 0
+        var duplicates = 0
+        var skippedStdio = 0
+        var invalid = 0
+        val addedIds = mutableListOf<String>()
+
+        for ((id, elem) in servers) {
+            val obj = elem as? JsonObject
+            if (obj == null) { invalid++; continue }
+            // stdio transport (command/args) is not bridgeable by this host.
+            if (obj["command"] != null) { skippedStdio++; continue }
+            val endpoint = (obj["url"] ?: obj["endpoint"])?.jsonPrimitive?.contentOrNull
+            if (endpoint.isNullOrBlank()) { invalid++; continue }
+            val token = obj["headers"]?.let { it as? JsonObject }
+                ?.get("Authorization")?.jsonPrimitive?.contentOrNull
+                ?.removePrefix("Bearer ")?.trim()?.ifBlank { null }
+            when (addServer(id, endpoint, token)) {
+                is McpAddResult.Added -> { added++; addedIds += id }
+                McpAddResult.Duplicate -> duplicates++
+                McpAddResult.Invalid -> invalid++
+            }
+        }
+        return McpImportResult(added, duplicates, skippedStdio, invalid, addedIds)
+    }
+
+    /**
      * Best-effort restore of the servers the user left enabled (called on
      * host attach). A failing server is reported and left recorded for a
      * manual retry — one bad endpoint must not block the others.
@@ -199,8 +317,17 @@ class McpServerController(
 
     private suspend fun enable(record: McpServerRecord): McpEnableResult {
         val secretKey = secretKeyOf(record.id).takeIf { secureStore.get(it) != null }
+        // Per-tool enablement: pass the user's enabled tool names as the filter
+        // once a catalog has been discovered. A first-time enable (no catalog
+        // yet) passes null so every mappable tool registers, then we cache the
+        // discovered catalog for the next time.
+        val enabledFilter = record.tools
+            .takeIf { it.isNotEmpty() }
+            ?.filter { it.enabled && it.mapped }
+            ?.map { it.name }
+            ?.toSet()
         return try {
-            val bridged = bridge.discover(record, secretKey)
+            val bridged = bridge.discover(record, secretKey, enabledFilter)
             val plugin = bridged.plugin
             when (val result = runtime.loadPlugin(
                 packageId = plugin.manifest.id,
@@ -215,7 +342,13 @@ class McpServerController(
                     // so the kernel and egress policy still govern every call).
                     PluginPermissionBootstrap.grantAll(permissionKernel, plugin)
                     plugin.onLoad(hostServices)
-                    update(record.id) { it.copy(enabled = true, pluginId = plugin.manifest.id) }
+                    update(record.id) {
+                        it.copy(
+                            enabled = true,
+                            pluginId = plugin.manifest.id,
+                            tools = mergeToolCatalog(it.tools, bridged.tools),
+                        )
+                    }
                     McpEnableResult.Enabled(plugin.manifest.id, result.commandsRegistered, bridged.skippedTools)
                 }
                 is LoadResult.Denied -> {
@@ -242,6 +375,30 @@ class McpServerController(
     /** Unregister by the learned [McpServerRecord.pluginId], falling back to the bridge's legacy guess. */
     private fun unregisterOf(record: McpServerRecord): Int =
         (record.pluginId ?: bridge.pluginIdFor(record.id))?.let { registry.unregister(it) } ?: 0
+
+    /**
+     * Fold a fresh discovery catalog into the persisted one, preserving each
+     * tool's user-chosen [McpToolRecord.enabled] flag across reconnects. New
+     * tools default to enabled; tools no longer advertised drop off. An empty
+     * [discovered] (a legacy bridge that reports no catalog) leaves [existing]
+     * untouched.
+     */
+    private fun mergeToolCatalog(
+        existing: List<McpToolRecord>,
+        discovered: List<BridgedMcpTool>,
+    ): List<McpToolRecord> {
+        if (discovered.isEmpty()) return existing
+        val prevEnabled = existing.associate { it.name to it.enabled }
+        return discovered.map { t ->
+            McpToolRecord(
+                name = t.name,
+                description = t.description,
+                commandId = t.commandId,
+                enabled = prevEnabled[t.name] ?: true,
+                mapped = t.mapped,
+            )
+        }
+    }
 
     private suspend fun update(id: String, transform: (McpServerRecord) -> McpServerRecord) {
         val index = records.indexOfFirst { it.id == id }
@@ -278,11 +435,24 @@ class McpServerController(
                 val o = el.jsonObject
                 val id = o["id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
                 val endpoint = o["endpoint"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+                val tools = o["tools"]?.let { it as? kotlinx.serialization.json.JsonArray }
+                    ?.mapNotNull { te ->
+                        val to = te.jsonObject
+                        val name = to["name"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+                        McpToolRecord(
+                            name = name,
+                            description = to["description"]?.jsonPrimitive?.contentOrNull,
+                            commandId = to["commandId"]?.jsonPrimitive?.contentOrNull ?: "mcp.$id.$name",
+                            enabled = to["enabled"]?.jsonPrimitive?.booleanOrNull ?: true,
+                            mapped = to["mapped"]?.jsonPrimitive?.booleanOrNull ?: true,
+                        )
+                    } ?: emptyList()
                 McpServerRecord(
                     id = id,
                     endpoint = endpoint,
                     enabled = o["enabled"]?.jsonPrimitive?.booleanOrNull ?: false,
                     pluginId = o["pluginId"]?.jsonPrimitive?.contentOrNull,
+                    tools = tools,
                 )
             }
         }.getOrDefault(emptyList())
@@ -297,6 +467,19 @@ class McpServerController(
                         put("endpoint", r.endpoint)
                         put("enabled", r.enabled)
                         r.pluginId?.let { put("pluginId", it) }
+                        if (r.tools.isNotEmpty()) {
+                            put("tools", buildJsonArray {
+                                r.tools.forEach { t ->
+                                    add(buildJsonObject {
+                                        put("name", t.name)
+                                        t.description?.let { put("description", it) }
+                                        put("commandId", t.commandId)
+                                        put("enabled", t.enabled)
+                                        put("mapped", t.mapped)
+                                    })
+                                }
+                            })
+                        }
                     }
                 )
             }
