@@ -613,6 +613,19 @@ The system prompt template is **versioned**. The version string (e.g. `planner-p
 
 Exact prompt templates are not normative in this document — they live under `mcos-android` / `mcos-runtime` resources — but the **section order and cache-boundary placement** above are normative and templates MUST follow them.
 
+### 9.2 Skill Packages (Prompt-Level Augmentation)
+
+A **skill** is a user-imported, Claude-style guidance block — `{name, description, instructions}` — that extends *how* the planner behaves without extending *what* it can do. Skills are rendered into a `## Skills` section of the system prompt (between Memory Context and the Output Format), one `### <name>` block per enabled skill, prefixed with the instruction: *"follow a skill's instructions when a request falls within the scope its description names."*
+
+Normative constraints:
+
+- **No new capabilities.** A skill MUST NOT introduce command IDs. The allow-list is still the tool catalog (§2a/§2b); a skill can only steer the model toward already-registered commands. Safety Rule §14.1 (planner output is untrusted) is unchanged — a skill cannot expand grants or hide confirmations.
+- **Bounded size.** Each skill's `instructions` is truncated at render time (reference: 8000 chars) so one skill cannot crowd out the catalog.
+- **User-controlled.** Skills are imported and toggled by the user (demo: the Skills tab, persisted per host); only enabled skills are rendered. A skill-set change invalidates any cached planner/agent so the next turn sees the new prompt.
+- **Cache placement.** Skills are part of the stable prefix only while the enabled set is unchanged; treat a skill-set edit like a plugin load/unload for cache-prefix purposes.
+
+Reference implementation: `LlmPlanner(skills = …)` + `buildSkillsSection()` in `mcos-llm`; `SkillStore`/`SkillParser` in `mcos-android`.
+
 ---
 
 ## 10. Tool Calling vs Freeform JSON

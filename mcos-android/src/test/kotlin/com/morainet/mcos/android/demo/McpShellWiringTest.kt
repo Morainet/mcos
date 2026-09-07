@@ -16,6 +16,7 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withTimeout
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -83,6 +84,31 @@ class McpShellWiringTest {
     }
 
     @Test
+    fun perToolDisableUnregistersOnlyThatTool() = kotlinx.coroutines.runBlocking {
+        val secureStore = TestMarketplace.FakeSecureStore()
+        val host = NetOverrideHost(StubHostServices(InMemoryFacade()), TwoToolMcpNetService())
+        vm.attach(TestMarketplace.deps(secureStore = secureStore, hostServices = host))
+
+        addAndEnableDemo()
+        // Both tools register on first enable (no filter yet).
+        var state = vm.uiState.value
+        assertTrue(state.commandIds.contains("mcp.demo.echo"))
+        assertTrue(state.commandIds.contains("mcp.demo.ping"))
+        assertEquals(2, state.mcpServers.single { it.id == "demo" }.tools.size)
+
+        // Disable just `ping`; echo stays registered.
+        vm.setMcpToolEnabled("demo", "ping", false)
+        withTimeout(10_000) {
+            vm.uiState.first { st ->
+                st.mcpServers.find { it.id == "demo" }?.busy == false && !st.commandIds.contains("mcp.demo.ping")
+            }
+        }
+        state = vm.uiState.value
+        assertTrue("echo must remain", state.commandIds.contains("mcp.demo.echo"))
+        assertFalse("ping must be gone", state.commandIds.contains("mcp.demo.ping"))
+    }
+
+    @Test
     fun disableUnregistersBridgedCommands() = kotlinx.coroutines.runBlocking {
         val secureStore = TestMarketplace.FakeSecureStore()
         val host = NetOverrideHost(StubHostServices(InMemoryFacade()), FakeMcpNetService())
@@ -118,6 +144,24 @@ class McpShellWiringTest {
             val result = if (req.body?.decodeToString()?.contains("\"tools/list\"") == true) {
                 """{"tools":[{"name":"echo","description":"Echo text",""" +
                     """"inputSchema":{"type":"object","properties":{"text":{"type":"string"}}}}]}"""
+            } else {
+                """{"content":[{"type":"text","text":"ok"}],"isError":false}"""
+            }
+            return HttpResponse(
+                status = 200,
+                body = """{"jsonrpc":"2.0","id":1,"result":$result}""".encodeToByteArray(),
+            )
+        }
+    }
+
+    /** A two-tool MCP server (echo + ping) for per-tool enablement tests. */
+    private class TwoToolMcpNetService : NetService {
+        override suspend fun request(req: HttpRequest): HttpResponse {
+            val result = if (req.body?.decodeToString()?.contains("\"tools/list\"") == true) {
+                """{"tools":[
+                    {"name":"echo","description":"Echo text","inputSchema":{"type":"object","properties":{"text":{"type":"string"}}}},
+                    {"name":"ping","description":"Ping","inputSchema":{"type":"object","properties":{"host":{"type":"string"}}}}
+                ]}"""
             } else {
                 """{"content":[{"type":"text","text":"ok"}],"isError":false}"""
             }

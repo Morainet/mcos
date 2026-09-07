@@ -18,6 +18,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -166,6 +168,8 @@ fun MCOSApp(deps: AppDeps) {
                             ui = ui,
                             events = events,
                         )
+                        ShellPage.SKILLS -> SkillsPage(vm = vm, ui = ui)
+                        ShellPage.MCP -> McpPage(vm = vm, ui = ui)
                         ShellPage.TOOLS -> Column(Modifier.fillMaxSize()) {
                             StatusBar(ui = ui, show = showCommands, onToggle = { showCommands = !showCommands })
                             MarketplaceCard(
@@ -175,7 +179,6 @@ fun MCOSApp(deps: AppDeps) {
                                 onToggle = { showMarketplace = !showMarketplace },
                                 onInstallRequest = { pendingInstall = it },
                             )
-                            McpServerCard(vm = vm, ui = ui)
                             DslInputCard(vm = vm, ui = ui)
                             Spacer(Modifier.height(McosSpace.md))
                             OutputLog(
@@ -335,9 +338,11 @@ fun MCOSApp(deps: AppDeps) {
     }
 }
 
-/** The three shell tabs (bottom navigation, ≤5 items). */
+/** The shell tabs (bottom navigation, ≤5 items). */
 enum class ShellPage(val title: String, val icon: ImageVector) {
     CHAT("Chat", Icons.AutoMirrored.Filled.Send),
+    SKILLS("Skills", Icons.Default.Star),
+    MCP("MCP", Icons.Default.Share),
     TOOLS("Tools", Icons.Default.Build),
     SETTINGS("Settings", Icons.Default.Settings),
 }

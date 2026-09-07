@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.morainet.mcos.android.AppDeps
 import com.morainet.mcos.android.BridgedMcpServer
+import com.morainet.mcos.android.BridgedMcpTool
 import com.morainet.mcos.android.McpAddResult
 import com.morainet.mcos.android.McpEnableResult
 import com.morainet.mcos.android.McpRemoveResult
@@ -101,6 +102,12 @@ data class McosUiState(
     val mcpNewToken: String = "",
     /** Add-form busy flag (storing a new server). */
     val mcpBusy: Boolean = false,
+    /** `mcp.json` paste buffer for bulk import. */
+    val mcpImportText: String = "",
+    // ── Skills (Claude-style skill packages, prompt-level augmentation) ──
+    val skills: List<SkillUi> = emptyList(),
+    /** Skill import paste buffer (SKILL.md or JSON). */
+    val skillImportText: String = "",
 ) {
     /** The currently selected vendor's editable settings. */
     val selectedVendor: LlmVendorUi
@@ -140,6 +147,27 @@ data class McpServerUi(
     val busy: Boolean = false,
     /** Last per-server connect/disable outcome (null = untried). */
     val status: String? = null,
+    /** Discovered tools (populated after the first successful connect). */
+    val tools: List<McpToolUi> = emptyList(),
+)
+
+/** UI view of one MCP tool for per-tool enablement. */
+data class McpToolUi(
+    val name: String,
+    val description: String?,
+    val commandId: String,
+    val enabled: Boolean,
+    /** False for a tool whose schema is unmappable — visible but never registrable. */
+    val mapped: Boolean,
+)
+
+/** UI view of one imported skill package (Skills tab). */
+data class SkillUi(
+    val id: String,
+    val name: String,
+    val description: String,
+    val instructions: String,
+    val enabled: Boolean,
 )
 
 /**
@@ -170,6 +198,21 @@ class McosViewModel : ViewModel() {
     private var persistedKeyLoaded = false
 
     /**
+     * Imported skill packages (prompt-level augmentation). Rebuilt on [attach]
+     * like [mcpController]; the SecureStore is the single source of truth so a
+     * rebuild re-reads it. The enabled set is folded into every planner/agent
+     * the view model constructs.
+     */
+    private var skillStore: SkillStore? = null
+
+    /** Enabled skills, read once at attach and refreshed after each skill edit. */
+    private var cachedSkills: List<com.morainet.mcos.llm.Skill> = emptyList()
+    private var cachedSkillsVersion: String = ""
+
+    private fun skills(): SkillStore =
+        checkNotNull(skillStore) { "attach(deps) must be called before using the view model" }
+
+    /**
      * Activity-scoped MCP server controller (item 40: the management logic —
      * persistence, secrets, enable/disable lifecycle — lives in the SDK; this
      * shell only maps outcomes to UI). Rebuilt on every [attach], like [deps]:
@@ -198,6 +241,7 @@ class McosViewModel : ViewModel() {
             permissionKernel = deps.permissionKernel,
             bridge = DemoMcpBridge(deps),
         )
+        skillStore = SkillStore(deps.secureStore)
         // Load persisted vendor settings once (migrating the legacy single
         // key into the OpenAI slot), then probe every configured vendor.
         if (!persistedKeyLoaded) {
@@ -205,6 +249,7 @@ class McosViewModel : ViewModel() {
             viewModelScope.launch {
                 restoreVendors(deps.secureStore)
                 restoreMcpServers()
+                restoreSkills()
             }
         }
     }
@@ -443,6 +488,9 @@ class McosViewModel : ViewModel() {
         viewModelScope.launch {
             if (enabled) log("[${now()}] MCP: connecting to '${server.id}' (${server.endpoint})…")
             applyMcpResult(server.id, mcp().setEnabled(id, enabled))
+            // Pull the freshly-discovered tool catalog (cached on the record) into
+            // the UI so the per-tool list appears after a connect.
+            syncMcpServers()
             refreshCommandList()
         }
     }
@@ -491,9 +539,108 @@ class McosViewModel : ViewModel() {
     private suspend fun syncMcpServers() {
         val records = mcp().servers()
         _uiState.update { st ->
-            st.copy(mcpServers = records.map { r -> McpServerUi(r.id, r.endpoint, enabled = r.enabled) })
+            st.copy(
+                mcpServers = records.map { r ->
+                    // Preserve the transient busy flag/status the UI is holding.
+                    val prev = st.mcpServers.find { it.id == r.id }
+                    McpServerUi(
+                        id = r.id,
+                        endpoint = r.endpoint,
+                        enabled = r.enabled,
+                        busy = prev?.busy ?: false,
+                        status = prev?.status,
+                        tools = r.tools.map { t ->
+                            McpToolUi(t.name, t.description, t.commandId, t.enabled, t.mapped)
+                        },
+                    )
+                },
+            )
         }
     }
+
+    // ── MCP bulk import + per-tool enablement ───────────────────────────
+
+    fun onMcpImportTextChange(value: String) = _uiState.update { it.copy(mcpImportText = value) }
+
+    /** Import servers from a pasted standard `mcp.json` (`mcpServers` map). */
+    fun importMcpJson() {
+        val text = _uiState.value.mcpImportText.trim()
+        if (text.isBlank()) return
+        viewModelScope.launch {
+            val result = mcp().importJsonConfig(text)
+            log(
+                "[${now()}] MCP import: ${result.added} added, ${result.duplicates} duplicate, " +
+                    "${result.skippedStdio} stdio-skipped, ${result.invalid} invalid",
+            )
+            if (result.added > 0) {
+                _uiState.update { it.copy(mcpImportText = "") }
+                syncMcpServers()
+            }
+        }
+    }
+
+    /** Toggle one tool of a server; re-registers live when the server is enabled. */
+    fun setMcpToolEnabled(serverId: String, toolName: String, enabled: Boolean) {
+        viewModelScope.launch {
+            val result = mcp().setToolEnabled(serverId, toolName, enabled) ?: return@launch
+            applyMcpResult(serverId, result)
+            syncMcpServers()
+            refreshCommandList()
+        }
+    }
+
+    // ── Skills (Claude-style skill packages) ────────────────────────────
+
+    fun onSkillImportTextChange(value: String) = _uiState.update { it.copy(skillImportText = value) }
+
+    /** Import a skill from the paste buffer (SKILL.md or JSON). */
+    fun importSkill() {
+        val text = _uiState.value.skillImportText.trim()
+        if (text.isBlank()) return
+        viewModelScope.launch {
+            val record = skills().import(text)
+            if (record == null) {
+                log("[WARN] Skill import: could not parse (need name + instructions)")
+                return@launch
+            }
+            log("[${now()}] Skill imported: ${record.skill.name}")
+            _uiState.update { it.copy(skillImportText = "") }
+            refreshSkills()
+        }
+    }
+
+    fun removeSkill(id: String) {
+        viewModelScope.launch {
+            skills().remove(id)
+            refreshSkills()
+        }
+    }
+
+    fun setSkillEnabled(id: String, enabled: Boolean) {
+        viewModelScope.launch {
+            skills().setEnabled(id, enabled)
+            refreshSkills()
+        }
+    }
+
+    /** Re-read the skill list into the UI and refresh the cached enabled set. */
+    private suspend fun refreshSkills() {
+        val list = skills().list()
+        _uiState.update { st ->
+            st.copy(
+                skills = list.map {
+                    SkillUi(it.skill.id, it.skill.name, it.skill.description, it.skill.instructions, it.enabled)
+                },
+            )
+        }
+        cachedSkills = list.filter { it.enabled }.map { it.skill }
+        cachedSkillsVersion = skills().enabledVersion()
+        // A skill change invalidates any cached agent bridge (prompt changed).
+        agentBridge = null
+        agentBridgeKey = null
+    }
+
+    private suspend fun restoreSkills() = refreshSkills()
 
     /** Restore the configured list, reconnecting the servers the user left enabled. */
     private suspend fun restoreMcpServers() {
@@ -674,6 +821,7 @@ class McosViewModel : ViewModel() {
                             id = s.selectedVendorId,
                         ),
                         registry = deps().registry,
+                        skills = cachedSkills,
                     ),
                     runtime = runtime(),
                     injectionDetector = PromptInjectionDetector(),
@@ -792,7 +940,7 @@ class McosViewModel : ViewModel() {
 
     /** Lazily build (and cache per vendor+config) the real [McosAgent]. */
     private fun bridgeFor(vendorId: String, config: LlmConfig): AgentBridge {
-        val cacheKey = "$vendorId|${config.apiKey}|${config.model}|${config.endpoint}"
+        val cacheKey = "$vendorId|${config.apiKey}|${config.model}|${config.endpoint}|$cachedSkillsVersion"
         val cached = agentBridge
         if (cached != null && agentBridgeKey == cacheKey) return cached
         val bridge = McosAgent(
@@ -803,6 +951,7 @@ class McosViewModel : ViewModel() {
                     id = vendorId,
                 ),
                 registry = deps().registry,
+                skills = cachedSkills,
             ),
             runtime = runtime(),
             registry = deps().registry,
@@ -899,7 +1048,11 @@ private fun RuntimeEvent.toLogLine(time: String): String = when (this) {
  */
 private class DemoMcpBridge(private val deps: AppDeps) : McpServerBridge {
 
-    override suspend fun discover(record: McpServerRecord, secretKey: String?): BridgedMcpServer {
+    override suspend fun discover(
+        record: McpServerRecord,
+        secretKey: String?,
+        enabledTools: Set<String>?,
+    ): BridgedMcpServer {
         val discovery = McpAdapter.discover(
             deps.hostServices.net,
             McpServerConfig(
@@ -908,11 +1061,15 @@ private class DemoMcpBridge(private val deps: AppDeps) : McpServerBridge {
                 secretKey = secretKey,
             ),
             secretLookup = { key -> deps.hostServices.secureStore.get(key)?.decodeToString() },
+            enabledTools = enabledTools,
         )
         return BridgedMcpServer(
             plugin = discovery.plugin,
             skippedTools = discovery.skipped.map {
                 SkippedBridgedTool(it.toolName, it.unmappedType, it.reason)
+            },
+            tools = discovery.tools.map {
+                BridgedMcpTool(it.name, it.description, it.commandId, it.mapped)
             },
         )
     }
