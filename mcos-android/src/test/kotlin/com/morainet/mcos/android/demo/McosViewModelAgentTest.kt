@@ -149,7 +149,7 @@ class McosViewModelAgentTest {
 
     /** Enable agent mode, fill key+goal, and fire one turn. */
     private fun startAgentTurn(goal: String) {
-        vm.onApiKeyChange("sk-test-key")
+        vm.onVendorKeyChange("openai", "sk-test-key")
         vm.onNlTextChange(goal)
         vm.onAgentModeChange(true)
         vm.agentTurn()

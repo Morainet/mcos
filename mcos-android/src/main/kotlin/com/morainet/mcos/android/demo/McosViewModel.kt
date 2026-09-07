@@ -44,8 +44,19 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** SharedPreferences key holding the LLM API key (managed via AndroidSecureStore). */
-private const val LLM_API_KEY = "llm_api_key"
+/**
+ * Legacy single-key store (pre multi-vendor). Migrated once on [attach] into
+ * the OpenAI vendor slot, then removed.
+ */
+private const val LEGACY_LLM_API_KEY = "llm_api_key"
+
+/** SecureStore key for the currently selected vendor id. */
+private const val LLM_SELECTED_VENDOR = "llm_vendor_selected"
+
+/** Per-vendor SecureStore key names (secrets + non-secret prefs alike). */
+private fun vendorKeyKey(id: String) = "llm_vendor_${id}_key"
+private fun vendorModelKey(id: String) = "llm_vendor_${id}_model"
+private fun vendorEndpointKey(id: String) = "llm_vendor_${id}_endpoint"
 
 private const val DEFAULT_DSL = "hello.world(name=\"MCOS\")\ncamera.capture()"
 
@@ -63,7 +74,10 @@ private const val MAX_LOG_LINES = 1_000
 data class McosUiState(
     val dslText: String = DEFAULT_DSL,
     val nlText: String = "",
-    val apiKey: String = "",
+    /** Per-vendor editable settings (key/model/endpoint), one row per preset. */
+    val vendors: List<LlmVendorUi> = LlmVendors.all.map { LlmVendorUi.initial(it) },
+    /** The vendor whose config chat/agent actually use. */
+    val selectedVendorId: String = LlmVendors.DEFAULT_ID,
     val isExecuting: Boolean = false,
     val pluginsLoaded: Boolean = false,
     val commandIds: List<String> = emptyList(),
@@ -87,7 +101,36 @@ data class McosUiState(
     val mcpNewToken: String = "",
     /** Add-form busy flag (storing a new server). */
     val mcpBusy: Boolean = false,
-)
+) {
+    /** The currently selected vendor's editable settings. */
+    val selectedVendor: LlmVendorUi
+        get() = vendors.firstOrNull { it.vendor.id == selectedVendorId } ?: vendors.first()
+}
+
+/**
+ * Editable UI state for one LLM vendor: the [vendor] preset plus the user's
+ * current key/model/endpoint. [endpoint] defaults to the preset endpoint and
+ * stays editable (custom vendors start blank).
+ */
+data class LlmVendorUi(
+    val vendor: LlmVendor,
+    val apiKey: String = "",
+    val model: String = "",
+    val endpoint: String = "",
+) {
+    /** Ready to send: has a model + endpoint, and a key unless the vendor allows none. */
+    val usable: Boolean
+        get() = model.isNotBlank() && endpoint.isNotBlank() && (vendor.keyOptional || apiKey.isNotBlank())
+
+    companion object {
+        fun initial(v: LlmVendor) = LlmVendorUi(
+            vendor = v,
+            apiKey = "",
+            model = v.defaultModel,
+            endpoint = v.endpoint,
+        )
+    }
+}
 
 /** UI view of one configured MCP server (04 §10 per-server enablement). */
 data class McpServerUi(
@@ -155,15 +198,41 @@ class McosViewModel : ViewModel() {
             permissionKernel = deps.permissionKernel,
             bridge = DemoMcpBridge(deps),
         )
-        // Load the persisted API key once; onApiKeyChange's debounce then
-        // probes with it, matching the previous startup behavior.
+        // Load persisted vendor settings once (migrating the legacy single
+        // key into the OpenAI slot), then probe every configured vendor.
         if (!persistedKeyLoaded) {
             persistedKeyLoaded = true
             viewModelScope.launch {
-                deps.secureStore.get(LLM_API_KEY)?.decodeToString()?.let { onApiKeyChange(it) }
+                restoreVendors(deps.secureStore)
                 restoreMcpServers()
             }
         }
+    }
+
+    /**
+     * Rehydrate the per-vendor key/model/endpoint from SecureStore. A legacy
+     * `llm_api_key` (single-vendor era) is migrated once into the OpenAI slot
+     * and then removed. After loading, every vendor with a key is registered
+     * and probed so the settings page shows real health.
+     */
+    private suspend fun restoreVendors(store: com.morainet.mcos.sdk.SecureStore) {
+        // One-time migration: legacy key → openai vendor (only if not already set).
+        val legacy = store.get(LEGACY_LLM_API_KEY)?.decodeToString()
+        if (!legacy.isNullOrBlank() && store.get(vendorKeyKey(LlmVendors.DEFAULT_ID)) == null) {
+            store.put(vendorKeyKey(LlmVendors.DEFAULT_ID), legacy.encodeToByteArray())
+        }
+        if (legacy != null) store.remove(LEGACY_LLM_API_KEY)
+
+        val selected = store.get(LLM_SELECTED_VENDOR)?.decodeToString()
+            ?.takeIf { LlmVendors.byId(it) != null } ?: LlmVendors.DEFAULT_ID
+        val rows = LlmVendors.all.map { v ->
+            val key = store.get(vendorKeyKey(v.id))?.decodeToString() ?: ""
+            val model = store.get(vendorModelKey(v.id))?.decodeToString()?.ifBlank { null } ?: v.defaultModel
+            val endpoint = store.get(vendorEndpointKey(v.id))?.decodeToString()?.ifBlank { null } ?: v.endpoint
+            LlmVendorUi(vendor = v, apiKey = key, model = model, endpoint = endpoint)
+        }
+        _uiState.update { it.copy(vendors = rows, selectedVendorId = selected) }
+        if (rows.any { it.apiKey.isNotBlank() }) refreshProbe()
     }
 
     private fun deps(): AppDeps =
@@ -215,38 +284,98 @@ class McosViewModel : ViewModel() {
         _uiState.update { it.copy(nlText = value) }
     }
 
-    fun onApiKeyChange(value: String) {
-        _uiState.update { it.copy(apiKey = value) }
-        // Debounce: probe once the user stops typing for 500ms.
-        probeDebounce?.cancel()
-        if (value.isBlank()) {
-            _uiState.update { it.copy(providerHealth = emptyList()) }
-            return
+    // ── multi-vendor LLM settings (06 §17 V1 probing) ───────────────────
+
+    private fun updateVendor(id: String, transform: (LlmVendorUi) -> LlmVendorUi) {
+        _uiState.update { st ->
+            st.copy(vendors = st.vendors.map { if (it.vendor.id == id) transform(it) else it })
         }
+    }
+
+    /** The [LlmConfig] for a vendor row, or null when it isn't ready to send. */
+    private fun LlmVendorUi.toConfigOrNull(): LlmConfig? =
+        if (!usable) null
+        else LlmConfig(apiKey = apiKey.trim(), model = model.trim(), endpoint = endpoint.trim())
+
+    /**
+     * The selected vendor's config, or null when the selection has no key /
+     * model / endpoint. Test seam: pure mapping, no side effects.
+     */
+    internal fun selectedLlmConfig(): LlmConfig? = _uiState.value.selectedVendor.toConfigOrNull()
+
+    fun onVendorKeyChange(id: String, value: String) {
+        updateVendor(id) { it.copy(apiKey = value) }
+        persistVendorField(vendorKeyKey(id), value)
+        scheduleProbe()
+    }
+
+    fun onVendorModelChange(id: String, value: String) {
+        updateVendor(id) { it.copy(model = value) }
+        persistVendorField(vendorModelKey(id), value)
+        scheduleProbe()
+    }
+
+    fun onVendorEndpointChange(id: String, value: String) {
+        updateVendor(id) { it.copy(endpoint = value) }
+        persistVendorField(vendorEndpointKey(id), value)
+        scheduleProbe()
+    }
+
+    /** Choose the vendor chat/agent will use; persists and re-probes. */
+    fun selectVendor(id: String) {
+        if (LlmVendors.byId(id) == null) return
+        _uiState.update { it.copy(selectedVendorId = id) }
+        // Selecting a different vendor invalidates the cached agent bridge.
+        agentBridge = null
+        agentBridgeKey = null
+        persistVendorField(LLM_SELECTED_VENDOR, id)
+        scheduleProbe()
+    }
+
+    private fun persistVendorField(key: String, value: String) {
+        viewModelScope.launch {
+            val store = deps().secureStore
+            if (value.isBlank()) store.remove(key) else store.put(key, value.encodeToByteArray())
+        }
+    }
+
+    /** Debounce: re-probe once the user stops editing for 500ms. */
+    private fun scheduleProbe() {
+        probeDebounce?.cancel()
         probeDebounce = viewModelScope.launch {
             delay(500)
             refreshProbe()
         }
     }
 
-    /** (Re)register a provider for the current key and run a fresh probe. */
+    /**
+     * (Re)register every vendor that has a usable config under its own id and
+     * run a fresh probe; vendors without a key are unregistered so stale
+     * health drops off. Health is reported per-vendor (06 §17 V1).
+     */
     fun refreshProbe() {
-        val apiKey = _uiState.value.apiKey
-        if (apiKey.isBlank()) {
-            _uiState.update { it.copy(providerHealth = emptyList()) }
-            return
-        }
+        val vendors = _uiState.value.vendors
         viewModelScope.launch {
             _uiState.update { it.copy(probing = true) }
             try {
-                llmRegistry.unregister("openai")
-                llmRegistry.register(
-                    OpenAiLlmProvider(
-                        config = LlmConfig(apiKey = apiKey.trim()),
-                        transport = AndroidLlmHttpTransport(),
-                    )
-                )
-                _uiState.update { it.copy(providerHealth = llmRegistry.probeAll()) }
+                vendors.forEach { row ->
+                    val config = row.toConfigOrNull()
+                    llmRegistry.unregister(row.vendor.id)
+                    if (config != null) {
+                        llmRegistry.register(
+                            OpenAiLlmProvider(
+                                config = config,
+                                transport = AndroidLlmHttpTransport(),
+                                id = row.vendor.id,
+                            )
+                        )
+                    }
+                }
+                if (llmRegistry.size == 0) {
+                    _uiState.update { it.copy(providerHealth = emptyList()) }
+                } else {
+                    _uiState.update { it.copy(providerHealth = llmRegistry.probeAll()) }
+                }
             } finally {
                 _uiState.update { it.copy(probing = false) }
             }
@@ -525,25 +654,24 @@ class McosViewModel : ViewModel() {
         _uiState.update { it.copy(isExecuting = true) }
         _events.value = emptyList()
 
-        val key = s.apiKey.trim()
-        if (key.isBlank()) {
-            log("[WARN] Set an LLM API key in the AI Chat card first.")
+        val config = selectedLlmConfig()
+        if (config == null) {
+            log("[WARN] Set an LLM API key in Settings first.")
             _uiState.update { it.copy(isExecuting = false) }
             return
         }
 
         viewModelScope.launch {
             try {
-                // Persist the key so it survives restarts.
-                deps().secureStore.put(LLM_API_KEY, key.encodeToByteArray())
                 loadPlugins()
 
-                log("[${now()}] Planning “${s.nlText.take(60)}”…")
+                log("[${now()}] Planning “${s.nlText.take(60)}” via ${s.selectedVendor.vendor.name}…")
                 val orchestrator = ChatOrchestrator(
                     planner = LlmPlanner(
                         provider = OpenAiLlmProvider(
-                            config = LlmConfig(apiKey = key),
+                            config = config,
                             transport = AndroidLlmHttpTransport(),
+                            id = s.selectedVendorId,
                         ),
                         registry = deps().registry,
                     ),
@@ -589,9 +717,9 @@ class McosViewModel : ViewModel() {
      */
     private val agentSessionId = "main"
 
-    /** Built on first agent turn; rebuilt if the API key changes. */
+    /** Built on first agent turn; rebuilt if the selected vendor/config changes. */
     private var agentBridge: AgentBridge? = null
-    private var agentApiKey: String? = null
+    private var agentBridgeKey: String? = null
 
     /**
      * Test seam: when set, agent turns/resumes run against this bridge
@@ -610,20 +738,18 @@ class McosViewModel : ViewModel() {
         _uiState.update { it.copy(isExecuting = true, agentWorking = true) }
         _events.value = emptyList()
 
-        val key = s.apiKey.trim()
-        if (key.isBlank()) {
-            log("[WARN] Set an LLM API key in the AI Chat card first.")
+        val config = selectedLlmConfig()
+        if (config == null && agentBridgeOverride == null) {
+            log("[WARN] Set an LLM API key in Settings first.")
             _uiState.update { it.copy(isExecuting = false, agentWorking = false) }
             return
         }
 
         viewModelScope.launch {
             try {
-                // Persist the key so it survives restarts.
-                deps().secureStore.put(LLM_API_KEY, key.encodeToByteArray())
                 loadPlugins()
 
-                val bridge = agentBridgeOverride ?: bridgeFor(key)
+                val bridge = agentBridgeOverride ?: bridgeFor(s.selectedVendorId, config!!)
                 log("[${now()}] Agent turn: “${s.nlText.take(60)}”…")
                 bridge.runTurn(agentSessionId, s.nlText).collect { handleAgentResult(it) }
             } catch (e: Exception) {
@@ -664,15 +790,17 @@ class McosViewModel : ViewModel() {
         }
     }
 
-    /** Lazily build (and cache per key) the real [McosAgent]. */
-    private fun bridgeFor(key: String): AgentBridge {
+    /** Lazily build (and cache per vendor+config) the real [McosAgent]. */
+    private fun bridgeFor(vendorId: String, config: LlmConfig): AgentBridge {
+        val cacheKey = "$vendorId|${config.apiKey}|${config.model}|${config.endpoint}"
         val cached = agentBridge
-        if (cached != null && agentApiKey == key) return cached
+        if (cached != null && agentBridgeKey == cacheKey) return cached
         val bridge = McosAgent(
             planner = LlmPlanner(
                 provider = OpenAiLlmProvider(
-                    config = LlmConfig(apiKey = key),
+                    config = config,
                     transport = AndroidLlmHttpTransport(),
+                    id = vendorId,
                 ),
                 registry = deps().registry,
             ),
@@ -682,7 +810,7 @@ class McosViewModel : ViewModel() {
             eventBus = deps().eventBus,
         )
         agentBridge = bridge
-        agentApiKey = key
+        agentBridgeKey = cacheKey
         return bridge
     }
 
