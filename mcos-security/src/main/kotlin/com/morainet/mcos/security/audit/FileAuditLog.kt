@@ -1,5 +1,6 @@
 package com.morainet.mcos.security.audit
 
+import com.morainet.mcos.security.RedactionLevel
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.serialization.encodeToString
@@ -55,6 +56,13 @@ class FileAuditLog(
      * disk; the in-memory index and [export] stay plaintext.
      */
     var cipher: AuditCipher? = null,
+    /**
+     * Live-read redaction level ([03-runtime.md §19] `auditRedaction`). A
+     * supplier so `RuntimeConfigManager` can hot-swap the level between writes
+     * with no push; consulted on every [append]/[appendVerified]. Defaults to
+     * the historical [RedactionLevel.DEFAULT] walk.
+     */
+    var redactionLevel: () -> RedactionLevel = { RedactionLevel.DEFAULT },
 ) : AuditLog {
 
     private sealed interface ChannelMsg {
@@ -121,7 +129,8 @@ class FileAuditLog(
 
     /** Append a run record. Non-blocking; `ir` is redacted before persistence. */
     override fun append(record: RunRecord) {
-        val redacted = record.copy(ir = record.ir?.let { redactSecrets(it) })
+        val level = redactionLevel()
+        val redacted = record.copy(ir = record.ir?.let { redactSecrets(it, level) })
         channel.trySend(ChannelMsg.Record(redacted))
     }
 
@@ -135,7 +144,8 @@ class FileAuditLog(
      * non-blocking [append].
      */
     override suspend fun appendVerified(record: RunRecord): Boolean {
-        val redacted = record.copy(ir = record.ir?.let { redactSecrets(it) })
+        val level = redactionLevel()
+        val redacted = record.copy(ir = record.ir?.let { redactSecrets(it, level) })
         val job = writerJob
         if (job == null || !job.isActive) return false
         val done = CompletableDeferred<Boolean>()

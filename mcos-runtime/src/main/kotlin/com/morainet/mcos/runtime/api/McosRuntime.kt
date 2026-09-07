@@ -52,8 +52,13 @@ import com.morainet.mcos.security.ScopeBasedEgressPolicy
 import com.morainet.mcos.security.SecurityConfig
 import com.morainet.mcos.security.SlidingWindowCrashQuarantine
 import com.morainet.mcos.security.TokenBucketRateLimiter
+import com.morainet.mcos.security.UnionEnterprisePolicySource
 import com.morainet.mcos.security.audit.AuditLog
+import com.morainet.mcos.security.audit.FileAuditLog
+import com.morainet.mcos.security.audit.InMemoryAuditLog
 import com.morainet.mcos.security.audit.RunRecord
+import com.morainet.mcos.runtime.core.config.RuntimeConfig
+import com.morainet.mcos.runtime.core.config.RuntimeConfigManager
 import com.morainet.mcos.sdk.McosPlugin
 import com.morainet.mcos.runtime.core.workflow.ArmedScheduleStore
 import com.morainet.mcos.runtime.core.workflow.NullArmedScheduleStore
@@ -144,6 +149,7 @@ class McosRuntime internal constructor(
     private val armedScheduleStore: ArmedScheduleStore = NullArmedScheduleStore,
     private val wakeScheduler: WakeScheduler? = null,
     private val scheduler: RunScheduler,
+    private val runtimeConfigInputs: RuntimeConfigInputs,
 ) : RuntimeGateway {
     private val summarizer = RunSummarizer(episodicMemory)
 
@@ -159,8 +165,28 @@ class McosRuntime internal constructor(
         workflowStore = workflowStore,
         scheduleStore = armedScheduleStore,
         wakeScheduler = wakeScheduler,
+        eventTriggersEnabled = runtimeConfigInputs.eventTriggersEnabled,
         fire = { id, inputs, pre, stepSource -> fireTriggeredWorkflow(id, inputs, pre, stepSource) },
     )
+
+    // ─── §19 RuntimeConfig manager (03-runtime.md §19) ──────────────────────
+    //
+    // Built here (not in the builder) because it fans out to the trigger
+    // managers the coordinator above owns. Binding it back into the builder's
+    // late-bound holder lights up the read-through suppliers (audit redaction,
+    // user policy, default timeout, strict-schema, allow-list) wired into the
+    // executor / kernel / audit sink at build time.
+    private val runtimeConfigManager = RuntimeConfigManager(
+        registry = registry,
+        scheduler = scheduler,
+        rateLimiter = runtimeConfigInputs.rateLimiter,
+        eventTriggers = triggers.eventTriggerManager(),
+        scheduleTriggers = triggers.scheduleTriggerManager(),
+        auditLog = auditLog,
+        mdm = runtimeConfigInputs.mdm,
+        user = runtimeConfigInputs.user,
+        initial = runtimeConfigInputs.seeded,
+    ).also { runtimeConfigInputs.bindManager(it) }
 
     // ─── Confirmation flow (08-security.md §5) ──────────────────────────
     //
@@ -474,6 +500,25 @@ class McosRuntime internal constructor(
      * @return The previously-active config, so the host can log the transition.
      */
     fun reconfigureScheduler(new: SchedulerConfig): SchedulerConfig = scheduler.reconfigure(new)
+
+    /**
+     * The §19 [RuntimeConfigManager] — the source-precedence aggregator and
+     * hot-reload fan-out ([03-runtime.md §19]). Use it to inspect the live
+     * config ([RuntimeConfigManager.current]) or apply a new one
+     * ([RuntimeConfigManager.apply]); [applyRuntimeConfig] is the convenience
+     * shorthand. [reconfigureScheduler] remains as an orthogonal direct path to
+     * the scheduler; both ultimately drive the same [RunScheduler.reconfigure].
+     */
+    fun runtimeConfig(): RuntimeConfigManager = runtimeConfigManager
+
+    /**
+     * Apply a new §19 [RuntimeConfig] through the manager: merge over the MDM /
+     * user sources, validate, fan out to every live consumer, and emit the
+     * always-audited ConfigChanged record. Returns the config that is now live
+     * (post-merge / normalize / deferral). Throws on an invalid merged config
+     * (never silently coerced, §19.1).
+     */
+    fun applyRuntimeConfig(config: RuntimeConfig): RuntimeConfig = runtimeConfigManager.apply(config)
 
     /**
      * Access the memory facade.
@@ -1044,6 +1089,13 @@ class McosRuntime internal constructor(
         // named no-policy source; enforcement is a deliberate wiring choice.
         private var enterprisePolicySource: EnterprisePolicySource = EnterprisePolicySource.None
 
+        // §19 RuntimeConfig sources. The initial config seeds the manager; the
+        // MDM / user pull sources are consulted on every apply for the
+        // most-restrictive-wins merge. Defaults are the pre-§19 behaviour.
+        private var initialRuntimeConfig: RuntimeConfig = RuntimeConfig()
+        private var mdmConfigSource: () -> RuntimeConfig? = { null }
+        private var userConfigSource: () -> RuntimeConfig? = { null }
+
         // Plugin trust pipeline (09-marketplace.md §6). When no loader is
         // injected, a default trust gate + verifier + in-memory key store is
         // built so `loadPlugin` is fail-closed out of the box.
@@ -1147,6 +1199,27 @@ class McosRuntime internal constructor(
         fun withSchedulerConfig(config: SchedulerConfig) = apply { this.schedulerConfig = config }
 
         /**
+         * Seed the §19 [RuntimeConfigManager] with an initial [RuntimeConfig]
+         * ([03-runtime.md §19]). Its `scheduler` should match
+         * [withSchedulerConfig]; if left at the default, [build] aligns the two
+         * automatically. Defaults to `RuntimeConfig()` (the pre-§19 behaviour).
+         */
+        fun withInitialRuntimeConfig(config: RuntimeConfig) = apply { this.initialRuntimeConfig = config }
+
+        /**
+         * Provide the MDM / enterprise §19 config pull source (highest
+         * precedence in the most-restrictive-wins merge). Consulted on every
+         * `applyRuntimeConfig`. Returns null when no MDM config is present.
+         */
+        fun withMdmConfigSource(source: () -> RuntimeConfig?) = apply { this.mdmConfigSource = source }
+
+        /**
+         * Provide the user §19 config pull source (middle precedence). Consulted
+         * on every `applyRuntimeConfig`. Returns null when no user config is set.
+         */
+        fun withUserConfigSource(source: () -> RuntimeConfig?) = apply { this.userConfigSource = source }
+
+        /**
          * Make schedule triggers durable ([10-roadmap.md §6]): armed schedules
          * persist here and [McosRuntime.rehydrateSchedules] re-arms them on a
          * fresh process. Defaults to [NullArmedScheduleStore] (lifetime-only).
@@ -1174,7 +1247,58 @@ class McosRuntime internal constructor(
 
         fun build(): McosRuntime {
             val reg = registry ?: CommandRegistry()
-            val perm = permissionKernel ?: DefaultPermissionKernel()
+
+            // §19 RuntimeConfig manager. Built first so its read-through
+            // suppliers can be wired into the default executor, audit sink and
+            // kernel below. The manager's live config is the source of truth for
+            // the read-through fields; the initial config's scheduler is aligned
+            // to the builder's schedulerConfig when the caller left it default so
+            // the maxParallel↔scheduler consistency check never trips.
+            val seededConfig = if (initialRuntimeConfig.scheduler == SchedulerConfig() &&
+                initialRuntimeConfig.maxParallel == RuntimeConfig().maxParallel
+            ) {
+                initialRuntimeConfig.copy(
+                    scheduler = schedulerConfig,
+                    maxParallel = schedulerConfig.maxConcurrentInvokes,
+                )
+            } else {
+                initialRuntimeConfig
+            }
+
+            // A per-kernel supplier that reads the manager once it exists. The
+            // manager is constructed after the executor (it needs the scheduler
+            // + trigger managers), so the suppliers close over a late-bound
+            // holder rather than the manager directly.
+            val configHolder = arrayOfNulls<RuntimeConfigManager>(1)
+            fun liveConfig(): RuntimeConfig = configHolder[0]?.current() ?: seededConfig
+
+            val perm = permissionKernel ?: DefaultPermissionKernel(
+                userPolicy = { liveConfig().userPolicy },
+            )
+
+            // Compose the host's enterprise policy source with the §19 overlay
+            // (RuntimeConfig's allow-lists) so both flow through the existing
+            // item-23/53 enforcement chain — a single source of truth.
+            val composedEnterprise = UnionEnterprisePolicySource(
+                base = enterprisePolicySource,
+                overlay = { configHolder[0]?.enterpriseOverlay() },
+            )
+
+            // The audit sink observes the live redaction level (a supplier the
+            // manager backs). Only sinks that expose the seam are wired; others
+            // keep their default DEFAULT walk.
+            when (val sink = auditLog) {
+                is InMemoryAuditLog -> sink.redactionLevel = { liveConfig().auditRedaction }
+                is FileAuditLog -> sink.redactionLevel = { liveConfig().auditRedaction }
+                else -> { /* NullAuditLog / custom sink: no redaction seam */ }
+            }
+
+            // Hoisted so the §19 RuntimeConfigManager can retune the SAME
+            // limiter the default executor consults (its rateLimits knobs).
+            val defaultRateLimiter = TokenBucketRateLimiter(
+                maxInvokesPerMinute = seededConfig.rateLimits.maxInvokesPerMinute,
+                maxDestructivePerHour = seededConfig.rateLimits.maxDestructivePerHour,
+            )
 
             // The executor's security posture is assembled from this builder's
             // knobs. [NullAuditLog] preserves the historical default (no audit
@@ -1182,13 +1306,16 @@ class McosRuntime internal constructor(
             // Executor/SecurityConfig.
             val security = SecurityConfig(
                 kernel = perm,
-                rateLimiter = TokenBucketRateLimiter(),
+                rateLimiter = defaultRateLimiter,
                 egress = ScopeBasedEgressPolicy(),
                 signer = authStampSigner,
                 quarantine = quarantine,
-                enterprisePolicy = enterprisePolicySource,
+                enterprisePolicy = composedEnterprise,
                 auditLog = auditLog,
                 auditFailClosed = auditFailClosed,
+                defaultTimeout = { liveConfig().defaultTimeoutMs },
+                strictSchemaOutput = { liveConfig().strictSchemaOutput },
+                commandAllowlist = { liveConfig().enterpriseAllowlist },
             )
             val exec = executor ?: Executor(
                 reg,
@@ -1256,6 +1383,22 @@ class McosRuntime internal constructor(
                 auditFailClosed = auditFailClosed,
             )
 
+            // §19 RuntimeConfigManager: owns the live config and fans changes out
+            // to the scheduler, the default rate limiter and both trigger
+            // managers. The trigger managers live inside the facade's
+            // TriggerCoordinator, so the facade constructs the manager itself
+            // (it has the coordinator); the builder passes the pieces the facade
+            // needs to build it — the seeded config, the pull sources, and the
+            // shared rate limiter — and the late-bound holder the suppliers read.
+            val runtimeConfigInputs = RuntimeConfigInputs(
+                seeded = seededConfig,
+                mdm = mdmConfigSource,
+                user = userConfigSource,
+                rateLimiter = defaultRateLimiter,
+                eventTriggersEnabled = { liveConfig().eventTriggersEnabled },
+                bindManager = { mgr -> configHolder[0] = mgr },
+            )
+
             // Default trust pipeline: fail-closed PluginTrustGate over an
             // empty in-memory key store. Hosts that verify marketplace
             // artifacts inject a real verifier + key store via withPluginLoader.
@@ -1286,8 +1429,25 @@ class McosRuntime internal constructor(
                 armedScheduleStore = armedScheduleStore,
                 wakeScheduler = wakeScheduler,
                 scheduler = scheduler,
+                runtimeConfigInputs = runtimeConfigInputs,
             )
         }
     }
+
+    /**
+     * The pieces the facade needs to construct its §19 [RuntimeConfigManager]
+     * after it has built the [TriggerCoordinator] (which owns the two trigger
+     * managers the manager fans out to). Assembled by [Builder.build] so the
+     * builder keeps ownership of the seeded config + pull sources while the
+     * facade owns the trigger managers.
+     */
+    internal class RuntimeConfigInputs(
+        val seeded: RuntimeConfig,
+        val mdm: () -> RuntimeConfig?,
+        val user: () -> RuntimeConfig?,
+        val rateLimiter: TokenBucketRateLimiter,
+        val eventTriggersEnabled: () -> Boolean,
+        val bindManager: (RuntimeConfigManager) -> Unit,
+    )
 }
 

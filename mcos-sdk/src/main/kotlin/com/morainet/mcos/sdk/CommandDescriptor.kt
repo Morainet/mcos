@@ -40,7 +40,7 @@ data class CommandDescriptor(
     val idempotent: Boolean = false,
 
     /** Executor timeout in milliseconds (1000..600000) */
-    val timeoutMs: Long = 60000,
+    val timeoutMs: Long = DEFAULT_TIMEOUT_MS,
 
     /** Optional tags for marketplace filtering and dispatch hints */
     val tags: List<String> = emptyList(),
@@ -56,7 +56,21 @@ data class CommandDescriptor(
 
     /** Alternate command IDs that resolve to this handler */
     val aliases: List<String> = emptyList()
-)
+) {
+    companion object {
+        /**
+         * The manifest / minimal-descriptor default timeout (60 s). Named so the
+         * Executor can distinguish "the descriptor kept the default" from "the
+         * descriptor explicitly set a value" when applying the global
+         * `RuntimeConfig.defaultTimeoutMs` ([03-runtime.md §19]).
+         *
+         * Honest boundary: a descriptor that explicitly sets exactly 60_000 is
+         * indistinguishable from an unset one and therefore follows the global
+         * default.
+         */
+        const val DEFAULT_TIMEOUT_MS: Long = 60_000L
+    }
+}
 
 /**
  * A permission entry required by a command or plugin.

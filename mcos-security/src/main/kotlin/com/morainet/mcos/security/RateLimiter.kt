@@ -62,9 +62,39 @@ interface RateLimiter {
  * @param maxDestructivePerHour Maximum destructive invocations per plugin per hour (default: 5).
  */
 class TokenBucketRateLimiter(
-    internal val maxInvokesPerMinute: Int = 60,
-    internal val maxDestructivePerHour: Int = 5,
+    maxInvokesPerMinute: Int = 60,
+    maxDestructivePerHour: Int = 5,
 ) : RateLimiter {
+
+    /**
+     * Live-mutable rates ([03-runtime.md §19] `rateLimits`). Read on every
+     * refill so [reconfigure] takes effect on the next window without touching
+     * existing bucket balances. `@Volatile` so the writer's push is visible to
+     * concurrent [tryConsume] callers.
+     */
+    @Volatile internal var maxInvokesPerMinute: Int = maxInvokesPerMinute
+        private set
+
+    @Volatile internal var maxDestructivePerHour: Int = maxDestructivePerHour
+        private set
+
+    /**
+     * Hot-retune the rate caps ([03-runtime.md §19]). Existing buckets keep
+     * their current token balances; the new rates apply to subsequent refills
+     * only (mirrors `RunScheduler.reconfigure`'s "new work, not in-flight"
+     * semantics). Returns the previous [RateLimits] snapshot (background fires
+     * are owned by the trigger managers, so that field echoes the historical
+     * default) so callers can log the delta.
+     */
+    fun reconfigure(maxInvokesPerMinute: Int, maxDestructivePerHour: Int): RateLimits {
+        val previous = RateLimits(
+            maxInvokesPerMinute = this.maxInvokesPerMinute,
+            maxDestructivePerHour = this.maxDestructivePerHour,
+        )
+        this.maxInvokesPerMinute = maxInvokesPerMinute
+        this.maxDestructivePerHour = maxDestructivePerHour
+        return previous
+    }
 
     private data class TokenBucket(
         var tokens: Double,

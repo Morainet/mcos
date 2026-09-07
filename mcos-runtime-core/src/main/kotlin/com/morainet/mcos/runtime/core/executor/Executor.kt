@@ -130,6 +130,23 @@ class Executor(
                 retryable = false
             )
         }
+        // Stage 3.5 — RuntimeConfig allow-list projection (03-runtime.md §19).
+        // A non-null allow-list hides every command whose resolved id matches
+        // no glob: it reports UNKNOWN_COMMAND *before* dispatch (a visibility
+        // gate), distinct from the Stage-6 PERMISSION_DENIED that
+        // EnterprisePolicy.allowCommands raises. Read live, so re-applying a
+        // config takes effect on the next execute(); in-flight runs are
+        // unaffected. `null` disables the gate.
+        val allowlist = security.commandAllowlist()
+        if (allowlist != null &&
+            allowlist.none { commandGlobMatches(it, resolved.entry.descriptor.id) }
+        ) {
+            return CommandResult.Err(
+                code = McosErrorCode.UNKNOWN_COMMAND.name,
+                message = "Command '$commandId' is not on the runtime allow-list",
+                retryable = false
+            )
+        }
         // Crash-loop quarantine gate (08-security.md §15.3): a quarantined
         // plugin refuses to execute even if its commands were re-registered.
         val pluginId = resolved.entry.descriptor.pluginId
@@ -319,7 +336,14 @@ class Executor(
         }
 
         val runId = UUID.randomUUID().toString()
-        val timeoutMs = entry.descriptor.timeoutMs.coerceIn(1000, 600000)
+        // A descriptor that kept the manifest default (60 s, indistinguishable
+        // from unset) uses the live global RuntimeConfig.defaultTimeoutMs
+        // (03-runtime.md §19); a descriptor that set any other value keeps its
+        // explicit timeout. Both are clamped to the §19 [1000, 600000] range.
+        val effectiveTimeoutMs =
+            entry.descriptor.timeoutMs.takeIf { it != CommandDescriptor.DEFAULT_TIMEOUT_MS }
+                ?: security.defaultTimeout()
+        val timeoutMs = effectiveTimeoutMs.coerceIn(1000, 600000)
         val startTime = System.currentTimeMillis()
         val deadlineMs = startTime + timeoutMs
         // Re-sign the stamp after the audit runId is bound so the isolated
@@ -427,6 +451,46 @@ class Executor(
             recordPluginCrash(entry, e)
         }
 
+        // Stage 8.5 — strict output-schema gate (03-runtime.md §19). When the
+        // live `strictSchemaOutput` flag is on and the descriptor declares an
+        // outputSchema, a successful result is validated against that schema;
+        // a violation turns the Ok into an Err(SCHEMA_VIOLATION). Off by
+        // default — output schemas stay advisory. Only the success value is
+        // checked; an existing Err passes through untouched.
+        val outputSchema = entry.descriptor.outputSchema
+        val okResult = result
+        if (security.strictSchemaOutput() && outputSchema != null && outputSchema.isNotEmpty() &&
+            okResult is CommandResult.Ok
+        ) {
+            // SchemaValidator is object-shaped (mirrors the input-side Stage-5
+            // gate). A non-object success value is validated by wrapping it
+            // under a synthetic "value" key so `type`/`enum`/`const` schemas on
+            // a scalar still apply; an object value validates directly.
+            val value = okResult.value
+            val (payload, schema) = if (value is JsonObject) {
+                value to outputSchema
+            } else {
+                JsonObject(mapOf("value" to value)) to JsonObject(
+                    mapOf(
+                        "type" to JsonPrimitive("object"),
+                        "properties" to JsonObject(mapOf("value" to outputSchema)),
+                        "required" to JsonArray(listOf(JsonPrimitive("value"))),
+                    )
+                )
+            }
+            val outValidation = schemaValidator.validate(payload, schema)
+            if (outValidation is ValidationResult.Invalid) {
+                result = CommandResult.Err(
+                    code = McosErrorCode.SCHEMA_VIOLATION.name,
+                    message = "Output schema violation (strictSchemaOutput) for " +
+                        "'${entry.descriptor.id}': ${outValidation.errors.size} error(s)",
+                    retryable = false,
+                    details = buildJsonDetails(outValidation.errors)
+                )
+                outcome = RunOutcome.FAILED
+            }
+        }
+
         // A successful invocation resets the crash-loop window (§15.3).
         if (result is CommandResult.Ok) {
             security.quarantine.recordSuccess(entry.descriptor.pluginId)
@@ -489,6 +553,22 @@ class Executor(
      */
     private fun collectRequiredPermissions(descriptor: CommandDescriptor): List<String> {
         return descriptor.permissions.map { it.name }
+    }
+
+    /**
+     * Command-id glob match for the Stage-3.5 RuntimeConfig allow-list, using
+     * the same semantics as `EnterprisePolicy.commandGlobMatches` (08 §13.1):
+     * `*` matches any id, `prefix.*` matches any id under `prefix.`, anything
+     * else matches exactly. Kept local so the visibility gate does not depend
+     * on the security module's internal helper.
+     */
+    private fun commandGlobMatches(pattern: String, commandId: String): Boolean {
+        if (pattern == "*") return true
+        if (pattern.endsWith(".*")) {
+            val prefix = pattern.dropLast(2)
+            return commandId.startsWith("$prefix.")
+        }
+        return commandId == pattern
     }
 
     /**

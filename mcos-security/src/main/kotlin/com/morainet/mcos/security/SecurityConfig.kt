@@ -57,6 +57,38 @@ data class SecurityConfig(
      * [com.morainet.mcos.security.audit.FileAuditLog] does.
      */
     val auditFailClosed: Boolean = false,
+
+    /**
+     * Live-read global default command timeout ([03-runtime.md §19]
+     * `defaultTimeoutMs`). Consulted at Stage 8 when the resolved descriptor's
+     * `timeoutMs` is the manifest default (indistinguishable from unset — see
+     * [CommandDescriptor.DEFAULT_TIMEOUT_MS]); a descriptor that sets any other
+     * value keeps its explicit timeout. A supplier so `RuntimeConfigManager`
+     * can hot-swap it; read on the next dispatch. Defaults to the historical
+     * 60 s so every existing construction site is byte-for-byte unchanged.
+     */
+    val defaultTimeout: () -> Long = { 60_000L },
+
+    /**
+     * Live-read strict output-schema gate ([03-runtime.md §19]
+     * `strictSchemaOutput`). When the supplier returns `true`, a command whose
+     * descriptor declares an `outputSchema` has its successful result validated
+     * against that schema post-invoke; a violation turns the `Ok` into an
+     * `Err(SCHEMA_VIOLATION)`. Default `false` (the pre-§19 behaviour: output
+     * schemas are advisory, never enforced).
+     */
+    val strictSchemaOutput: () -> Boolean = { false },
+
+    /**
+     * Live-read Stage-3 command allow-list ([03-runtime.md §19]
+     * `enterpriseAllowlist`). When the supplier returns a non-null list, a
+     * resolved command whose id matches none of the globs is rejected with
+     * `UNKNOWN_COMMAND` *before* dispatch — a projection/visibility gate that
+     * is independent of, and additional to, the Stage-6 `PERMISSION_DENIED`
+     * enforcement of [EnterprisePolicy.allowCommands] (item 23, unchanged).
+     * `null` (the default) disables the gate: no command is hidden.
+     */
+    val commandAllowlist: () -> List<String>? = { null },
 ) {
     companion object {
         /** Production posture — every control real. */

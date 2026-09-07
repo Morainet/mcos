@@ -87,9 +87,40 @@ class EventTriggerManager(
     private val bus: EventBus,
     private val memory: MemoryStore,
     private val auditLog: AuditLog = NullAuditLog,
-    private val limits: TriggerLimits = TriggerLimits(),
+    limits: TriggerLimits = TriggerLimits(),
     private val clock: () -> Long = System::currentTimeMillis,
+    /**
+     * Live-read master switch for event triggers ([03-runtime.md §19]
+     * `eventTriggersEnabled`). When the supplier returns `false`, armed
+     * triggers stay armed but their [onEvent] handler returns immediately —
+     * nothing fires and no rate-window slot is consumed. Flipping it back to
+     * `true` resumes firing on the next matching event (spec "immediate").
+     * Defaults to always-enabled — the pre-§19 behaviour. Schedule triggers
+     * are deliberately NOT gated (spec §19 names event triggers).
+     */
+    private val enabled: () -> Boolean = { true },
 ) {
+
+    /**
+     * Live-mutable background-fire budget ([03-runtime.md §19]
+     * `rateLimits.maxBackgroundFiresPerHour`). `@Volatile` so [reconfigure]'s
+     * push is visible to concurrent [onEvent] callers; existing per-trigger
+     * fire windows keep their timestamps and the new cap applies to subsequent
+     * checks.
+     */
+    @Volatile
+    private var limits: TriggerLimits = limits
+
+    /**
+     * Hot-retune the background-fire budget ([03-runtime.md §19]). Returns the
+     * previous [TriggerLimits] so callers can log the delta. In-flight fire
+     * windows are untouched; the new cap applies on the next event.
+     */
+    fun reconfigure(limits: TriggerLimits): TriggerLimits {
+        val previous = this.limits
+        this.limits = limits
+        return previous
+    }
 
     /** One armed subscription and its per-workbook fire bookkeeping. */
     private class ArmedTrigger(
@@ -190,6 +221,10 @@ class EventTriggerManager(
     // ─── Event delivery ────────────────────────────────────────────────
 
     private suspend fun onEvent(workflowId: String, envelope: EventEnvelope) {
+        // §19 master switch: when event triggers are disabled, armed triggers
+        // stay armed but nothing fires and no rate-window slot is consumed.
+        // Re-enabling resumes on the next matching event.
+        if (!enabled()) return
         val armed = armedTriggers[workflowId] ?: return // disarmed in flight
 
         val where = when (armed.trigger.resolveMemory) {
