@@ -21,13 +21,15 @@ import kotlinx.serialization.json.jsonPrimitive
  *
  * @param config Connection and model configuration.
  * @param transport HTTP transport used for requests.
+ * @param id Registry/diagnostics id (06 §17). Defaults to "openai"; multiple
+ *   OpenAI-compatible vendors (DeepSeek, Qwen, Moonshot, …) coexist in one
+ *   [LlmProviderRegistry] only when each is registered under a distinct id.
  */
 open class OpenAiLlmProvider(
     protected val config: LlmConfig,
     private val transport: LlmHttpTransport = JdkLlmHttpTransport(),
+    override val id: String = "openai",
 ) : LlmProvider {
-
-    override val id: String get() = "openai"
 
     override val capabilities: Set<Capability> =
         setOf(Capability.CHAT, Capability.TOOL_CALL, Capability.CONSTRAINED)

@@ -4,15 +4,25 @@ import android.Manifest
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.Crossfade
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -28,6 +38,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.foundation.layout.Row
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -101,6 +112,8 @@ fun MCOSApp(deps: AppDeps) {
     ) { granted -> deps.permissionBridge.onResult(granted) }
     LaunchedEffect(promptLauncher) { deps.permissionBridge.attach { promptLauncher.launch(it) } }
 
+    var page by remember { mutableStateOf(ShellPage.CHAT) }
+
     McosTheme {
         Scaffold(
             topBar = {
@@ -108,42 +121,66 @@ fun MCOSApp(deps: AppDeps) {
                     title = {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("MCOS", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                            Text("  Shell", fontWeight = FontWeight.Normal)
+                            Text("  ${page.title}", fontWeight = FontWeight.Normal)
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
                 )
-            }
+            },
+            bottomBar = {
+                NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+                    ShellPage.entries.forEach { p ->
+                        NavigationBarItem(
+                            selected = page == p,
+                            onClick = { page = p },
+                            icon = { Icon(p.icon, contentDescription = p.title) },
+                            label = { Text(p.title) },
+                            colors = NavigationBarItemDefaults.colors(
+                                selectedIconColor = MaterialTheme.colorScheme.onPrimary,
+                                indicatorColor = MaterialTheme.colorScheme.primary,
+                                selectedTextColor = MaterialTheme.colorScheme.primary,
+                                unselectedIconColor = McosColor.fgMuted,
+                                unselectedTextColor = McosColor.fgMuted,
+                            ),
+                        )
+                    }
+                }
+            },
         ) { padding ->
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .padding(horizontal = McosSpace.lg, vertical = McosSpace.md)
-            ) {
-                StatusBar(ui = ui, show = showCommands, onToggle = { showCommands = !showCommands })
-
-                MarketplaceCard(
-                    vm = marketVm,
-                    ui = marketUi,
-                    show = showMarketplace,
-                    onToggle = { showMarketplace = !showMarketplace },
-                    onInstallRequest = { pendingInstall = it },
-                )
-
-                AiChatCard(vm = vm, ui = ui)
-
-                McpServerCard(vm = vm, ui = ui)
-
-                DslInputCard(vm = vm, ui = ui)
-
-                Spacer(Modifier.height(McosSpace.md))
-
-                OutputLog(
-                    events = events,
-                    onClear = { vm.clearLog() },
-                    modifier = Modifier.fillMaxWidth().weight(1f),
-                )
+            Crossfade(targetState = page, label = "shell-page") { current ->
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .padding(padding)
+                        .padding(horizontal = McosSpace.lg, vertical = McosSpace.md)
+                ) {
+                    when (current) {
+                        ShellPage.CHAT -> ChatPage(
+                            vm = vm,
+                            ui = ui,
+                            events = events,
+                        )
+                        ShellPage.TOOLS -> Column(Modifier.fillMaxSize()) {
+                            StatusBar(ui = ui, show = showCommands, onToggle = { showCommands = !showCommands })
+                            MarketplaceCard(
+                                vm = marketVm,
+                                ui = marketUi,
+                                show = showMarketplace,
+                                onToggle = { showMarketplace = !showMarketplace },
+                                onInstallRequest = { pendingInstall = it },
+                            )
+                            McpServerCard(vm = vm, ui = ui)
+                            DslInputCard(vm = vm, ui = ui)
+                            Spacer(Modifier.height(McosSpace.md))
+                            OutputLog(
+                                events = events,
+                                onClear = { vm.clearLog() },
+                                modifier = Modifier.fillMaxWidth().weight(1f),
+                            )
+                        }
+                        ShellPage.SETTINGS -> SettingsPage(vm = vm, ui = ui)
+                    }
+                }
             }
         }
 
@@ -290,4 +327,11 @@ fun MCOSApp(deps: AppDeps) {
             )
         }
     }
+}
+
+/** The three shell tabs (bottom navigation, ≤5 items). */
+enum class ShellPage(val title: String, val icon: ImageVector) {
+    CHAT("Chat", Icons.AutoMirrored.Filled.Send),
+    TOOLS("Tools", Icons.Default.Build),
+    SETTINGS("Settings", Icons.Default.Settings),
 }

@@ -10,6 +10,15 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### Demo shell UI 重构 — 浅色主题 + 三页导航 + 多厂商 API 设置（2026-09-07）
+
+Android demo shell（`mcos-android`）的界面重做:从单页深色（OLED）终端布局改为简洁的 AI-native 浅色主题 + 底部三页导航,并新增真正的多厂商 LLM 设置。
+
+- **浅色主题**:`McosTheme` 由 `darkColorScheme` 改 `lightColorScheme`,`McosColor` token 换为 AI-native 浅色调（primary 紫 `#7C3AED`、accent 青 `#0891B2`、背景 `#FAF5FF`、卡片白、前景深靛 `#1E1B4B`、边框 `#DDD6FE`、危险 `#DC2626`;warn/success 取浅底可读的琥珀/青)。token 架构与组件引用方式不变。
+- **三页 shell**（`McosApp` + Material3 `NavigationBar`,3 项 ≤5):**Chat** 主对话页（选中厂商 + 健康点 + Agent 开关 + NL 输入 + 单一主 CTA + 输出台)、**Tools** 配置入口（插件状态/Marketplace/MCP/DSL)、**Settings** 多厂商设置页。全局对话框（确认/agent 计划/安装/recipe 向导/更新)留在根,任意页均可弹出。`AiChatCard` 拆解为 `ChatPage`。
+- **多厂商真实存储**（`McosViewModel`):`McosUiState` 以 `vendors: List<LlmVendorUi>` + `selectedVendorId` 取代单一 `apiKey`;每厂商的 key/model/endpoint 各自持久化到 `llm_vendor_<id>_*` SecureStore 槽,选中项存 `llm_vendor_selected`。旧单键 `llm_api_key` 在首次 `attach` 一次性迁移到 OpenAI 槽后删除。`refreshProbe()` 按各自 id 注册每个可用厂商并 `probeAll()`——健康真正按厂商分列。切换厂商即切换 chat/agent 实际命中的后端。预置厂商:OpenAI、DeepSeek、通义千问、Kimi、智谱 GLM、Gemini(OpenAI 兼容)、Ollama(本地)、自定义——皆 OpenAI 兼容 chat-completions 端点。
+- **`OpenAiLlmProvider`**（`mcos-llm`):新增可覆盖 `id: String = "openai"` 构造参数（默认源兼容),让多个 OpenAI 兼容厂商以不同 id 共存于一个 `LlmProviderRegistry`。
+
 ### RuntimeConfig §19 — 源优先级聚合器 + 热加载扇出（2026-09-07）
 
 03 §19 的收口（item 57）：补齐 item 55 明确推迟的"更广的 §19 RuntimeConfig 源/优先级管理器"。此前 `RuntimeConfig` 仅存在于注释中,§19 的每个旋钮要么构建期冻结、要么无条件生效。

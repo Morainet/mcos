@@ -21,6 +21,22 @@ class OpenAiLlmProviderTransportTest {
     // ---- Provider <-> transport contract --------------------------------
 
     @Test
+    fun `distinct ids let OpenAI-compatible vendors coexist in one registry`() {
+        val registry = LlmProviderRegistry()
+        val openai = OpenAiLlmProvider(config, StubTransport(emptyList()), id = "openai")
+        val deepseek = OpenAiLlmProvider(
+            LlmConfig(apiKey = "dk", endpoint = "https://api.deepseek.com/v1/chat/completions"),
+            StubTransport(emptyList()),
+            id = "deepseek",
+        )
+
+        assertTrue(registry.register(openai))
+        assertTrue(registry.register(deepseek))
+        assertEquals(2, registry.size)
+        assertEquals(listOf("openai", "deepseek"), registry.all().map { it.id })
+    }
+
+    @Test
     fun `chat maps transport 200 to Ok`() = runBlocking {
         val transport = StubTransport(
             responses = listOf(

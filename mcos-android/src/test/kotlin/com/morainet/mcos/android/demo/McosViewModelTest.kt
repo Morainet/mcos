@@ -15,6 +15,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -69,15 +70,67 @@ class McosViewModelTest {
     // ═══════════════════════════════════════════════════════════════
 
     @Test
-    fun attachLoadsPersistedApiKeyOnce() {
-        vm.attach(buildDeps(FakeSecureStore(initial = "sk-test")))
+    fun attachMigratesLegacyKeyIntoOpenAiVendorOnce() = runBlocking {
+        val store = FakeSecureStore(legacy = "sk-test")
+        vm.attach(buildDeps(store))
 
-        assertEquals("sk-test", vm.uiState.value.apiKey)
+        // Legacy single key lands in the OpenAI vendor slot and is selected.
+        withTimeout(5_000) { vm.uiState.first { it.selectedVendor.apiKey == "sk-test" } }
+        val openai = vm.uiState.value.vendors.first { it.vendor.id == "openai" }
+        assertEquals("sk-test", openai.apiKey)
+        assertEquals("openai", vm.uiState.value.selectedVendorId)
+        // The legacy entry is consumed (migrated then removed).
+        assertNull(store.get("llm_api_key"))
+        assertEquals("sk-test", store.get("llm_vendor_openai_key")?.decodeToString())
 
-        // A later attach (e.g. after rotation) must not re-read the store —
-        // the in-memory key the user may have edited wins.
-        vm.attach(buildDeps(FakeSecureStore(initial = "sk-other")))
-        assertEquals("sk-test", vm.uiState.value.apiKey)
+        // A later attach must not re-read the store — in-memory state wins.
+        vm.attach(buildDeps(FakeSecureStore(legacy = "sk-other")))
+        assertEquals("sk-test", vm.uiState.value.selectedVendor.apiKey)
+    }
+
+    @Test
+    fun vendorKeysArePersistedAndIsolatedPerVendor() = runBlocking {
+        val store = FakeSecureStore()
+        vm.attach(buildDeps(store))
+
+        vm.onVendorKeyChange("openai", "sk-openai")
+        vm.onVendorKeyChange("deepseek", "sk-deepseek")
+
+        // Each vendor's key persists under its own SecureStore slot.
+        withTimeout(5_000) { vm.uiState.first { it.vendors.first { v -> v.vendor.id == "deepseek" }.apiKey == "sk-deepseek" } }
+        assertEquals("sk-openai", store.get("llm_vendor_openai_key")?.decodeToString())
+        assertEquals("sk-deepseek", store.get("llm_vendor_deepseek_key")?.decodeToString())
+    }
+
+    @Test
+    fun selectVendorSwitchesTheEffectiveConfig() = runBlocking {
+        val store = FakeSecureStore()
+        vm.attach(buildDeps(store))
+
+        vm.onVendorKeyChange("deepseek", "sk-deepseek")
+        vm.selectVendor("deepseek")
+
+        val config = vm.selectedLlmConfig()
+        assertNotNull("selected DeepSeek should map to a config", config)
+        assertEquals("sk-deepseek", config!!.apiKey)
+        assertEquals("https://api.deepseek.com/v1/chat/completions", config.endpoint)
+        assertEquals("deepseek-chat", config.model)
+        assertEquals("deepseek", store.get("llm_vendor_selected")?.decodeToString())
+    }
+
+    @Test
+    fun customVendorRequiresEndpointAndModel() {
+        vm.attach(buildDeps(FakeSecureStore()))
+        vm.selectVendor("custom")
+        vm.onVendorKeyChange("custom", "sk-x")
+        // Endpoint + model still blank → not usable, no config.
+        assertNull(vm.selectedLlmConfig())
+
+        vm.onVendorEndpointChange("custom", "https://my.host/v1/chat/completions")
+        vm.onVendorModelChange("custom", "my-model")
+        val config = vm.selectedLlmConfig()
+        assertNotNull(config)
+        assertEquals("https://my.host/v1/chat/completions", config!!.endpoint)
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -131,7 +184,7 @@ class McosViewModelTest {
 
         assertTrue(
             "expected missing-key warning, got ${vm.events.value}",
-            vm.events.value.any { it.contains("Set an LLM API key") },
+            vm.events.value.any { it.contains("Set an LLM API key in Settings") },
         )
         assertFalse(vm.uiState.value.isExecuting)
     }
@@ -184,10 +237,10 @@ class McosViewModelTest {
     private fun buildDeps(secureStore: SecureStore): AppDeps =
         TestMarketplace.deps(secureStore = secureStore)
 
-    private class FakeSecureStore(initial: String? = null) : SecureStore {
+    private class FakeSecureStore(legacy: String? = null) : SecureStore {
         private val entries = mutableMapOf<String, ByteArray>()
         init {
-            initial?.let { entries[LLM_API_KEY_FOR_TEST] = it.encodeToByteArray() }
+            legacy?.let { entries[LEGACY_KEY] = it.encodeToByteArray() }
         }
 
         override suspend fun get(key: String): ByteArray? = entries[key]
@@ -197,6 +250,6 @@ class McosViewModelTest {
     }
 
     private companion object {
-        const val LLM_API_KEY_FOR_TEST = "llm_api_key"
+        const val LEGACY_KEY = "llm_api_key"
     }
 }

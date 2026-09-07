@@ -1,44 +1,45 @@
 package com.morainet.mcos.android.demo
 
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
 /**
- * MCOS design tokens — a single source of truth for the shell's terminal /
- * OLED aesthetic. Components reference [McosColor] instead of raw hex so the
- * palette stays consistent and themeable (jetpack-compose "Design system"
- * guideline: centralized tokens, no hardcoded values).
+ * MCOS design tokens — a single source of truth for the shell's clean,
+ * AI-native light aesthetic. Components reference [McosColor] instead of raw
+ * hex so the palette stays consistent and themeable (jetpack-compose "Design
+ * system" guideline: centralized tokens, no hardcoded values).
  *
  * Semantic accents (not just Material roles):
- * - [accent]  terminal green — primary CTA, "run", success
- * - [info]    blue — AI / info / run-event markers
+ * - [accent]  violet — primary CTA, "run", selection
+ * - [info]    cyan — AI / info / run-event markers
  * - [warn]    amber — elevated permissions / warnings
  * - [danger]  red — errors / destructive actions
+ * - [success] teal — success / healthy provider
  */
 object McosColor {
-    // Surfaces — OLED-leaning midnight, deepening toward the console.
-    val bg = Color(0xFF0A0E14)
-    val surface = Color(0xFF12161F)
-    val surfaceAlt = Color(0xFF1A2029)
-    val console = Color(0xFF05070B)
-    val border = Color(0xFF232B36)
+    // Surfaces — soft violet-tinted light, cards float on a lavender wash.
+    val bg = Color(0xFFFAF5FF)
+    val surface = Color(0xFFFFFFFF)
+    val surfaceAlt = Color(0xFFF4F0FB)
+    val console = Color(0xFFF4F1FB)
+    val border = Color(0xFFDDD6FE)
 
-    // Text.
-    val fg = Color(0xFFE6EDF3)
-    val fgMuted = Color(0xFF9BA7B6)
-    val fgDim = Color(0xFF6B7686)
+    // Text — deep indigo on light, never pure black.
+    val fg = Color(0xFF1E1B4B)
+    val fgMuted = Color(0xFF6E6A8F)
+    val fgDim = Color(0xFF9C98B8)
 
     // Semantic accents.
-    val accent = Color(0xFF3FD68B)
-    val onAccent = Color(0xFF04160C)
-    val info = Color(0xFF7CB7FF)
-    val warn = Color(0xFFF2B45A)
-    val danger = Color(0xFFF2645A)
-    val onDanger = Color(0xFF1A0605)
-    val success = accent
+    val accent = Color(0xFF7C3AED)
+    val onAccent = Color(0xFFFFFFFF)
+    val info = Color(0xFF0891B2)
+    val warn = Color(0xFFB45309)
+    val danger = Color(0xFFDC2626)
+    val onDanger = Color(0xFFFFFFFF)
+    val success = Color(0xFF0F766E)
 }
 
 /** 4/8-based spacing rhythm. */
@@ -53,24 +54,24 @@ object McosSpace {
 /** Corner-radius scale for cards, fields, and buttons. */
 object McosRadius {
     val sm = 8.dp
-    val md = 10.dp
-    val lg = 12.dp
+    val md = 12.dp
+    val lg = 16.dp
 }
 
 /**
- * Wraps content in the MCOS dark theme. The Material color roles are mapped
+ * Wraps content in the MCOS light theme. The Material color roles are mapped
  * from [McosColor] so existing `MaterialTheme.colorScheme.*` usages pick up
- * the terminal palette automatically.
+ * the AI-native palette automatically.
  */
 @Composable
 fun McosTheme(content: @Composable () -> Unit) {
     MaterialTheme(
-        colorScheme = darkColorScheme(
+        colorScheme = lightColorScheme(
             primary = McosColor.accent,
             onPrimary = McosColor.onAccent,
             secondary = McosColor.info,
             onSecondary = McosColor.onAccent,
-            tertiary = McosColor.warn,
+            tertiary = McosColor.accent,
             onTertiary = McosColor.onAccent,
             background = McosColor.bg,
             onBackground = McosColor.fg,
