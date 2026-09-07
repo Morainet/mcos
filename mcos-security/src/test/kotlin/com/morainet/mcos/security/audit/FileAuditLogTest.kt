@@ -32,7 +32,8 @@ class FileAuditLogTest {
         maxRecords: Int = 10_000,
         maxAgeMs: Long = 30L * 24 * 60 * 60 * 1000,
         hmacKey: ByteArray? = null,
-    ): FileAuditLog = FileAuditLog(file, maxRecords, maxAgeMs, hmacKey)
+        cipher: AuditCipher? = null,
+    ): FileAuditLog = FileAuditLog(file, maxRecords, maxAgeMs, hmacKey, cipher)
 
     // ═══════════════════════════════════════════════════════════════
     // F1-F2: persistence + replay
@@ -191,6 +192,157 @@ class FileAuditLogTest {
         assertEquals(0, l.count())
         assertFalse(file.exists())
         l.stop()
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // F10-F18: at-rest encryption (08-security.md §14)
+    // ═══════════════════════════════════════════════════════════════
+
+    private fun cipher() = AesGcmAuditCipher(deriveAuditCipherKey("audit-at-rest-seed"))
+
+    @Test
+    fun `F10-a wired cipher seals every line - no plaintext runId on disk`() = runBlocking {
+        val l = log(cipher = cipher()).apply { start() }
+        appendWithTimestamp(l, "sealed-run", System.currentTimeMillis() - 1_000)
+        withTimeout(5_000) { l.flush() }
+
+        val raw = file.readText()
+        assertTrue(raw.contains("_mcosAuditEnc"), "on-disk lines must carry the envelope marker")
+        assertFalse(raw.contains("sealed-run"), "runId must never appear in plaintext on disk")
+        assertEquals(1, l.count(), "the in-memory index stays plaintext-queryable")
+        l.stop()
+    }
+
+    @Test
+    fun `F11-sealed records replay across instances with fields intact`() = runBlocking {
+        val first = log(cipher = cipher()).apply {
+            start()
+            append(
+                RunRecord(
+                    runId = "run-1", timestamp = System.currentTimeMillis() - 1_000, source = "CHAT",
+                    commandId = "camera.capture", outcome = RunOutcome.FAILED,
+                )
+            )
+            flush()
+            stop()
+        }
+
+        val second = log(cipher = cipher()).apply { start() }
+        withTimeout(5_000) { second.flush() }
+        assertEquals(1, second.count(), "sealed record must decrypt and replay from disk")
+        val round = assertNotNull(second.getRun("run-1"))
+        assertEquals("CHAT", round.source)
+        assertEquals(RunOutcome.FAILED, round.outcome)
+        second.stop()
+        first.stop()
+    }
+
+    @Test
+    fun `F12-legacy plaintext replays and the file is re-sealed on first boot`() = runBlocking {
+        // Historical plaintext file (no cipher was ever wired).
+        file.writeText(
+            AUDIT_JSON.encodeToString(RunRecord(runId = "legacy-1", timestamp = System.currentTimeMillis() - 2_000)) + "\n" +
+                AUDIT_JSON.encodeToString(RunRecord(runId = "legacy-2", timestamp = System.currentTimeMillis() - 1_000)) + "\n"
+        )
+        val l = log(cipher = cipher()).apply { start() }
+        withTimeout(5_000) { l.flush() }
+
+        assertEquals(2, l.count(), "legacy plaintext must still replay")
+        val raw = file.readText()
+        assertTrue(raw.contains("_mcosAuditEnc"), "file must be re-sealed after first boot")
+        assertFalse(raw.contains("legacy-1"), "no plaintext runId survives the re-seal")
+        assertFalse(raw.contains("legacy-2"))
+        assertEquals(0, l.corruptedLinesOnLoad, "legacy pass-through is not corruption")
+        l.stop()
+    }
+
+    @Test
+    fun `F13-a tampered sealed line is skipped and counted`() = runBlocking {
+        val c = cipher()
+        val sealed = c.seal(AUDIT_JSON.encodeToString(RunRecord(runId = "victim", timestamp = System.currentTimeMillis())))
+        // Corrupt one ciphertext character inside the envelope.
+        val tampered = sealed.replaceFirst("\"ct\":\"", "\"ct\":\"A")
+        file.writeText(tampered + "\n")
+
+        val l = log(cipher = c).apply { start() }
+        withTimeout(5_000) { l.flush() }
+        assertEquals(0, l.count(), "an unauthenticated line must not enter the index")
+        assertEquals(1, l.corruptedLinesOnLoad, "tampered sealed line counts as corrupt")
+        l.stop()
+    }
+
+    @Test
+    fun `F14-a sealed file opened without a cipher is skipped - no silent misread`() = runBlocking {
+        val sealed = cipher().seal(AUDIT_JSON.encodeToString(RunRecord(runId = "opaque", timestamp = System.currentTimeMillis())))
+        file.writeText(sealed + "\n")
+
+        val l = log(cipher = null).apply { start() } // cipher not wired
+        withTimeout(5_000) { l.flush() }
+        assertEquals(0, l.count(), "a sealed line without its key is honestly unreadable")
+        assertEquals(1, l.corruptedLinesOnLoad)
+        l.stop()
+    }
+
+    @Test
+    fun `F15-eviction rewrite keeps retained records sealed`() = runBlocking {
+        val l = log(maxRecords = 2, cipher = cipher()).apply { start() }
+        appendWithTimestamp(l, "e-old", System.currentTimeMillis() - 3_000)
+        appendWithTimestamp(l, "e-mid", System.currentTimeMillis() - 2_000)
+        appendWithTimestamp(l, "e-new", System.currentTimeMillis() - 1_000)
+        withTimeout(5_000) { l.flush() }
+
+        assertEquals(listOf("e-new", "e-mid"), l.getRuns().map { it.runId })
+        val raw = file.readText()
+        assertFalse(raw.contains("e-old"), "evicted record compacted out")
+        assertFalse(raw.contains("e-mid"), "retained records stay sealed after rewrite")
+        assertTrue(raw.contains("_mcosAuditEnc"))
+        assertEquals(2, raw.trim().lines().size)
+        // A fresh instance with the same cipher must still decrypt the rewritten file.
+        l.stop()
+        val reopened = log(maxRecords = 2, cipher = cipher()).apply { start() }
+        withTimeout(5_000) { reopened.flush() }
+        assertEquals(setOf("e-new", "e-mid"), reopened.getRuns().map { it.runId }.toSet())
+        reopened.stop()
+    }
+
+    @Test
+    fun `F16-export from an encrypted log is plaintext JSONL with a verifiable HMAC`() = runBlocking {
+        val key = deriveAuditHmacKey("device-seed")
+        val l = log(hmacKey = key, cipher = cipher()).apply { start() }
+        appendWithTimestamp(l, "x-1", System.currentTimeMillis() - 2_000)
+        appendWithTimestamp(l, "x-2", System.currentTimeMillis() - 1_000)
+        withTimeout(5_000) { l.flush() }
+
+        val lines = l.export().lines()
+        assertEquals(3, lines.size, "2 records + 1 signature line")
+        assertTrue(lines[0].contains("x-1"), "export body is plaintext, not sealed")
+        assertFalse(lines[0].contains("_mcosAuditEnc"), "export is not encrypted")
+        val expected = hmacSha256Hex(lines[0] + "\n" + lines[1], key)
+        assertTrue(lines[2].contains(expected), "signature verifies over the plaintext body")
+        l.stop()
+    }
+
+    @Test
+    fun `F17-appendVerified answers true through the sealed path`() = runBlocking {
+        val l = log(cipher = cipher()).apply { start() }
+        val ok = l.appendVerified(RunRecord(runId = "verified-run", timestamp = System.currentTimeMillis()))
+        assertTrue(ok, "a durable sealed write must confirm true")
+        withTimeout(5_000) { l.flush() }
+        assertTrue(file.readText().contains("_mcosAuditEnc"))
+        assertEquals(1, l.count())
+        l.stop()
+    }
+
+    @Test
+    fun `F18-a null cipher is byte-identical to the historical plaintext output`() = runBlocking {
+        val ts = System.currentTimeMillis() - 1_000
+        val plainLog = log(cipher = null).apply { start() }
+        appendWithTimestamp(plainLog, "plain-run", ts)
+        withTimeout(5_000) { plainLog.flush() }
+        plainLog.stop()
+
+        val expected = AUDIT_JSON.encodeToString(RunRecord(runId = "plain-run", timestamp = ts)) + "\n"
+        assertEquals(expected, file.readText(), "default (null cipher) must match historical JSONL bytes")
     }
 
     private fun appendWithTimestamp(l: FileAuditLog, runId: String, timestamp: Long) {

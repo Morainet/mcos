@@ -7,7 +7,7 @@
 
 > **Inspiration:** Android Permission Model · iOS TCC (Transparency, Consent, Control) · OAuth2 scopes · Claude Code tool-use confirmation · ChatGPT plugin security review · OWASP MASVS (Mobile Application Security Verification Standard)
 
-> ✅ **Implementation status:** the Permission Kernel gates every Stage 6 decision **and persists its grant table**; enterprise policy (§13, incl. fail-closed parsing + file hot-reload) and the marketplace signing chain (Ed25519 / RSA-PSS-4096 artifact, blocklist & recipe verification) are implemented. Remaining 🟡: third-party process isolation (P3, §8) and audit at-rest encryption (§14). Status: [11-implementation-status.md](./11-implementation-status.md) §3.
+> ✅ **Implementation status:** the Permission Kernel gates every Stage 6 decision **and persists its grant table**; enterprise policy (§13, incl. fail-closed parsing + file hot-reload) and the marketplace signing chain (Ed25519 / RSA-PSS-4096 artifact, blocklist & recipe verification) are implemented. Audit at-rest encryption is implemented (§14 — per-line AES-256-GCM `AuditCipher`, on by default on Android). Remaining 🟡: third-party process isolation (P3, §8). Status: [11-implementation-status.md](./11-implementation-status.md) §3.
 
 ---
 
@@ -1236,6 +1236,17 @@ Enterprise mode may require **remote attestation** of audit digests (future, not
 4. This proves the audit log has not been tampered with, without the Runtime claiming a CA-style attestation.
 
 The HMAC-signed export ([03 §13.3](./03-runtime.md)) is the MVP/V1 mechanism for tamper-evidence; remote attestation is the V2+ enterprise enhancement. Neither mechanism claims the audit log is *complete* (a determined local attacker with root can delete records) — only that the records that exist have not been modified.
+
+### 14.4 Encryption at Rest (As-built)
+
+The persistent audit store (`FileAuditLog`, [03 §13.3](./03-runtime.md)) encrypts every on-disk line with a **per-line AEAD envelope** rather than adopting a new storage stack (Room/SQLCipher noted below as an alternative backend, not taken):
+
+- **Cipher seam** — `AuditCipher.seal(line) → String` / `open(line) → String?`. The only shipped implementation is `AesGcmAuditCipher`: `AES-256-GCM` (`AES/GCM/NoPadding`), a 32-byte key, a fresh random 12-byte IV per line (identical plaintexts seal to distinct ciphertexts), a 128-bit tag, and the `AES-256-GCM-v1` algorithm marker bound as GCM AAD so envelope/downgrade tampering fails authentication (the same version-in-AAD construction as `MemoryBlobCrypto`). The envelope is a compact JSON object — `{"_mcosAuditEnc":"AES-256-GCM-v1","iv":"<b64>","ct":"<b64>"}` — so a sealed file stays valid JSONL.
+- **Fail-closed reads** — `open()` returns `null` for any line that cannot be authenticated (tampered ciphertext/IV/marker, malformed envelope, wrong key); the log treats it as a corrupt line (skipped, counted in `corruptedLinesOnLoad`), never a silent misread.
+- **Secure-by-default, named opt-out** — `FileAuditLog.cipher` defaults to `null` (plaintext, byte-identical to the historical behaviour); a null cipher is the visible "encryption off". Legacy plaintext lines still replay, and the file re-seals in full on first boot once a cipher is wired (no separate migration step). The Android host wires it on by default with a device-bound key derived (`deriveAuditCipherKey`) from a SecureStore-persisted seed kept in a **distinct key domain from the export-HMAC seed**, so the at-rest key and the export-signing key never coincide.
+- **Export stays plaintext** — `export()` serialises from the decrypted in-memory index: plaintext JSONL plus the optional HMAC signature line (§14.2). The on-disk file is encrypted; the user-initiated export is tamper-evidenced, not encrypted.
+
+*Alternative backend (not taken):* a Room + SQLCipher store would encrypt at rest too, but requires a storage-stack migration; the per-line AEAD over the append-only JSONL file achieves the same at-rest property with pure JCA and no new dependency. A direct AndroidKeyStore-held audit cipher (mirroring `AndroidKeystoreValueCipher`) can follow later — today the seed's Keystore protection is inherited via `AndroidSecureStore`'s `ValueCipher`.
 
 ---
 

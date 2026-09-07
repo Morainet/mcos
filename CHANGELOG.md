@@ -8,6 +8,20 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ---
 
+## [Unreleased]
+
+### 审计落盘加密 — 逐行 AES-256-GCM `AuditCipher` 缝（2026-09-07）
+
+08 §14 / 03 §13.3 的收口（item 56）：§3 Audit 行里最后一个 ❌（"encryption at rest / SQLCipher 后续切片"）。不引入新存储栈——在既有 `FileAuditLog` JSONL 文件上做逐行 AEAD 信封,纯 JCA、可整测。
+
+- **缝 `AuditCipher`**（`mcos-security/audit`）:`interface AuditCipher { seal(line): String; open(line): String? }`——`open` 对任何无法认证的行(篡改 ct/iv/marker、信封畸形、错密钥)返回 `null`,调用方按损坏行处理(跳过并计入 `corruptedLinesOnLoad`),绝不静默误读。唯一实现 `AesGcmAuditCipher`:`AES/GCM/NoPadding`、要求 32 字节密钥、逐行随机 12 字节 IV(相同明文封出不同密文)、128 位 tag、`AES-256-GCM-v1` 算法标记绑入 GCM AAD(信封/降级篡改即认证失败——`MemoryBlobCrypto` 的 version-in-AAD 姿态)。信封本身是紧凑 JSON 对象 `{"_mcosAuditEnc":"AES-256-GCM-v1","iv":"…","ct":"…"}`,封后文件仍是合法 JSONL。
+- **`FileAuditLog` 接线**:`var cipher: AuditCipher? = null`(secure-by-default + 具名 opt-out,姿态同 `hmacKey`——null cipher 即可见的"加密关闭",与历史明文输出逐字节一致);私有 `persistLine` 在两条写路径(`writeRecordChecked` + 驱逐 `rewriteFileLocked`)封行;replay 用已接线 cipher 开信封、明文行透传、且当接线 cipher 且回放到任何遗留明文时在加载后整文件重封一次(无迁移步骤,`AndroidSecureStore` 的遗留读/写时重封姿态);`export()` 仍从内存明文索引导出(用户导出由 HMAC 做防篡改,不加密)。密钥派生 `deriveAuditCipherKey(seed)`(SHA-256-of-seed;宿主须传与 HMAC 不同的 seed,使落盘密钥与导出签名密钥永不重合)。
+- **Android 接线**(`CompositionRoot`):默认开启——`cipher = AesGcmAuditCipher(deriveAuditCipherKey(persistedSeed(secureStore, "audit_aes_seed")))`,与 HMAC seed 分属不同 SecureStore 键域;seed 本身经 `AndroidSecureStore` 的 `ValueCipher` 传递性落盘加密(item 47)。`SecurityConfig`/`McosRuntime.Builder`/`InMemoryAuditLog` 不变(cipher 是 sink 构建参数,非策略)。
+- **测试 +16 JVM**:`AuditCipherTest` AC1-AC7(往返、篡改 ct/iv/marker → null、畸形 base64/非信封 → null、每次封出不同密文、错长密钥拒绝)· `FileAuditLogTest` F10-F18(封后文件带 marker 且无明文 runId、重启回放往返、遗留明文回放并重封、篡改封行跳过+计数、无 cipher 打开封文件跳过+计数、驱逐重写仍封且可再解、`export()` 明文且 HMAC 可验、`appendVerified` 经封路径为 true、null cipher 逐字节一致)。
+- **诚实边界**:审计摘要远程证明(08 §14.3)留 V2+;Room/SQLCipher 未取(逐行 AEAD 无需存储栈迁移即达成落盘加密);直连 AndroidKeyStore 的审计 cipher(仿 `AndroidKeystoreValueCipher`)可后续跟进——当前 seed 的 Keystore 保护经 `AndroidSecureStore` 继承。
+
+---
+
 ## [0.0.4] - 2026-09-06
 
 *首个 JVM 全量发布：11 个 library + BOM 一起进入 Central（此前 v0.0.1–v0.0.3 仅为 `mcos-android-sdk` 的 Central 冒烟）。本段切片 = origin/main 之上的三个提交：item 53 远程企业策略下发、item 54 fail-closed Stage-10 审计、item 55 调度器热调参；主线上早于这三者的其余累积代码（item 45–52 等）随本版首次发布、未另作 changelog 分段。*

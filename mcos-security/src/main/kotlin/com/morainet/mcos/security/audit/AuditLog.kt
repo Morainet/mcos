@@ -257,6 +257,17 @@ fun deriveAuditHmacKey(seed: String): ByteArray {
 }
 
 /**
+ * Derive a 32-byte AES-256 key for [AesGcmAuditCipher] from a device-bound
+ * seed. Same SHA-256-of-seed derivation as [deriveAuditHmacKey]; hosts MUST
+ * pass a *distinct* seed from the HMAC one so the at-rest key and the export
+ * signing key never coincide (08-security.md §14).
+ */
+fun deriveAuditCipherKey(seed: String): ByteArray {
+    val md = MessageDigest.getInstance("SHA-256")
+    return md.digest(seed.toByteArray(Charsets.UTF_8))
+}
+
+/**
  * MVP [AuditLog]: in-memory storage with a single-writer coroutine.
  * Production upgrade path: [FileAuditLog] (persistent JSONL) or
  * Room + SQLCipher with the same append semantics.

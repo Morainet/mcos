@@ -582,14 +582,14 @@ Storage engine details: [07-memory.md](./07-memory.md).
 
 ### 13.2 Properties
 
-- Append-oriented local store (Room / SQLCipher recommended)  
+- Append-oriented local store — **as-built: `FileAuditLog`, an append-only JSONL file with per-line AES-256-GCM at-rest encryption** ([08 §14.4](./08-security.md)); Room + SQLCipher is an alternative backend, not taken
 - Secret fields redacted  
 - Exportable by user  
 - Optional remote sync only with explicit opt-in  
 
 ### 13.3 Storage Schema & Redaction
 
-**Storage schema** (Room, encrypted via SQLCipher). A single append-only table:
+**Storage schema.** *As-built:* the shipped store is an append-only **JSONL file** (`FileAuditLog`), one `RunRecord` per line, sealed on disk with a per-line AES-256-GCM envelope ([08 §14.4](./08-security.md)) — restart replay, malformed/unauthenticated-line tolerance, and atomic tmp+rename rewrite on eviction. The Room + SQLCipher schema below is the originally-specified alternative backend (a single append-only table), retained for reference:
 
 ```sql
 CREATE TABLE audit (
