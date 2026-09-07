@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Shell window theme. Transparent system bars so the app draws
+         edge-to-edge (enableEdgeToEdge in MainActivity finalizes the icon
+         style); the window background matches the shell's light palette to
+         avoid a white flash before Compose draws its first frame. -->
+    <style name="Theme.McosShell" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/mcos_window_bg</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+</resources>

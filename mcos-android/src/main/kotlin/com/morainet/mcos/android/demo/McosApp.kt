@@ -8,10 +8,12 @@ import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Build
@@ -116,6 +118,10 @@ fun MCOSApp(deps: AppDeps) {
 
     McosTheme {
         Scaffold(
+            // Full-screen immersive: the top/bottom bars consume the system-bar
+            // + cutout insets themselves; safeDrawing here additionally lifts
+            // page content above the IME (keyboard) and side cutouts.
+            contentWindowInsets = WindowInsets.safeDrawing,
             topBar = {
                 TopAppBar(
                     title = {

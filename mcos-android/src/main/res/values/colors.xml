@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Cold-start window background — matches McosColor.bg (#FAF5FF), so the
+         launch frame is the shell's lavender wash rather than a white flash. -->
+    <color name="mcos_window_bg">#FAF5FF</color>
+</resources>
