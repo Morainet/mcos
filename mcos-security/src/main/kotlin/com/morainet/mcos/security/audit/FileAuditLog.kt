@@ -34,6 +34,10 @@ import java.util.concurrent.CopyOnWriteArrayList
  * - **Redaction / tamper-evidence** — identical to [InMemoryAuditLog]
  *   (shared helpers): `ir` scrubbed before persistence, `export()` may carry
  *   a trailing HMAC-SHA256 signature line.
+ * - **At-rest encryption** — an optional [cipher] seals every on-disk line
+ *   (08-security.md §14). Legacy plaintext lines still replay (and the file
+ *   re-seals on first boot once a cipher is wired); a sealed line that cannot
+ *   be authenticated is skipped like any corrupt line.
  */
 class FileAuditLog(
     /** The JSONL file backing this log. Parent directories are created on [start]. */
@@ -44,6 +48,13 @@ class FileAuditLog(
     var maxAgeMs: Long = 30L * 24 * 60 * 60 * 1000,
     /** HMAC signing key; if null, `export()` omits the signature line. */
     var hmacKey: ByteArray? = null,
+    /**
+     * At-rest encryption for on-disk lines (08-security.md §14). When null
+     * (default), lines are written as plaintext JSONL — byte-identical to the
+     * historical behaviour. When set, every line is sealed before it touches
+     * disk; the in-memory index and [export] stay plaintext.
+     */
+    var cipher: AuditCipher? = null,
 ) : AuditLog {
 
     private sealed interface ChannelMsg {
@@ -167,6 +178,13 @@ class FileAuditLog(
 
     // ─── Writer-thread internals ────────────────────────────────────────
 
+    /** The on-disk form of [record]: sealed when a [cipher] is wired, else plaintext JSONL. */
+    private fun persistLine(record: RunRecord): String {
+        val json = AUDIT_JSON.encodeToString(record)
+        return cipher?.seal(json) ?: json
+    }
+
+
     /** Replay the backing file into [records], apply retention, open the writer. */
     private fun replayIfNeeded() {
         if (replayed) return
@@ -175,21 +193,42 @@ class FileAuditLog(
         try {
             file.parentFile?.mkdirs()
             if (file.isFile) {
+                var sawLegacyPlaintext = false
                 file.forEachLine { line ->
                     val trimmed = line.trim()
                     if (trimmed.isEmpty()) return@forEachLine
+                    // A sealed line must be opened with the wired cipher; a
+                    // sealed line without a cipher is honestly unreadable (a
+                    // corrupt line, never a silent misread). A non-envelope
+                    // line is legacy plaintext and passes through.
+                    val json: String? = when {
+                        isSealedEnvelope(trimmed) -> cipher?.open(trimmed)
+                        else -> {
+                            if (cipher != null) sawLegacyPlaintext = true
+                            trimmed
+                        }
+                    }
+                    if (json == null) {
+                        corruptedLinesOnLoad++
+                        return@forEachLine
+                    }
                     try {
-                        records.add(AUDIT_JSON.decodeFromString(RunRecord.serializer(), trimmed))
+                        records.add(AUDIT_JSON.decodeFromString(RunRecord.serializer(), json))
                     } catch (_: Exception) {
                         corruptedLinesOnLoad++
                     }
                 }
                 // Retention applies on load too: an aged-out backlog (e.g. the
-                // app was unused for months) compacts immediately.
+                // app was unused for months) compacts immediately. A wired
+                // cipher that replayed any legacy plaintext also re-seals the
+                // whole file once here (no separate migration step).
                 val retained = retainedRecords(records, maxRecords, maxAgeMs)
-                if (retained.size != records.size) {
+                val evicted = retained.size != records.size
+                if (evicted) {
                     records.clear()
                     records.addAll(retained)
+                }
+                if (evicted || (cipher != null && sawLegacyPlaintext)) {
                     rewriteFileLocked()
                 }
             }
@@ -227,7 +266,7 @@ class FileAuditLog(
         var ok = false
         if (w != null) {
             try {
-                w.write(AUDIT_JSON.encodeToString(record))
+                w.write(persistLine(record))
                 w.write("\n")
                 w.flush()
                 ok = true
@@ -262,7 +301,7 @@ class FileAuditLog(
             file.parentFile?.mkdirs()
             tmp.bufferedWriter().use { out ->
                 for (rec in records) {
-                    out.write(AUDIT_JSON.encodeToString(rec))
+                    out.write(persistLine(rec))
                     out.write("\n")
                 }
             }

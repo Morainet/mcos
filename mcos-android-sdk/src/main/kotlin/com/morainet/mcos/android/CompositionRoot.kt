@@ -37,7 +37,9 @@ import com.morainet.mcos.security.PluginTrustGate
 import com.morainet.mcos.security.SnapshotFile
 import com.morainet.mcos.security.SecurityConfig
 import com.morainet.mcos.security.audit.AuditLog
+import com.morainet.mcos.security.audit.AesGcmAuditCipher
 import com.morainet.mcos.security.audit.FileAuditLog
+import com.morainet.mcos.security.audit.deriveAuditCipherKey
 import com.morainet.mcos.security.audit.deriveAuditHmacKey
 import com.morainet.mcos.security.permission.DefaultPermissionKernel
 import com.morainet.mcos.security.permission.FileGrantStore
@@ -123,6 +125,13 @@ object CompositionRoot {
     /** SecureStore key holding the device-bound audit export-signature seed. */
     private const val AUDIT_HMAC_SEED_KEY = "audit_hmac_seed"
 
+    /**
+     * SecureStore key for the at-rest audit-encryption seed (08-security.md §14).
+     * A distinct domain from [AUDIT_HMAC_SEED_KEY] so the AES key and the export
+     * signing key never coincide.
+     */
+    private const val AUDIT_AES_SEED_KEY = "audit_aes_seed"
+
     /** SecureStore key for the grant/install-record snapshot HMAC seed (separate domain). */
     private const val STATE_HMAC_SEED_KEY = "state_hmac_seed"
 
@@ -176,9 +185,13 @@ object CompositionRoot {
         // HMAC-SHA256 signature line keyed by a device-bound seed — generated
         // once, then persisted via the SecureStore so signatures verify
         // across restarts.
+        // At-rest encryption on by default (secure-by-default, 08-security.md
+        // §14): every on-disk line is AES-256-GCM sealed. The seed is itself
+        // encrypted at rest transitively via AndroidSecureStore's ValueCipher.
         val auditLog = FileAuditLog(
             file = File(appContext.filesDir, "audit/audit.jsonl"),
             hmacKey = deriveAuditHmacKey(persistedSeed(secureStore, AUDIT_HMAC_SEED_KEY)),
+            cipher = AesGcmAuditCipher(deriveAuditCipherKey(persistedSeed(secureStore, AUDIT_AES_SEED_KEY))),
         ).apply { start() }
 
         // Enterprise policy (08-security.md §13 / 09-marketplace.md §6.5):

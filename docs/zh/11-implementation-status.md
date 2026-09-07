@@ -146,7 +146,7 @@ mcos/
 | Network Egress（`decideEgress`） | 规范完成 | ✅ **已实现** | — | — |
 | Prompt Injection 检测 | 规范完成 | ✅ **已实现** 编译器侧 | — | + 自适应模型侧 |
 | Rate Limiting | 规范完成 | ✅ **已实现** 每插件/分钟 | ✅ + 每 recipe/小时 | + 自适应 |
-| Audit | 规范完成 | ✅ **已实现** 基础 + FileAuditLog 持久化（重放/逐出/脱敏/JSONL 导出 + 可选 HMAC 签名） | 🟡 部分实现：导出 ✅；`auditFailClosed` ✅（item 54——不可写 sink 使 run 以 `INTERNAL` 失败，默认关）；静态加密 ❌（SQLCipher 为后续切片） | 远程证明 |
+| Audit | 规范完成 | ✅ **已实现** 基础 + FileAuditLog 持久化（重放/逐出/脱敏/JSONL 导出 + 可选 HMAC 签名） | 🟡 部分实现：导出 ✅；`auditFailClosed` ✅（item 54）；静态加密 ✅（item 56——逐行 AES-256-GCM `AuditCipher` 缝,Android 默认开启;Room/SQLCipher 未取） | 远程证明 |
 | Workflow | 规范完成 | ✅ 顺序 | ✅ **已实现** 并行 / 条件 / 循环 / 重试 / try / 确认 + `requiresDevices` §8.5 设备互斥 | — |
 | Event Bus | 规范完成 | ✅ run 事件通道 | ✅ **已实现** 完整（信封、过滤、隔离、背压） | — |
 | Memory | 规范完成 | ✅ profile + remember | ✅ 模糊引用 + 冲突检测 + **情景层（§8）**：`EpisodicMemory` 召回 + **§8.3 命名实体合并/模糊引用（`EntityMatcher`：叶节点匹配 + 别名注册，中英混合查询分词，0.75 §6.0 阈值）** + **§11 同步层（向量时钟 LWW + 策略）已完成** + **§11.0 端到端加密 blob（`MemoryBlobCrypto`：AES-256-GCM + HKDF 派生 + 版本绑定 AAD）** | ✅ **独立 `mcos-server` 部署完成（§6 步骤 22）**：`mcos-server/` 零第三方依赖 JDK `HttpServer` 实现 `SyncBlobTransport` REST 契约 + 强制 Bearer 认证（恒定时间比较）、磁盘持久化原子写入、blobId 白名单防路径穿越、16 MiB 上限、`/healthz`；`JdkSyncBlobTransport` 支持 token；真实 transport 互操作 E2E S1-S13 |
