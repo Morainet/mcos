@@ -23,6 +23,20 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  # Central allows only a handful of deployments per month, so never spend one
+  # to "see what happens". A manual dispatch builds, signs and counts the very
+  # same bundle but stops before the upload and the GitHub Release — the file
+  # count lands in the job summary, and a real tag is pushed only once it fits.
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Count only — skip the Central upload and the GitHub Release"
+        type: boolean
+        default: true
+      version:
+        description: "Version to build (ignored for tag pushes; tag always wins)"
+        type: string
+        default: "0.0.0-dryrun"
 
 jobs:
   release:
@@ -58,12 +72,17 @@ jobs:
 
       - name: Derive version from tag
         run: |
-          echo "MCOS_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
-          case "${GITHUB_REF_NAME#v}" in
-            *SNAPSHOT*)
-              echo "::error::Maven Central only accepts release versions; tag without SNAPSHOT."
-              exit 1 ;;
-          esac
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "MCOS_VERSION=${{ inputs.version }}" >> "$GITHUB_ENV"
+          else
+            echo "MCOS_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+            case "${GITHUB_REF_NAME#v}" in
+              *SNAPSHOT*)
+                echo "::error::Maven Central only accepts release versions; tag without SNAPSHOT."
+                exit 1 ;;
+            esac
+          fi
+          echo "Publishing as ${MCOS_VERSION:-<derived>} (event: ${{ github.event_name }}, dry_run: ${{ inputs.dry_run }})"
 
       # Gate: the same build CI already runs, so a broken snapshot can't ship.
       - name: Build & test
@@ -110,6 +129,7 @@ jobs:
       # manual "Publish" click. Switch to USER_MANAGED if you prefer reviewing
       # in the Portal UI before artifacts go public.
       - name: Upload to Maven Central (Central Portal)
+        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.dry_run }}
         env:
           CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
           CENTRAL_PASSWORD: ${{ secrets.CENTRAL_PASSWORD }}
@@ -126,11 +146,13 @@ jobs:
           echo "Track status: https://central.sonatype.com/publishing/deployments"
 
       - name: Build demo APK & server dist
+        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.dry_run }}
         run: |
           ./gradlew :mcos-android:assembleDebug -PmcosVersion="$MCOS_VERSION" --console=plain --no-daemon
           ./gradlew :mcos-server:installDist -PmcosVersion="$MCOS_VERSION" --console=plain --no-daemon
 
       - name: Create GitHub Release
+        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.dry_run }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
