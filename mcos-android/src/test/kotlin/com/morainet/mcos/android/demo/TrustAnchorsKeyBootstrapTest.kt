@@ -2,6 +2,7 @@ package com.morainet.mcos.android.demo
 
 import androidx.lifecycle.viewModelScope
 import com.morainet.mcos.android.TrustAnchors
+import com.morainet.mcos.android.demo.marketplace.MarketplaceViewModel
 import com.morainet.mcos.marketplace.BlocklistVerifier
 import com.morainet.mcos.security.InMemoryPublisherKeyStore
 import com.morainet.mcos.security.KeyStatus
@@ -27,7 +28,7 @@ import org.junit.runner.Description
 
 /**
  * §6.3 key bootstrap + revocation. [TrustAnchors] seeds the store on a cold
- * start; [MarketplaceViewModel.refreshKeyTrust] pulls `/v1/keys/revoked` and
+ * start; [com.morainet.mcos.android.demo.marketplace.MarketplaceViewModel.refreshKeyTrust] pulls `/v1/keys/revoked` and
  * marks matching keys REVOKED. Pure JVM, same scaffolding as
  * [MarketplaceViewModelTest].
  */

@@ -1,4 +1,4 @@
-package com.morainet.mcos.android.demo
+package com.morainet.mcos.android.demo.shell
 
 import android.Manifest
 import android.os.Build
@@ -47,6 +47,17 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.morainet.mcos.android.AppDeps
+import com.morainet.mcos.android.demo.chat.ChatPage
+import com.morainet.mcos.android.demo.marketplace.MarketplaceCard
+import com.morainet.mcos.android.demo.marketplace.MarketplaceViewModel
+import com.morainet.mcos.android.demo.marketplace.RecipeWizardDialog
+import com.morainet.mcos.android.demo.marketplace.UpdateConsentDialog
+import com.morainet.mcos.android.demo.mcp.McpPage
+import com.morainet.mcos.android.demo.settings.SettingsPage
+import com.morainet.mcos.android.demo.skills.SkillsPage
+import com.morainet.mcos.android.demo.tools.DslInputCard
+import com.morainet.mcos.android.demo.tools.OutputLog
+import com.morainet.mcos.android.demo.tools.StatusBar
 import com.morainet.mcos.marketplace.PackageMetadata
 
 /**
@@ -55,9 +66,9 @@ import com.morainet.mcos.marketplace.PackageMetadata
  * activity-result bridge wiring and pure view-local visibility toggles.
  *
  * Structure: this composable is a thin shell. Each section is its own
- * component ([StatusBar], [MarketplaceCard], [AiChatCard], [McpServerCard],
- * [DslInputCard], [OutputLog]); the terminal palette lives in [McosTheme] /
- * [McosColor].
+ * component ([com.morainet.mcos.android.demo.tools.StatusBar], [com.morainet.mcos.android.demo.marketplace.MarketplaceCard], [AiChatCard], [McpServerCard],
+ * [com.morainet.mcos.android.demo.tools.DslInputCard], [com.morainet.mcos.android.demo.tools.OutputLog]); the terminal palette lives in [com.morainet.mcos.android.demo.McosTheme] /
+ * [com.morainet.mcos.android.demo.McosColor].
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -118,7 +129,7 @@ fun MCOSApp(deps: AppDeps) {
 
     var page by remember { mutableStateOf(ShellPage.CHAT) }
 
-    McosTheme {
+    _root_ide_package_.com.morainet.mcos.android.demo.McosTheme {
         Scaffold(
             // Full-screen immersive: the top/bottom bars consume the system-bar
             // + cutout insets themselves; safeDrawing here additionally lifts
@@ -147,8 +158,8 @@ fun MCOSApp(deps: AppDeps) {
                                 selectedIconColor = MaterialTheme.colorScheme.onPrimary,
                                 indicatorColor = MaterialTheme.colorScheme.primary,
                                 selectedTextColor = MaterialTheme.colorScheme.primary,
-                                unselectedIconColor = McosColor.fgMuted,
-                                unselectedTextColor = McosColor.fgMuted,
+                                unselectedIconColor = _root_ide_package_.com.morainet.mcos.android.demo.McosColor.fgMuted,
+                                unselectedTextColor = _root_ide_package_.com.morainet.mcos.android.demo.McosColor.fgMuted,
                             ),
                         )
                     }
@@ -160,7 +171,10 @@ fun MCOSApp(deps: AppDeps) {
                     Modifier
                         .fillMaxSize()
                         .padding(padding)
-                        .padding(horizontal = McosSpace.lg, vertical = McosSpace.md)
+                        .padding(
+                            horizontal = _root_ide_package_.com.morainet.mcos.android.demo.McosSpace.lg,
+                            vertical = _root_ide_package_.com.morainet.mcos.android.demo.McosSpace.md
+                        )
                 ) {
                     when (current) {
                         ShellPage.CHAT -> ChatPage(
@@ -168,6 +182,7 @@ fun MCOSApp(deps: AppDeps) {
                             ui = ui,
                             events = events,
                         )
+
                         ShellPage.SKILLS -> SkillsPage(vm = vm, ui = ui)
                         ShellPage.MCP -> McpPage(vm = vm, ui = ui)
                         ShellPage.TOOLS -> Column(Modifier.fillMaxSize()) {
@@ -180,13 +195,14 @@ fun MCOSApp(deps: AppDeps) {
                                 onInstallRequest = { pendingInstall = it },
                             )
                             DslInputCard(vm = vm, ui = ui)
-                            Spacer(Modifier.height(McosSpace.md))
+                            Spacer(_root_ide_package_.androidx.compose.ui.Modifier.Companion.height(_root_ide_package_.com.morainet.mcos.android.demo.McosSpace.md))
                             OutputLog(
                                 events = events,
                                 onClear = { vm.clearLog() },
                                 modifier = Modifier.fillMaxWidth().weight(1f),
                             )
                         }
+
                         ShellPage.SETTINGS -> SettingsPage(vm = vm, ui = ui)
                     }
                 }
@@ -207,14 +223,14 @@ fun MCOSApp(deps: AppDeps) {
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold,
                         )
-                        Spacer(Modifier.height(McosSpace.sm))
+                        Spacer(_root_ide_package_.androidx.compose.ui.Modifier.Companion.height(_root_ide_package_.com.morainet.mcos.android.demo.McosSpace.sm))
                         Text(confirmation.reason, style = MaterialTheme.typography.bodyMedium)
                         confirmation.sideEffectClass?.let { risk ->
-                            Spacer(Modifier.height(McosSpace.md))
+                            Spacer(_root_ide_package_.androidx.compose.ui.Modifier.Companion.height(_root_ide_package_.com.morainet.mcos.android.demo.McosSpace.md))
                             Text(
                                 "Risk level: $risk",
                                 style = MaterialTheme.typography.labelMedium,
-                                color = if (risk == "destructive") McosColor.danger else McosColor.warn,
+                                color = if (risk == "destructive") _root_ide_package_.com.morainet.mcos.android.demo.McosColor.danger else _root_ide_package_.com.morainet.mcos.android.demo.McosColor.warn,
                             )
                         }
                     }
@@ -235,7 +251,7 @@ fun MCOSApp(deps: AppDeps) {
                 text = {
                     Column {
                         Text("The agent staged this plan:", style = MaterialTheme.typography.bodyMedium)
-                        Spacer(Modifier.height(McosSpace.sm))
+                        Spacer(_root_ide_package_.androidx.compose.ui.Modifier.Companion.height(_root_ide_package_.com.morainet.mcos.android.demo.McosSpace.sm))
                         Text(
                             preview,
                             fontFamily = FontFamily.Monospace,
@@ -263,7 +279,7 @@ fun MCOSApp(deps: AppDeps) {
                             style = MaterialTheme.typography.bodySmall,
                         )
                         Text("by ${meta.publisherName}", style = MaterialTheme.typography.labelMedium)
-                        Spacer(Modifier.height(McosSpace.md))
+                        Spacer(_root_ide_package_.androidx.compose.ui.Modifier.Companion.height(_root_ide_package_.com.morainet.mcos.android.demo.McosSpace.md))
                         if (meta.permissionsPreview.isEmpty()) {
                             Text("No permissions requested.", style = MaterialTheme.typography.bodyMedium)
                         } else {
@@ -274,8 +290,8 @@ fun MCOSApp(deps: AppDeps) {
                             )
                             meta.permissionsPreview.forEach { entry ->
                                 val tierColor = when (entry.riskTier) {
-                                    "destructive" -> McosColor.danger
-                                    "elevated" -> McosColor.warn
+                                    "destructive" -> _root_ide_package_.com.morainet.mcos.android.demo.McosColor.danger
+                                    "elevated" -> _root_ide_package_.com.morainet.mcos.android.demo.McosColor.warn
                                     else -> MaterialTheme.colorScheme.onSurface
                                 }
                                 Text(
@@ -287,13 +303,13 @@ fun MCOSApp(deps: AppDeps) {
                                     Text(
                                         "    “$it”",
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = McosColor.fgDim,
+                                        color = _root_ide_package_.com.morainet.mcos.android.demo.McosColor.fgDim,
                                     )
                                 }
                             }
                         }
                         if (meta.commandsPreview.isNotEmpty()) {
-                            Spacer(Modifier.height(McosSpace.md))
+                            Spacer(_root_ide_package_.androidx.compose.ui.Modifier.Companion.height(_root_ide_package_.com.morainet.mcos.android.demo.McosSpace.md))
                             Text(
                                 "Commands: " + meta.commandsPreview.joinToString(", "),
                                 fontFamily = FontFamily.Monospace,
@@ -301,11 +317,11 @@ fun MCOSApp(deps: AppDeps) {
                                 color = MaterialTheme.colorScheme.primary,
                             )
                         }
-                        Spacer(Modifier.height(McosSpace.md))
+                        Spacer(_root_ide_package_.androidx.compose.ui.Modifier.Companion.height(_root_ide_package_.com.morainet.mcos.android.demo.McosSpace.md))
                         Text(
                             "The artifact is verified (SHA-256 + publisher signature) before activation.",
                             style = MaterialTheme.typography.labelSmall,
-                            color = McosColor.fgDim,
+                            color = _root_ide_package_.com.morainet.mcos.android.demo.McosColor.fgDim,
                         )
                     }
                 },

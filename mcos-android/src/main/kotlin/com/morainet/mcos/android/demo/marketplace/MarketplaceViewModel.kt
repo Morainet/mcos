@@ -1,4 +1,4 @@
-package com.morainet.mcos.android.demo
+package com.morainet.mcos.android.demo.marketplace
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -95,7 +95,7 @@ data class PendingUpdate(
  * (download → verify → trust gate → registry), keeping the composables pure
  * renderers (architecture review #8).
  *
- * Same lifecycle contract as [McosViewModel]: plain [ViewModel] that survives
+ * Same lifecycle contract as [com.morainet.mcos.android.demo.shell.McosViewModel]: plain [ViewModel] that survives
  * configuration changes and re-attaches to the activity-scoped [AppDeps].
  * A fresh [AppDeps] carries a fresh registry, so attach() rehydrates
  * persisted installs (records + staged artifacts survive on disk): each

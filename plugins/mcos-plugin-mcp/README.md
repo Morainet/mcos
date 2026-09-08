@@ -10,12 +10,20 @@ MCOS 插件命令，每个工具映射为 `mcp.<serverId>.<toolName>`。
 - 每个服务器一个插件实例（pluginId = `mcos.plugin.mcp.<serverId>`），一个
   `McpCircuitBreaker` 由该服务器全部 `mcp.<server>.*` handler 共享。
 - 只依赖 `mcos-sdk`。
+- **不作为 artifact 发布**：不 apply `maven-publish`,也不在 `mcos-bom`(其注释显式排除)。
+  它是宿主侧运行时桥接的实现细节,与 `:mcos-android`/`:mcos-server` 同类;已发布的内置
+  插件仅 hello/system/camera/files。
 
 ## 命令（运行时合成）
 
 | 命令模式 | 副作用 | 说明 |
 |----------|--------|------|
 | `mcp.<serverId>.<toolName>` | 下限 network；`destructiveHint` 升级为 destructive | schema 经 `McpSchemaConverter` 转换，不可映射的参数**丢弃并记入 skipped**（fail-closed，绝不静默放宽） |
+
+`discover(enabledTools: Set<String>? = null)`：`null` 注册全部可映射工具;非 null 时只注册
+名字在集合内的工具(逐工具勾选,由宿主 `McpServerController` 传入)。`McpDiscovery.tools`
+返回**全部发现工具**的清单(`DiscoveredMcpTool(name, description, commandId, mapped,
+registered)`,含未映射/未勾选的),供宿主 UI 展示与勾选。
 
 ## 关键组件
 
@@ -44,9 +52,9 @@ McpAdapter.discover(deps.hostServices.net,
 
 ## 测试
 
-61 个测试：`McpAdapterTest`(19) · `McpSchemaConverterTest`(28) · `McpEndToEndTest`(5) ·
-`McpCircuitBreakerTest`(5) · `McpClientReconnectTest`(4)，含参考 MCP 服务器
-（`ReferenceMcpServer.kt`）的真协议往返。
+63 个测试：`McpAdapterTest`(21，含 enabledTools 过滤与全量 catalog) ·
+`McpSchemaConverterTest`(28) · `McpEndToEndTest`(5) · `McpCircuitBreakerTest`(5) ·
+`McpClientReconnectTest`(4)，含参考 MCP 服务器（`ReferenceMcpServer.kt`）的真协议往返。
 
 ## 依赖
 

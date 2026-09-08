@@ -3,6 +3,7 @@ package com.morainet.mcos.android.demo
 import com.morainet.mcos.android.AppDeps
 import com.morainet.mcos.sdk.SecureStore
 import androidx.lifecycle.viewModelScope
+import com.morainet.mcos.android.demo.shell.McosViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancel
@@ -25,12 +26,12 @@ import org.junit.rules.TestWatcher
 import org.junit.runner.Description
 
 /**
- * Unit tests for [McosViewModel] — plain JVM, no Robolectric: the view model
+ * Unit tests for [com.morainet.mcos.android.demo.shell.McosViewModel] — plain JVM, no Robolectric: the view model
  * holds no Android types, the runtime is the real facade with stub host
  * services, and the persisted-key store is an in-memory fake.
  *
- * [UnconfinedTestDispatcher] lets [McosViewModel.attach]'s startup load and
- * [McosViewModel.run]'s pipeline run eagerly; the async runtime work happens
+ * [UnconfinedTestDispatcher] lets [com.morainet.mcos.android.demo.shell.McosViewModel.attach]'s startup load and
+ * [com.morainet.mcos.android.demo.shell.McosViewModel.run]'s pipeline run eagerly; the async runtime work happens
  * on real dispatchers, so completion is awaited with a real-time bounded
  * poll instead of virtual-time advancement.
  */

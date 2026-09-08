@@ -26,7 +26,7 @@ com.morainet.mcos.android/
 ├── MarketplaceTrust.kt          # 吊销密钥刷新
 ├── TrustAnchors.kt              # 内置 Ed25519 信任锚（运营方真钥，私钥离线保管、从不入仓）
 ├── PluginPermissionBootstrap.kt # 内置插件权限预授
-├── McpServerController.kt       # MCP 服务器列表/生命周期管理
+├── McpServerController.kt       # MCP 服务器列表/生命周期 + JSON 导入 + 逐工具启用
 ├── TriggerMaintenance.kt        # 触发器卫生清扫
 └── host/
     ├── AndroidHostServices.kt        # HostServices 全量 Android 实现（13 个 facade + 沙箱）
@@ -75,6 +75,22 @@ wire `plugin.json` 注册（`McosPackage.readPluginManifest`，未知 `sideEffec
 拒绝安装），插件 dex 只在 `:mcos_plugin` 加载。隔离纯层（`host.isolation`）全部 JVM
 可测，`IsolationBinder.kt` 薄壳是唯一设备验证层 — **item 50 已经在真机上端到端
 验证**（见下）。
+
+## MCP 服务器管理（`McpServerController`）
+
+server 列表的唯一写者。SecureStore key `mcp_servers` 存 JSON(id/endpoint/enabled +
+逐工具 `McpToolRecord`);bearer token 只以 SecureStore key 名义 `mcp.secret.<id>` 存在,
+**从不进持久化列表**(04 §11.1)。discover 经宿主 seam `McpServerBridge`(demo 的
+`DemoMcpBridge`)注入 —— SDK 不依赖 mcp 插件,只传纯数据(`BridgedMcpServer` / `BridgedMcpTool`)。
+
+- `addServer / setEnabled / removeServer / reconnectEnabled`:生命周期(register + grant +
+  onLoad;失败留诚实的 disabled 态,不抛)。
+- `setToolEnabled(serverId, toolName, enabled)`:逐工具勾选;server 处于 enabled 态时按新
+  过滤重跑 discover+注册,只注册勾选且可映射的工具。record 缓存工具清单,重连间保留勾选。
+- `importJsonConfig(text)`:解析标准 `{"mcpServers": {"<id>": {"url"|"endpoint", "headers":
+  {"Authorization":"Bearer …"}}}}` 批量添加;Authorization 去前缀 → token 入 SecureStore;
+  `command`(stdio)条目计入 `skippedStdio` 不添加。返回 `McpImportResult(added, duplicates,
+  skippedStdio, invalid, addedIds)`。
 
 ## 真机端到端验证（`androidTest`，可选）
 

@@ -1,4 +1,4 @@
-package com.morainet.mcos.android.demo
+package com.morainet.mcos.android.demo.settings
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -39,6 +39,12 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.morainet.mcos.android.demo.shell.LlmVendorUi
+import com.morainet.mcos.android.demo.McosColor
+import com.morainet.mcos.android.demo.McosRadius
+import com.morainet.mcos.android.demo.McosSpace
+import com.morainet.mcos.android.demo.shell.McosUiState
+import com.morainet.mcos.android.demo.shell.McosViewModel
 
 /**
  * Multi-vendor API settings page (多厂商设置页). Every vendor preset is a card:

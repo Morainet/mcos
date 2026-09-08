@@ -7,6 +7,7 @@ import com.morainet.mcos.sdk.HttpRequest
 import com.morainet.mcos.sdk.HttpResponse
 import com.morainet.mcos.sdk.NetService
 import androidx.lifecycle.viewModelScope
+import com.morainet.mcos.android.demo.shell.McosViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancel
@@ -47,7 +48,8 @@ class McpShellWiringTest {
     private lateinit var vm: McosViewModel
 
     @Before
-    fun setUp() { vm = McosViewModel() }
+    fun setUp() { vm = McosViewModel()
+    }
 
     @After
     fun tearDown() { vm.viewModelScope.cancel() }

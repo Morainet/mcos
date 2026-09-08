@@ -1,4 +1,4 @@
-package com.morainet.mcos.android.demo
+package com.morainet.mcos.android.demo.shell
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -12,6 +12,9 @@ import com.morainet.mcos.android.McpServerBridge
 import com.morainet.mcos.android.McpServerController
 import com.morainet.mcos.android.McpServerRecord
 import com.morainet.mcos.android.SkippedBridgedTool
+import com.morainet.mcos.android.demo.settings.LlmVendor
+import com.morainet.mcos.android.demo.settings.LlmVendors
+import com.morainet.mcos.android.demo.skills.SkillStore
 import com.morainet.mcos.android.host.AndroidLlmHttpTransport
 import com.morainet.mcos.runtime.api.McosRuntime
 import com.morainet.mcos.runtime.core.api.ConfirmationDecision
@@ -29,11 +32,13 @@ import com.morainet.mcos.llm.McosAgent
 import com.morainet.mcos.llm.OpenAiLlmProvider
 import com.morainet.mcos.llm.PromptInjectionDetector
 import com.morainet.mcos.llm.ProviderHealth
+import com.morainet.mcos.llm.Skill
 import com.morainet.mcos.plugin.mcp.McpAdapter
 import com.morainet.mcos.plugin.mcp.McpServerConfig
 import com.morainet.mcos.runtime.core.ir.ExecutionIr
 import com.morainet.mcos.runtime.core.ir.IrInvoke
 import com.morainet.mcos.runtime.core.plugin.LoadResult
+import com.morainet.mcos.sdk.SecureStore
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -206,7 +211,7 @@ class McosViewModel : ViewModel() {
     private var skillStore: SkillStore? = null
 
     /** Enabled skills, read once at attach and refreshed after each skill edit. */
-    private var cachedSkills: List<com.morainet.mcos.llm.Skill> = emptyList()
+    private var cachedSkills: List<Skill> = emptyList()
     private var cachedSkillsVersion: String = ""
 
     private fun skills(): SkillStore =
@@ -260,7 +265,7 @@ class McosViewModel : ViewModel() {
      * and then removed. After loading, every vendor with a key is registered
      * and probed so the settings page shows real health.
      */
-    private suspend fun restoreVendors(store: com.morainet.mcos.sdk.SecureStore) {
+    private suspend fun restoreVendors(store: SecureStore) {
         // One-time migration: legacy key → openai vendor (only if not already set).
         val legacy = store.get(LEGACY_LLM_API_KEY)?.decodeToString()
         if (!legacy.isNullOrBlank() && store.get(vendorKeyKey(LlmVendors.DEFAULT_ID)) == null) {
@@ -713,7 +718,7 @@ class McosViewModel : ViewModel() {
 
     /**
      * Re-read the registry command list. Called after marketplace installs or
-     * uninstalls mutate the registry at runtime (see [MarketplaceViewModel]),
+     * uninstalls mutate the registry at runtime (see [com.morainet.mcos.android.demo.marketplace.MarketplaceViewModel]),
      * so the command palette reflects newly available commands without a
      * restart — the registry resolves live, there is no cache to invalidate.
      */

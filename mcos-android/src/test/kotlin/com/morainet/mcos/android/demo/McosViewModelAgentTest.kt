@@ -1,6 +1,7 @@
 package com.morainet.mcos.android.demo
 
 import androidx.lifecycle.viewModelScope
+import com.morainet.mcos.android.demo.shell.McosViewModel
 import com.morainet.mcos.llm.AgentBridge
 import com.morainet.mcos.llm.AgentTurnResult
 import com.morainet.mcos.runtime.core.ir.ExecutionIr
@@ -31,7 +32,7 @@ import org.junit.rules.TestWatcher
 import org.junit.runner.Description
 
 /**
- * Tests for the Agent-loop wiring in [McosViewModel] (06-agent.md §11 +
+ * Tests for the Agent-loop wiring in [com.morainet.mcos.android.demo.shell.McosViewModel] (06-agent.md §11 +
  * §17 shell integration).
  *
  * UI1 probe progress → plan preview · UI2 Allow → execution summary ·

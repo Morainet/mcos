@@ -8,11 +8,12 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import com.morainet.mcos.android.AppDeps
 import com.morainet.mcos.android.CompositionRoot
+import com.morainet.mcos.android.demo.shell.MCOSApp
 
 /**
  * Shell activity. Construction lives in [CompositionRoot] (owned now by
  * [McosApplication] for the process lifetime, so a schedule alarm can fire
- * headlessly — 10 §6); state and orchestration live in [McosViewModel]. This
+ * headlessly — 10 §6); state and orchestration live in [com.morainet.mcos.android.demo.shell.McosViewModel]. This
  * class only binds the process-lifetime [AppDeps] into the Compose tree; the
  * Compose layer re-attaches the activity-result launcher on each create.
  */
