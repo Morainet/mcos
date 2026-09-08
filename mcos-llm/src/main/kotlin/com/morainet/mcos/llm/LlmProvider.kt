@@ -87,9 +87,50 @@ data class LlmPlan(
      * Forwarded by the Agent loop as `AgentTurnResult.Refuse` (06 §11.4).
      */
     val refuse: RefuseInfo? = null,
+
+    /**
+     * Deferral payload when the planner returned a `defer` IR outcome
+     * (06 §11.4): the goal cannot progress now and should be re-evaluated
+     * after some delay (waiting on external state that only changes with
+     * time). Non-null only for defer results; [commands] is empty then. The
+     * Agent loop forwards this as [com.morainet.mcos.llm.AgentTurnResult.Suspended].
+     */
+    val defer: DeferInfo? = null,
+
+    /**
+     * True when the planner returned a `parallel` IR outcome (06 §11.5): the
+     * [commands] are independent and may run concurrently, not in order. The
+     * commands themselves live in [commands] exactly as for `sequence`; this
+     * flag tells the Agent to compile them into a parallel `ExecutionIr.Workflow`
+     * (backed by the runtime's fan-out engine) rather than an `IrSequence`.
+     * A parallel plan never auto-runs a read prefix — it is staged whole for
+     * approval — so the agent's read-prefix/§14.1 invariants are untouched.
+     */
+    val parallel: Boolean = false,
 ) {
     /** True if the plan contains executable commands without errors. */
     val isSuccess: Boolean get() = error == null && commands.isNotEmpty()
+}
+
+/**
+ * Structured deferral outcome of a planner compile (06 §11.4 `defer` IR).
+ *
+ * @param delaySeconds How long to wait before re-evaluating. Clamped to
+ *   [MIN_DELAY_SECONDS]‥[MAX_DELAY_SECONDS] by the Agent loop so a model can
+ *   never schedule an absurd wake-up. The agent picks this the way a
+ *   background task picks a wake-up delay: long enough that re-checking sooner
+ *   would be wasted work.
+ * @param reason Human-readable reason for the wait (e.g. "download still in
+ *   progress"), surfaced in the suspended state's headline.
+ */
+data class DeferInfo(
+    val delaySeconds: Long,
+    val reason: String,
+) {
+    companion object {
+        const val MIN_DELAY_SECONDS: Long = 30L
+        const val MAX_DELAY_SECONDS: Long = 24L * 60 * 60 // one day
+    }
 }
 
 /**

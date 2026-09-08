@@ -10,6 +10,16 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### Agent 终态自包含结论行 + 自定节奏挂起/续跑 + planner 并行计划（2026-09-08）
+
+借鉴后台任务 harness 的模式,补 Agent 循环里现有能力图谱最刺眼的三处:终态缺少自包含结论、无任何后台续跑能力、planner 发不出并行计划(并行引擎已在下一层但对 agent 不可达)。
+
+- **终态自包含结论行契约**（`mcos-llm`):`AgentTurnResult` 新增 `TerminalResult` 标记接口,每个终态（`PlanReady`/`Clarify`/`Refuse`/`Done`/`Declined`/`Suspended`)带一行 `headline`——不看原始请求或中间 `Probing` 也能读懂。宿主直接渲染这一行作为轮次结果,不再回扫 flat 日志拼状态。demo `McosViewModel` 增 `lastAgentOutcome` 状态承接。
+- **自定节奏挂起（06 §11.4a）**:planner 可发 `defer` IR(`{"type":"defer","reason","delay_seconds"}`),Agent 转成 `AgentTurnResult.Suspended(resumeAtEpochMs, reason, headline)`;delay 钳到 30s…1 天防离谱唤醒。`AgentSessionStore` 增可选 `Persistence` 缝(默认 no-op = 原 RAM-only 不变),挂起时把 session 快照(goal + 观测日志)存出、`restore()` 在新进程恢复。`AgentBridge.resumeSuspended()` 到点重进循环,一次性消费(重复调用得 `Declined("no_suspended_turn")`)。发 `agent.suspended` 生命周期事件。
+- **demo 续跑接线**:`SecureStoreAgentSuspension` 用 SecureStore(key `agent_suspensions`,明文 goal 不出加密存储)实现持久化缝;`McosViewModel` attach 时 `restore()` 并对已过期的挂起立即续跑,前台用 `viewModelScope` delay 到点重进(生产宿主应改用已有 `WakeScheduler` 精确闹钟)。
+- **planner 并行计划（06 §11.5)**:planner 可发 `parallel` IR(与 `sequence` 同 steps 形状,GBNF/约束 schema 都放行);`LlmPlan.parallel` 标记,`McosAgent` 整体 stage(并行计划永不跑读前缀,§11.3/14.1 不变量不受影响),经 `toParallelIr` 包成 `workflow` IR 信封交给现成 `WorkflowStep.Parallel` 扇出引擎——无新运行时执行代码。仅打通"扁平独立命令并发"这一档,agent 仍不做目标分解。
+- **测试**:`AgentLoopTest` A17(defer 挂起 + 钳制 + 自包含 headline)、A18(resumeSuspended 重进 + 一次性)、A19(经 Persistence 缝跨新 store 恢复)、A20(并行计划 stage 成 workflow IR 且不探测)、A21(批准后提交 parallel workflow payload);`GbnfGrammarTest` G1 补 `ir-parallel`;demo `McosViewModelAgentTest` UI4(挂起记 headline + 自动续跑)。
+
 ### Skill 导入 + MCP 配置导入/逐工具勾选 + demo 结构重组（2026-09-07）
 
 Android demo shell 扩展能力接入:Claude 风格 **skill 包**导入、标准 `mcp.json` 批量导入与 **逐工具启用/禁用**,并把 demo 源码按功能分子目录、导航扩为五页。

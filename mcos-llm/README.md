@@ -18,7 +18,7 @@ LLM 网关与自然语言编排层——把用户话语经多 provider 规划链
 | Provider 端口 | `LlmProvider.kt`、`LlmProviderRegistry.kt`、`LlmProbePolicy.kt` | chat/toolCall/constrainedChat/probe 四端点；能力协商（CHAT/PLAN/TOOL_CALL/CONSTRAINED/EMBED）与层别（ON_DEVICE/CLOUD）；健康缓存 30s、失败冷却 10s |
 | Provider 实现 | `OpenAiLlmProvider.kt`、`GrammarLlmProvider.kt` | 前者任意 OpenAI 兼容端点（含 vLLM/LiteLLM）；后者真 token 级语法约束（llama.cpp `grammar`、vLLM/Outlines `guided_grammar`/`guided_json`） |
 | 规划 | `LlmPlanner.kt`（核心）、`Skill.kt`、`ToolCallTypes.kt`、`UtteranceClassifier.kt`、`RecipeMatcher.kt` | 系统提示 = 命令目录 + 参数 schema + Memory 用户事实 + `## Skills` 段；四种 PlanMode；端侧→云隐私门（§13.2）；零延迟配方直出 DSL 不经 LLM |
-| 编排 / Agent | `ChatOrchestrator.kt`、`Agent.kt`（McosAgent）、`AgentBridge.kt`、`AgentSessionStore.kt` | 一次性 chat→plan→execute→事件收集；多轮循环 compile→探查(read-prefix)→重规划(≤cap)→PlanReady→用户审批→执行 |
+| 编排 / Agent | `ChatOrchestrator.kt`、`Agent.kt`（McosAgent）、`AgentBridge.kt`、`AgentSessionStore.kt` | 一次性 chat→plan→execute→事件收集；多轮循环 compile→探查(read-prefix)→重规划(≤cap)→PlanReady→用户审批→执行。终态带自包含 `headline`；`defer`→`Suspended`（自定节奏挂起，`Persistence` 缝可跨进程续跑）；`parallel`→扇出 `Workflow` IR（06 §11.5） |
 | 安全 | `PromptInjectionDetector.kt` | 纯函数启发式链：指令覆写/提权/社工/数据外传 |
 | 语法约束 | `GbnfGrammar.kt` | 从命令目录生成 GBNF，采样期即不可能输出目录外命令 ID |
 

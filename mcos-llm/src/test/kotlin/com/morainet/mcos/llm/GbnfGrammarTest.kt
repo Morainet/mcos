@@ -23,10 +23,11 @@ class GbnfGrammarTest {
     fun `G1-root enumerates cataloged invoke variants and terminal states`() {
         val grammar = GbnfGrammar.buildIrGrammar(twoTools())
 
-        assertContains(grammar, "root ::= ws ( ir-invoke-test_hello | ir-invoke-sys_notify | ir-sequence | ir-clarify | ir-refuse ) ws")
+        assertContains(grammar, "root ::= ws ( ir-invoke-test_hello | ir-invoke-sys_notify | ir-sequence | ir-parallel | ir-clarify | ir-refuse ) ws")
         assertContains(grammar, "ir-invoke-test_hello ::= ")
         assertContains(grammar, "ir-invoke-sys_notify ::= ")
         assertContains(grammar, "ir-sequence ::= ")
+        assertContains(grammar, "ir-parallel ::= ")
         assertContains(grammar, "ir-clarify ::= ")
         assertContains(grammar, "ir-refuse ::= ")
     }

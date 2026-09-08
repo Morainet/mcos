@@ -36,7 +36,7 @@ object GbnfGrammar {
     fun buildIrGrammar(tools: List<ToolDescriptor>): String {
         val sb = StringBuilder()
         sb.appendLine("# MCOS IR grammar (llama.cpp GBNF) -- generated from the command catalog")
-        sb.appendLine("# Output: exactly one IR JSON object (invoke | sequence | clarify | refuse).")
+        sb.appendLine("# Output: exactly one IR JSON object (invoke | sequence | parallel | clarify | refuse).")
         sb.appendLine("# 06 §3.2 V2 grammar-constrained decoding.")
         sb.appendLine()
 
@@ -64,7 +64,7 @@ object GbnfGrammar {
         // With no commands registered, only the terminal states are possible.
         val rootChoices = when {
             tools.isEmpty() -> "ir-clarify | ir-refuse"
-            else -> "$invokeRefs | ir-sequence | ir-clarify | ir-refuse"
+            else -> "$invokeRefs | ir-sequence | ir-parallel | ir-clarify | ir-refuse"
         }
         sb.appendLine("root ::= ws ( $rootChoices ) ws")
         sb.appendLine()
@@ -76,6 +76,17 @@ object GbnfGrammar {
                 "ir-sequence ::= " + objectGbnf(
                     listOf(
                         gbnfKey("type") to gbnfLiteral("sequence"),
+                        gbnfKey("steps") to "\"[\" ws ( $stepRefs ( \",\" ws $stepRefs )* )? \"]\" ws",
+                    )
+                )
+            )
+            sb.appendLine()
+            // Same step shape as sequence; only the envelope type differs, so a
+            // grammar-constrained model can emit an independent/concurrent plan.
+            sb.appendLine(
+                "ir-parallel ::= " + objectGbnf(
+                    listOf(
+                        gbnfKey("type") to gbnfLiteral("parallel"),
                         gbnfKey("steps") to "\"[\" ws ( $stepRefs ( \",\" ws $stepRefs )* )? \"]\" ws",
                     )
                 )

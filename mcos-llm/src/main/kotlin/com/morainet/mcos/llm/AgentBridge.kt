@@ -19,6 +19,8 @@ import kotlinx.coroutines.flow.Flow
  *   user's approve/deny decision via [resume].
  * - [AgentTurnResult.Declined] — the user (or a runtime cancel) said no.
  * - [AgentTurnResult.Done] — the approved plan executed to completion.
+ * - [AgentTurnResult.Suspended] — the loop deferred itself to re-evaluate at
+ *   a later wall-clock time (06 §11.4); the host re-enters via [resumeSuspended].
  *
  * The canonical implementation is [McosAgent]. Keeping the port separate from
  * the implementation lets the Android layer (and tests) substitute fakes the
@@ -57,12 +59,45 @@ interface AgentBridge {
      * (06 §11.2: user cancel always wins). No-op if no turn is active.
      */
     suspend fun cancel(sessionId: String)
+
+    /**
+     * Re-enter a turn that previously ended in [AgentTurnResult.Suspended]
+     * (06 §11.4). The host calls this at (or after) the suspended state's
+     * `resumeAtEpochMs`. Behaves like a fresh [runTurn] over the session's
+     * retained goal + observations, so it emits the same stream of states and
+     * ends on one terminal state (which may itself be another `Suspended`).
+     *
+     * Emits [AgentTurnResult.Declined] with reason `"no_suspended_turn"` if
+     * the session has no pending suspension (already resumed, or never
+     * suspended) — never throws.
+     */
+    fun resumeSuspended(sessionId: String): Flow<AgentTurnResult>
 }
 
 /**
  * One streamed state of an Agent turn. See [AgentBridge.runTurn].
+ *
+ * ## Terminal-state contract (self-contained headline)
+ *
+ * Every *terminal* state ([TerminalResult]) carries a [TerminalResult.headline]:
+ * a single line that reads correctly on its own, without the reader having seen
+ * the original user message or the intermediate [Probing] states. A host UI can
+ * render just the headline as the turn's outcome — it never has to reconstruct
+ * "what happened" by scanning a flat event log. This mirrors the discipline a
+ * background task uses when it must report an actionable one-line result.
+ *
+ * [Probing] is the only non-terminal state and has no headline.
  */
 sealed class AgentTurnResult {
+
+    /**
+     * Marker for the exactly-one terminal state a turn ends on. The
+     * [headline] is a self-contained, single-line outcome summary — safe to
+     * surface as the turn's result with no other context.
+     */
+    sealed interface TerminalResult {
+        val headline: String
+    }
 
     /**
      * The loop staged a final plan and is waiting for approve/deny.
@@ -79,7 +114,8 @@ sealed class AgentTurnResult {
     data class PlanReady(
         val ir: ExecutionIr,
         val needsConfirmation: Boolean,
-    ) : AgentTurnResult()
+        override val headline: String,
+    ) : AgentTurnResult(), TerminalResult
 
     /**
      * A read-only probe batch executed; observations are folded into the next
@@ -94,22 +130,55 @@ sealed class AgentTurnResult {
         val nextAction: String,
     ) : AgentTurnResult()
 
-    /** The planner asked a clarifying question; answer with a new [AgentBridge.runTurn]. */
-    data class Clarify(val question: String) : AgentTurnResult()
+    /**
+     * The planner asked a clarifying question; answer with a new
+     * [AgentBridge.runTurn]. The [question] is itself the self-contained
+     * headline — a reader needs no prior context to know what to answer.
+     */
+    data class Clarify(val question: String) : AgentTurnResult(), TerminalResult {
+        override val headline: String get() = question
+    }
 
     /**
      * The loop declined. `category` is machine-readable:
      * `QUOTA` (agent cap exceeded), `POLICY` (planner refusal),
      * `COMPILE_FAILED` (no provider produced a plan),
      * `EXECUTION_FAILED` / `EXECUTION_TIMEOUT` (post-approval runtime errors).
+     * The [headline] pairs the human [reason] with the category so it reads
+     * on its own (e.g. `"Refused (QUOTA): agent_cap_exceeded"`).
      */
-    data class Refuse(val category: String, val reason: String) : AgentTurnResult()
+    data class Refuse(val category: String, val reason: String) : AgentTurnResult(), TerminalResult {
+        override val headline: String get() = "Refused ($category): $reason"
+    }
 
-    /** The approved plan executed to completion; [summary] is human-readable. */
-    data class Done(val summary: String) : AgentTurnResult()
+    /** The approved plan executed to completion; [summary] is the self-contained headline. */
+    data class Done(val summary: String) : AgentTurnResult(), TerminalResult {
+        override val headline: String get() = summary
+    }
 
     /** The user rejected the plan, the run was cancelled, or no plan was pending. */
-    data class Declined(val reason: String) : AgentTurnResult()
+    data class Declined(val reason: String) : AgentTurnResult(), TerminalResult {
+        override val headline: String get() = "Declined: $reason"
+    }
+
+    /**
+     * The loop voluntarily deferred: it needs to re-evaluate later (waiting on
+     * external state that only changes with time — a download settling, a
+     * scheduled window, a remote job) rather than burning replan budget now.
+     * The turn ends here; the host is expected to persist the session and call
+     * [AgentBridge.resumeSuspended] at [resumeAtEpochMs] (06 §11.4).
+     *
+     * @property resumeAtEpochMs Wall-clock epoch millis at (or shortly after)
+     *        which the host should re-enter the loop for this session. The
+     *        agent picks this the way a background task picks a wake-up delay:
+     *        long enough that re-checking sooner would be wasted work.
+     * @property reason Machine-readable defer reason, e.g. `"awaiting_external"`.
+     */
+    data class Suspended(
+        val resumeAtEpochMs: Long,
+        val reason: String,
+        override val headline: String,
+    ) : AgentTurnResult(), TerminalResult
 }
 
 /**
