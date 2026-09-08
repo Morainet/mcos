@@ -1,5 +1,6 @@
 package com.morainet.mcos.android.demo
 
+import com.morainet.mcos.android.demo.skills.SkillStore
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -9,7 +10,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * [SkillStore] persistence + [SkillParser] format handling. Uses the shared
+ * [com.morainet.mcos.android.demo.skills.SkillStore] persistence + [com.morainet.mcos.android.demo.skills.SkillParser] format handling. Uses the shared
  * [TestMarketplace.FakeSecureStore] as the JVM-side store.
  */
 class SkillStoreTest {

@@ -8,6 +8,7 @@ import com.morainet.mcos.runtime.core.registry.ResolveResult
 import com.morainet.mcos.security.TrustLevel
 import com.morainet.mcos.security.permission.DefaultPermissionKernel
 import androidx.lifecycle.viewModelScope
+import com.morainet.mcos.android.demo.marketplace.MarketplaceViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancel
@@ -29,7 +30,7 @@ import org.junit.rules.TestWatcher
 import org.junit.runner.Description
 
 /**
- * Unit tests for [MarketplaceViewModel] — plain JVM, no Robolectric, following
+ * Unit tests for [com.morainet.mcos.android.demo.marketplace.MarketplaceViewModel] — plain JVM, no Robolectric, following
  * [McosViewModelTest]'s scaffolding. The transport is an in-memory fake, but
  * the whole install chain is real: Ed25519 key pair + signature, ArtifactVerifier,
  * trust-gated loader (with `disableSideload = true`), and the real registry.

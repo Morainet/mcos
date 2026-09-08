@@ -1,4 +1,4 @@
-package com.morainet.mcos.android.demo
+package com.morainet.mcos.android.demo.skills
 
 import com.morainet.mcos.llm.Skill
 import com.morainet.mcos.sdk.SecureStore

@@ -721,25 +721,74 @@ interface AgentBridge {
     fun runTurn(sessionId: String, userMessage: String): Flow<AgentTurnResult>
     suspend fun resume(sessionId: String, approved: Boolean): Flow<AgentTurnResult>
     suspend fun cancel(sessionId: String)
+    fun resumeSuspended(sessionId: String): Flow<AgentTurnResult>   // §11.4a
 }
 
 sealed class AgentTurnResult {
-    data class PlanReady(val ir: ExecutionIr, val needsConfirmation: Boolean) : AgentTurnResult()
+    sealed interface TerminalResult { val headline: String }        // self-contained outcome line
+
+    data class PlanReady(val ir: ExecutionIr, val needsConfirmation: Boolean,
+                         override val headline: String) : AgentTurnResult(), TerminalResult
     data class Probing(val observation: String, val nextAction: String) : AgentTurnResult()
-    data class Clarify(val question: String) : AgentTurnResult()
-    data class Refuse(val category: String, val reason: String) : AgentTurnResult()
-    data class Done(val summary: String) : AgentTurnResult()
-    data class Declined(val reason: String) : AgentTurnResult()
+    data class Clarify(val question: String) : AgentTurnResult(), TerminalResult
+    data class Refuse(val category: String, val reason: String) : AgentTurnResult(), TerminalResult
+    data class Done(val summary: String) : AgentTurnResult(), TerminalResult
+    data class Declined(val reason: String) : AgentTurnResult(), TerminalResult
+    data class Suspended(val resumeAtEpochMs: Long, val reason: String,
+                         override val headline: String) : AgentTurnResult(), TerminalResult
 }
 ```
 
 - `PlanReady` — the Agent has a compiled IR **staged**, waiting for the user's approve/deny via `resume`. `needsConfirmation` is `true` iff any step's resolved `sideEffectClass != read` — exactly the steps the PermissionKernel would challenge; pure-read plans stage with `false`.
-- `Probing` — the Agent ran a read-only probe batch and is mid-loop; `observation` is the folded `commandId → <compact JSON>` lines (truncated at 2000 chars per the §4.0 prompt budget), `nextAction` a human-readable hint ("Replanning with 47 photos…"). The UI shows this as a progress indicator.
+- `Probing` — the Agent ran a read-only probe batch and is mid-loop; `observation` is the folded `commandId → <compact JSON>` lines (truncated at 2000 chars per the §4.0 prompt budget), `nextAction` a human-readable hint ("Replanning with 47 photos…"). The UI shows this as a progress indicator. **`Probing` is the only non-terminal state and has no `headline`.**
 - `Clarify` / `Refuse` — forwarded from the planner as flat strings (no `CompileResult` wrappers): `Refuse.category` ∈ `QUOTA` (cap exceeded), `POLICY` (planner refusal), `COMPILE_FAILED` (no provider produced a plan), `EXECUTION_FAILED` / `EXECUTION_TIMEOUT` (post-approval runtime errors).
 - `Declined` — every "the user said no" terminal: plan denied (`"user_declined"`), run cancelled, or no plan pending (`"no_pending_plan"` — emitted instead of throwing).
 - `Done` — the approved workflow executed successfully; `summary` is a user-facing recap.
+- `Suspended` — the loop **voluntarily deferred** (§11.4a): it needs to re-evaluate later rather than burn replan budget now. The turn ends here; the host persists the session and re-enters via `resumeSuspended` at `resumeAtEpochMs`.
+
+**Self-contained headline contract (as-built):** every terminal state implements `TerminalResult` and carries a `headline` — a single line that reads correctly on its own, without the reader having seen the original user message or the intermediate `Probing` states. A host renders the headline as the turn's outcome instead of reconstructing "what happened" from a flat event log. (This is the same discipline a background task uses to report an actionable one-line result.)
 
 **Streaming shape (as-built):** `runTurn` emits zero or more `Probing` states while the loop is open, then **exactly one** terminal state. Cancelling collection of the flow (or calling `cancel`) aborts the turn immediately — user cancel always wins (§11.2).
+
+### 11.4a Self-Paced Suspension (`defer` → `Suspended` → `resumeSuspended`)
+
+A goal sometimes cannot progress *now* because it waits on external state that only changes with time — a download settling, a scheduled window, a remote job. Rather than spend the turn's replan budget spinning, the planner may emit a `defer` IR:
+
+```json
+{ "type": "defer", "reason": "upload still in progress", "delay_seconds": 300 }
+```
+
+The Agent turns this into `AgentTurnResult.Suspended(resumeAtEpochMs, reason, headline)`:
+
+- **Clamped delay.** `delay_seconds` is clamped to `DeferInfo.MIN_DELAY_SECONDS … MAX_DELAY_SECONDS` (30 s … 1 day) so a model can never schedule an absurd wake-up. `resumeAtEpochMs = clock() + clampedDelay`.
+- **Durable session.** `AgentSessionStore` gains an optional `Persistence` seam. On suspend it snapshots the resumable session (goal + observation log) through the seam; on a fresh process `restore()` rehydrates snapshots. The default seam is a no-op (RAM-only, unchanged for pure-JVM callers); the Android host wires a `SecureStore`-backed adapter so a suspension survives process death — no plaintext goal leaves the encrypted store.
+- **Resume.** The host calls `resumeSuspended(sessionId)` at (or after) `resumeAtEpochMs`; it re-enters the same loop over the retained goal + folded observations and ends on one terminal state (which may itself be another `Suspended`). Suspension is one-shot: a second `resumeSuspended` with nothing pending returns `Declined("no_suspended_turn")`.
+- **Wake-up hosting.** A production host arms the existing `WakeScheduler` (the `AlarmManager` exact-alarm seam that already drives schedule ticks, [10 §6](./10-roadmap.md)) at `resumeAtEpochMs` so the resume fires while backgrounded. The demo shell, being foreground, simply `delay`s within its `viewModelScope` and re-enters — and on attach it `restore()`s and immediately resumes any session whose resume time already passed while the process was dead.
+- **Lifecycle event.** `agent.suspended` (`session_id`, `resume_at`, `reason`) is published on the EventBus alongside the other `agent.*` envelopes.
+
+### 11.5 Parallel Plans (fan-out via the workflow engine)
+
+When a goal's steps are **independent** — no step reads another's output — the planner may emit a `parallel` IR instead of a `sequence`:
+
+```json
+{ "type": "parallel", "steps": [
+  { "command": "photo.search", "args": {} },
+  { "command": "weather.today", "args": {} }
+] }
+```
+
+`LlmPlan.parallel = true` flags this; the step list is identical to `sequence`. The GBNF grammar and the CONSTRAINED IR JSON schema both admit `parallel` (same `steps` shape as `sequence`), so a grammar-constrained model can only emit catalog commands here too.
+
+**Compilation (as-built).** The Agent stages a parallel plan **whole** — a parallel plan never auto-runs a read prefix, so the read-prefix (§11.3) and §14.1 drift invariants are untouched: it is treated exactly like a leading non-read step. `McosAgent.toParallelIr` wraps the commands in a `workflow` IR envelope whose body is a `parallel` `WorkflowStep`:
+
+```json
+{ "type": "workflow", "body": { "type": "parallel",
+  "steps": [ { "type": "command", "commandId": "photo.search", "args": {} }, … ] } }
+```
+
+On approval this reaches the runtime as `Payload.IrJson`; `DslParser` routes `type:"workflow"` to `ExecutionIr.Workflow`, `WorkflowJson` decodes the `parallel` step, and the **existing** fan-out engine (`WorkflowStep.Parallel`, [05 §4](./05-workflow.md)) runs the branches concurrently — no new runtime execution code. A single-command "parallel" degrades to a plain `invoke`. The staged state's headline reads `"Parallel plan …"` so the host can distinguish fan-out from an ordered sequence.
+
+**Scope (deliberate).** This wires the planner to the fan-out engine for the flat, independent-command case only. The Agent still does not *decompose* a goal into sub-tasks, and richer workflow control flow (`if`/`loop`/`retry`/`try`) remains reachable only through stored workflows, not planner output.
 
 **`resume` (as-built):** the confirm step is a separate call. `resume(approved = true)` submits the staged IR to the runtime as `Payload.IrJson` (audited `CHAT`) and emits `Done`, or `Refuse(EXECUTION_FAILED / EXECUTION_TIMEOUT)` if the run fails; `resume(approved = false)` emits `Declined("user_declined")` without touching the runtime. Consuming the pending plan is one-shot — a second `resume` gets `Declined("no_pending_plan")`.
 

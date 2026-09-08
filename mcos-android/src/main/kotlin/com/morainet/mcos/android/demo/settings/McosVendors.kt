@@ -1,11 +1,11 @@
-package com.morainet.mcos.android.demo
+package com.morainet.mcos.android.demo.settings
 
 /**
  * A selectable LLM vendor preset. Every entry speaks the OpenAI Chat
  * Completions wire format, so a single [com.morainet.mcos.llm.OpenAiLlmProvider]
  * — registered under [id] — serves all of them; only the [endpoint] and
  * [models] differ. The vendor's API key and chosen model are persisted
- * per-vendor by [McosViewModel] (SecureStore keys `llm_vendor_<id>_*`).
+ * per-vendor by [com.morainet.mcos.android.demo.shell.McosViewModel] (SecureStore keys `llm_vendor_<id>_*`).
  *
  * @param id Stable registry/persistence id (also the [com.morainet.mcos.llm.LlmProvider.id]).
  * @param name Human label shown in the settings list.
@@ -32,7 +32,7 @@ data class LlmVendor(
 /**
  * Built-in vendor catalog. All are OpenAI-compatible chat-completions
  * endpoints; switching between them only changes the endpoint/model/key that
- * [McosViewModel] feeds into `LlmConfig`.
+ * [com.morainet.mcos.android.demo.shell.McosViewModel] feeds into `LlmConfig`.
  */
 object LlmVendors {
 

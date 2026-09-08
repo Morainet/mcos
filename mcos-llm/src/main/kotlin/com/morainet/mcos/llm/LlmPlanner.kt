@@ -567,12 +567,12 @@ class LlmPlanner(
           "type": "object",
           "required": ["type"],
           "properties": {
-            "type": { "enum": ["invoke", "sequence", "clarify", "refuse"] },
+            "type": { "enum": ["invoke", "sequence", "parallel", "clarify", "refuse", "defer"] },
             "command": { "type": "string", "description": "Command ID, e.g. camera.capture (required for invoke)" },
             "args": { "type": "object", "description": "Named arguments matching the command's parameter schema" },
             "steps": {
               "type": "array",
-              "description": "Ordered commands for sequence",
+              "description": "Commands for sequence (ordered) or parallel (independent/concurrent)",
               "items": {
                 "type": "object",
                 "required": ["command"],
@@ -583,7 +583,8 @@ class LlmPlanner(
               }
             },
             "question": { "type": "string", "description": "Clarifying question for clarify" },
-            "reason": { "type": "string", "description": "Refusal reason for refuse" }
+            "reason": { "type": "string", "description": "Refusal reason for refuse, or wait reason for defer" },
+            "delay_seconds": { "type": "integer", "description": "Seconds to wait before re-evaluating (required for defer)" }
           }
         }
     """.trimIndent()
@@ -761,6 +762,29 @@ class LlmPlanner(
                     )
                 }
             }
+            "parallel" -> {
+                val steps = json["steps"] as? JsonArray ?: buildJsonArray { }
+                val commands = steps.mapNotNull { step ->
+                    val obj = step as? JsonObject ?: return@mapNotNull null
+                    val command = obj["command"]?.jsonPrimitive?.content ?: return@mapNotNull null
+                    val args = obj["args"] as? JsonObject ?: JsonObject(emptyMap())
+                    Command(command, args)
+                }
+                if (steps.isEmpty()) {
+                    irParseError(raw, providerId, "parallel requires a non-empty 'steps' array")
+                } else if (commands.isEmpty()) {
+                    irParseError(raw, providerId, "parallel steps must be objects with a 'command'")
+                } else {
+                    LlmPlan(
+                        commands = commands,
+                        rawDsl = raw,
+                        thoughts = "IR parallel: ${commands.size} step(s)",
+                        error = null,
+                        providerId = providerId,
+                        parallel = true,
+                    )
+                }
+            }
             "clarify" -> LlmPlan(
                 commands = emptyList(),
                 rawDsl = raw,
@@ -778,6 +802,18 @@ class LlmPlanner(
                 refuse = RefuseInfo(
                     reason = json["reason"]?.jsonPrimitive?.content ?: "no reason",
                     category = json["category"]?.jsonPrimitive?.content
+                )
+            )
+            "defer" -> LlmPlan(
+                commands = emptyList(),
+                rawDsl = raw,
+                thoughts = "IR defer: ${json["reason"]?.jsonPrimitive?.content ?: "no reason"}",
+                error = null,
+                providerId = providerId,
+                defer = DeferInfo(
+                    delaySeconds = json["delay_seconds"]?.jsonPrimitive?.content?.toLongOrNull()
+                        ?: DeferInfo.MIN_DELAY_SECONDS,
+                    reason = json["reason"]?.jsonPrimitive?.content ?: "awaiting external state",
                 )
             )
             else -> irParseError(raw, providerId, "unknown IR type: ${type ?: "<missing>"}")

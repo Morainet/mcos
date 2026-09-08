@@ -88,10 +88,36 @@ class McosAgent(
     private val caps: AgentCaps = AgentCaps(),
     private val eventTimeoutMs: Long = 30_000L,
     private val sessions: AgentSessionStore = AgentSessionStore(),
+    private val clock: () -> Long = { System.currentTimeMillis() },
 ) : AgentBridge {
 
     override fun runTurn(sessionId: String, userMessage: String): Flow<AgentTurnResult> = flow {
         sessions.begin(sessionId, userMessage)
+        driveTurn(sessionId, userMessage)
+    }
+
+    override fun resumeSuspended(sessionId: String): Flow<AgentTurnResult> = flow {
+        // Consume the pending suspension; a session with none never suspended
+        // (or was already resumed) — decline rather than start a phantom turn.
+        val goal = sessions.takeSuspended(sessionId)
+        if (goal == null) {
+            emit(AgentTurnResult.Declined("no_suspended_turn"))
+            return@flow
+        }
+        // Re-enter the same loop over the retained goal + folded observations.
+        driveTurn(sessionId, goal)
+    }
+
+    /**
+     * The shared turn loop used by both [runTurn] and [resumeSuspended]: one
+     * bounded `compile → probe → replan` cycle ending on exactly one terminal
+     * state. Assumes the session already exists (the caller ran `begin` or
+     * consumed a suspension).
+     */
+    private suspend fun kotlinx.coroutines.flow.FlowCollector<AgentTurnResult>.driveTurn(
+        sessionId: String,
+        userMessage: String,
+    ) {
         sessions.setActiveJob(sessionId, currentCoroutineContext().job)
         try {
             // Per-turn budgets (§11.2): reset on every runTurn, consumed
@@ -114,6 +140,7 @@ class McosAgent(
                     plan.refuse?.let {
                         return@withTimeoutOrNull AgentTurnResult.Refuse(it.category ?: "POLICY", it.reason)
                     }
+                    plan.defer?.let { return@withTimeoutOrNull suspendTurn(sessionId, it) }
                     if (!plan.isSuccess) {
                         return@withTimeoutOrNull AgentTurnResult.Refuse(
                             category = "COMPILE_FAILED",
@@ -132,6 +159,16 @@ class McosAgent(
                                     plan.commands.joinToString { it.id },
                             )
                         }
+                    }
+
+                    // Parallel plans (06 §11.5) are independent/concurrent: they
+                    // never auto-run a read prefix. Stage the whole fan-out for
+                    // approval — this keeps the read-prefix/§14.1 invariants
+                    // intact (a parallel plan is treated exactly like a
+                    // non-read leading step) and hands the runtime a
+                    // ExecutionIr.Workflow backed by the fan-out engine.
+                    if (plan.parallel) {
+                        return@withTimeoutOrNull stagePlan(sessionId, plan.commands, parallel = true)
                     }
 
                     val commandIds = plan.commands.map { it.id }.toSet()
@@ -270,7 +307,8 @@ class McosAgent(
                     "no terminal event within ${eventTimeoutMs}ms",
                 )
                 events.any { it is RuntimeEvent.RunSucceeded } -> AgentTurnResult.Done(
-                    "Executed ${pending.commandIds.size} command(s) successfully",
+                    "Executed ${pending.commandIds.size} command(s) successfully: " +
+                        planHeadline(pending.commandIds),
                 )
                 events.any { it is RuntimeEvent.RunCancelled } -> AgentTurnResult.Declined("run_cancelled")
                 else -> {
@@ -306,25 +344,69 @@ class McosAgent(
     private suspend fun stagePlan(
         sessionId: String,
         commands: List<Command>,
+        parallel: Boolean = false,
     ): AgentTurnResult.PlanReady {
-        val ir = toExecutionIr(commands)
+        val ir = if (parallel) toParallelIr(commands) else toExecutionIr(commands)
         val commandIds = commands.map { it.id }
+        val needsConfirmation = commands.any { sideEffectOf(it.id) != SideEffectClass.read }
         sessions.setPending(sessionId, AgentSessionStore.PendingPlan(ir, commandIds))
         publish(
             "agent.plan_ready",
             buildJsonObject {
                 put("session_id", sessionId)
                 put("command_ids", JsonArray(commandIds.map { JsonPrimitive(it) }))
-                put(
-                    "needs_confirmation",
-                    commands.any { sideEffectOf(it.id) != SideEffectClass.read },
-                )
+                put("needs_confirmation", needsConfirmation)
+                put("parallel", parallel)
             },
         )
+        val verb = if (needsConfirmation) "needs approval" else "ready to run"
+        val shape = if (parallel) "Parallel plan" else "Plan"
+        val headline = "$shape $verb: ${planHeadline(commandIds)}"
         return AgentTurnResult.PlanReady(
             ir = ir,
-            needsConfirmation = commands.any { sideEffectOf(it.id) != SideEffectClass.read },
+            needsConfirmation = needsConfirmation,
+            headline = headline,
         )
+    }
+
+    /**
+     * Turn a planner `defer` outcome into a [AgentTurnResult.Suspended]: clamp
+     * the requested delay to sane bounds, mark the session suspended (retaining
+     * its goal + observations for the eventual [resumeSuspended]), and emit a
+     * self-contained headline naming the wait and the resume time.
+     */
+    private fun suspendTurn(sessionId: String, defer: DeferInfo): AgentTurnResult.Suspended {
+        val delaySeconds = defer.delaySeconds.coerceIn(
+            DeferInfo.MIN_DELAY_SECONDS,
+            DeferInfo.MAX_DELAY_SECONDS,
+        )
+        val resumeAt = clock() + delaySeconds * 1_000L
+        sessions.markSuspended(sessionId)
+        publish(
+            "agent.suspended",
+            buildJsonObject {
+                put("session_id", sessionId)
+                put("resume_at", resumeAt)
+                put("reason", defer.reason)
+            },
+        )
+        val headline = "Suspended for ${delaySeconds}s (${defer.reason}); will re-evaluate"
+        return AgentTurnResult.Suspended(
+            resumeAtEpochMs = resumeAt,
+            reason = defer.reason,
+            headline = headline,
+        )
+    }
+
+    /**
+     * Self-contained one-line description of a staged plan's steps, e.g.
+     * `photo.search, photo.enhance` or `photo.search (+2 more)`. Kept short so
+     * it reads as a headline; the full IR preview is a separate host concern.
+     */
+    private fun planHeadline(commandIds: List<String>): String = when {
+        commandIds.isEmpty() -> "(empty plan)"
+        commandIds.size <= 3 -> commandIds.joinToString(", ")
+        else -> commandIds.take(2).joinToString(", ") + " (+${commandIds.size - 2} more)"
     }
 
     /**
@@ -380,6 +462,44 @@ class McosAgent(
         } else {
             ExecutionIr.Sequence(IrSequence(steps = invokes))
         }
+    }
+
+    /**
+     * Build a fan-out [ExecutionIr.Workflow] whose body is a `parallel`
+     * workflow step (06 §11.5). The JSON shape is exactly what
+     * `WorkflowJson.fromJson` decodes into `WorkflowStep.Parallel` on the
+     * runtime side — `{"type":"parallel","steps":[{"type":"command",
+     * "commandId":…,"args":…}]}` — so the existing fan-out engine runs it with
+     * no new runtime code. A single-command "parallel" degrades to a plain
+     * invoke (no point spinning up a fan-out for one step).
+     */
+    private fun toParallelIr(commands: List<Command>): ExecutionIr {
+        if (commands.size == 1) return toExecutionIr(commands)
+        // Wrap the parallel step in a `workflow` envelope: the runtime's
+        // DslParser only routes `type:"workflow"` to ExecutionIr.Workflow, and
+        // WorkflowJson then unwraps `body` and decodes the `parallel` step.
+        val body = buildJsonObject {
+            put("type", "workflow")
+            put(
+                "body",
+                buildJsonObject {
+                    put("type", "parallel")
+                    put(
+                        "steps",
+                        JsonArray(
+                            commands.map { cmd ->
+                                buildJsonObject {
+                                    put("type", "command")
+                                    put("commandId", cmd.id)
+                                    put("args", cmd.args)
+                                }
+                            },
+                        ),
+                    )
+                },
+            )
+        }
+        return ExecutionIr.Workflow(body)
     }
 
     private fun irToJsonElement(ir: ExecutionIr): JsonObject = when (ir) {

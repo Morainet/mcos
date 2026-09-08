@@ -11,19 +11,30 @@ LLM 网关与自然语言编排层——把用户话语经多 provider 规划链
 - 零三方 LLM SDK 依赖：HTTP transport 自带 JDK 实现，可注入替换。
 - 规格：`docs/zh/06-agent.md`。
 
-## 结构（单包 `com.morainet.mcos.llm`，main 18 文件）
+## 结构（单包 `com.morainet.mcos.llm`，main 19 文件）
 
 | 分组 | 关键文件 | 说明 |
 |------|----------|------|
 | Provider 端口 | `LlmProvider.kt`、`LlmProviderRegistry.kt`、`LlmProbePolicy.kt` | chat/toolCall/constrainedChat/probe 四端点；能力协商（CHAT/PLAN/TOOL_CALL/CONSTRAINED/EMBED）与层别（ON_DEVICE/CLOUD）；健康缓存 30s、失败冷却 10s |
 | Provider 实现 | `OpenAiLlmProvider.kt`、`GrammarLlmProvider.kt` | 前者任意 OpenAI 兼容端点（含 vLLM/LiteLLM）；后者真 token 级语法约束（llama.cpp `grammar`、vLLM/Outlines `guided_grammar`/`guided_json`） |
-| 规划 | `LlmPlanner.kt`（775 行，核心）、`ToolCallTypes.kt`、`UtteranceClassifier.kt`、`RecipeMatcher.kt` | 系统提示 = 命令目录 + 参数 schema + Memory 用户事实；四种 PlanMode；端侧→云隐私门（§13.2）；零延迟配方直出 DSL 不经 LLM |
-| 编排 / Agent | `ChatOrchestrator.kt`、`Agent.kt`（McosAgent）、`AgentBridge.kt`、`AgentSessionStore.kt` | 一次性 chat→plan→execute→事件收集；多轮循环 compile→探查(read-prefix)→重规划(≤cap)→PlanReady→用户审批→执行 |
+| 规划 | `LlmPlanner.kt`（核心）、`Skill.kt`、`ToolCallTypes.kt`、`UtteranceClassifier.kt`、`RecipeMatcher.kt` | 系统提示 = 命令目录 + 参数 schema + Memory 用户事实 + `## Skills` 段；四种 PlanMode；端侧→云隐私门（§13.2）；零延迟配方直出 DSL 不经 LLM |
+| 编排 / Agent | `ChatOrchestrator.kt`、`Agent.kt`（McosAgent）、`AgentBridge.kt`、`AgentSessionStore.kt` | 一次性 chat→plan→execute→事件收集；多轮循环 compile→探查(read-prefix)→重规划(≤cap)→PlanReady→用户审批→执行。终态带自包含 `headline`；`defer`→`Suspended`（自定节奏挂起，`Persistence` 缝可跨进程续跑）；`parallel`→扇出 `Workflow` IR（06 §11.5） |
 | 安全 | `PromptInjectionDetector.kt` | 纯函数启发式链：指令覆写/提权/社工/数据外传 |
 | 语法约束 | `GbnfGrammar.kt` | 从命令目录生成 GBNF，采样期即不可能输出目录外命令 ID |
 
 注意命名区分：本模块的 `Recipe`（触发词→DSL 零延迟快路径）与 marketplace 的
 `RecipeEnvelope`（签名配方工作流）是两个概念。
+
+## Skill 包（提示级增强）
+
+`Skill(id, name, description, instructions)` 是 Claude 风格的技能包——**纯提示级增强，
+不引入任何新命令/能力**。`LlmPlanner(skills = …)` 把启用的 skill 拼进 FREEFORM_JSON
+与 CONSTRAINED 两个系统提示的 `## Skills` 段(每条 `### <name>` + description +
+instructions),供模型在请求落入某 skill 描述范围时遵循其指令。空列表不产生该段。
+
+规范约束(`docs/en/06-agent.md §9.2`):skill 只改提示、不扩大命令目录(仍受 GBNF/
+约束解码钉死);单条 instructions 截断到 `Skill.MAX_INSTRUCTION_CHARS`(8000 字符)防提示
+爆炸;由用户显式启用。持久化与导入解析由宿主侧负责(演示壳 `skills/SkillStore.kt`)。
 
 ## 典型用法
 

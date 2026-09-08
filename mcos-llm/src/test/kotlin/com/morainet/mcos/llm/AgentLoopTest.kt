@@ -142,6 +142,12 @@ class AgentLoopTest {
         assertTrue(planReady.needsConfirmation, "plan containing a write step needs confirmation")
         val invoke = planReady.ir as ExecutionIr.Invoke
         assertEquals("photo.enhance", invoke.invoke.id, "staged plan is the post-observation plan")
+        // The terminal headline is self-contained: names the outcome and the
+        // command without needing the original message or the probe state.
+        assertTrue(
+            planReady.headline.contains("needs approval") && planReady.headline.contains("photo.enhance"),
+            "PlanReady headline is self-contained: ${planReady.headline}",
+        )
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -466,6 +472,156 @@ class AgentLoopTest {
         assertTrue(
             synchronized(events) { events }.all { it.source == "agent" },
             "all agent events carry source=agent",
+        )
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // A17/A18/A19: self-paced suspension (06 §11.4)
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `A17-defer suspends the turn with a clamped resume time and self-contained headline`() = runBlocking {
+        val gateway = FakeRuntimeGateway()
+        // delay_seconds below MIN is clamped up to MIN_DELAY_SECONDS.
+        val provider = FakeConstrainedProvider(
+            listOf("""{"type":"defer","reason":"upload still in progress","delay_seconds":5}"""),
+        )
+        var fakeNow = 1_000_000L
+        val agent = McosAgent(LlmPlanner(provider, registry), gateway, registry, clock = { fakeNow })
+
+        val outcome = agent.runTurn("s17", "wait for the upload then notify me").toList().single()
+
+        assertTrue(outcome is AgentTurnResult.Suspended, "expected Suspended, got $outcome")
+        outcome as AgentTurnResult.Suspended
+        assertEquals("upload still in progress", outcome.reason)
+        // 5s requested → clamped to the 30s floor.
+        val expected = fakeNow + DeferInfo.MIN_DELAY_SECONDS * 1_000L
+        assertEquals(expected, outcome.resumeAtEpochMs, "resume time clamped to MIN and offset from clock")
+        assertTrue(
+            outcome.headline.contains("30s") && outcome.headline.contains("upload still in progress"),
+            "headline is self-contained: ${outcome.headline}",
+        )
+        assertEquals(0, gateway.executedRequests.size, "a suspended turn executes nothing")
+    }
+
+    @Test
+    fun `A18-resumeSuspended re-enters the loop over the retained goal`() = runBlocking {
+        val gateway = FakeRuntimeGateway()
+        // First compile defers; the resume compile returns a real plan.
+        val provider = FakeConstrainedProvider(
+            listOf(
+                """{"type":"defer","reason":"still downloading","delay_seconds":60}""",
+                """{"type":"invoke","command":"photo.enhance","args":{}}""",
+            ),
+        )
+        val agent = McosAgent(LlmPlanner(provider, registry), gateway, registry)
+
+        val first = agent.runTurn("s18", "enhance when the download finishes").toList().single()
+        assertTrue(first is AgentTurnResult.Suspended, "first turn suspends")
+
+        val second = agent.resumeSuspended("s18").toList().single()
+        assertTrue(second is AgentTurnResult.PlanReady, "resume produces the real plan, got $second")
+        assertEquals(
+            "photo.enhance",
+            ((second as AgentTurnResult.PlanReady).ir as ExecutionIr.Invoke).invoke.id,
+        )
+
+        // Suspension is one-shot: a second resume finds nothing pending.
+        val third = agent.resumeSuspended("s18").toList().single()
+        assertTrue(third is AgentTurnResult.Declined, "second resume declines: $third")
+        assertEquals("no_suspended_turn", (third as AgentTurnResult.Declined).reason)
+    }
+
+    @Test
+    fun `A19-suspension survives a fresh store via the persistence seam`() = runBlocking {
+        // A simple in-memory persistence standing in for the host's durable KV.
+        val saved = mutableMapOf<String, AgentSessionStore.Snapshot>()
+        val persistence = object : AgentSessionStore.Persistence {
+            override fun save(snapshot: AgentSessionStore.Snapshot) { saved[snapshot.sessionId] = snapshot }
+            override fun delete(sessionId: String) { saved.remove(sessionId) }
+            override fun loadAll(): List<AgentSessionStore.Snapshot> = saved.values.toList()
+        }
+
+        // Process 1: a probe records an observation, then the turn defers.
+        val store1 = AgentSessionStore(persistence)
+        val provider1 = FakeConstrainedProvider(
+            listOf(
+                """{"type":"invoke","command":"photo.search","args":{}}""",     // read prefix → probe
+                """{"type":"defer","reason":"waiting on server","delay_seconds":120}""",
+            ),
+        )
+        val agent1 = McosAgent(LlmPlanner(provider1, registry), FakeRuntimeGateway(), registry, sessions = store1)
+        val out1 = agent1.runTurn("s19", "find and enhance my best photo").toList().last()
+        assertTrue(out1 is AgentTurnResult.Suspended, "process-1 turn suspends: $out1")
+        assertTrue(saved.containsKey("s19"), "suspension was persisted")
+        assertTrue(saved.getValue("s19").observationLog.isNotEmpty(), "the probe observation was snapshotted")
+
+        // Process 2: brand-new store over the same durable KV; restore, then resume.
+        val store2 = AgentSessionStore(persistence)
+        assertEquals(listOf("s19"), store2.restore(), "restore rehydrates the suspended session")
+        val provider2 = FakeConstrainedProvider(
+            listOf("""{"type":"invoke","command":"photo.enhance","args":{}}"""),
+        )
+        val agent2 = McosAgent(LlmPlanner(provider2, registry), FakeRuntimeGateway(), registry, sessions = store2)
+        val out2 = agent2.resumeSuspended("s19").toList().single()
+        assertTrue(out2 is AgentTurnResult.PlanReady, "process-2 resume produces the plan: $out2")
+        assertFalse(saved.containsKey("s19"), "consuming the suspension clears the durable snapshot")
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // A20/A21: parallel plans compile to a fan-out workflow (06 §11.5)
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `A20-parallel plan stages a fan-out workflow IR without probing`() = runBlocking {
+        val gateway = FakeRuntimeGateway()
+        // Two independent reads as a parallel plan: normally a read prefix would
+        // auto-run, but a parallel plan stages whole — nothing is probed.
+        val provider = FakeConstrainedProvider(
+            listOf(
+                """{"type":"parallel","steps":[
+                    {"command":"photo.search","args":{}},
+                    {"command":"weather.today","args":{}}
+                ]}""",
+            ),
+        )
+        val agent = McosAgent(LlmPlanner(provider, registry), gateway, registry)
+
+        val outcome = agent.runTurn("s20", "check my photos and the weather at once").toList().single()
+
+        assertTrue(outcome is AgentTurnResult.PlanReady, "parallel plan stages for approval, got $outcome")
+        outcome as AgentTurnResult.PlanReady
+        assertEquals(0, gateway.probeCalls.size, "a parallel plan never auto-runs a read prefix")
+        val workflow = outcome.ir as? ExecutionIr.Workflow
+            ?: error("expected a fan-out Workflow IR, got ${outcome.ir}")
+        val body = workflow.body.toString()
+        assertTrue(body.contains("\"parallel\""), "IR body is a parallel workflow step: $body")
+        assertTrue(body.contains("photo.search") && body.contains("weather.today"), "both steps present: $body")
+        assertTrue(outcome.headline.contains("Parallel plan"), "headline flags parallelism: ${outcome.headline}")
+    }
+
+    @Test
+    fun `A21-approved parallel plan submits the workflow IR to the runtime`() = runBlocking {
+        val gateway = FakeRuntimeGateway()
+        val provider = FakeConstrainedProvider(
+            listOf(
+                """{"type":"parallel","steps":[
+                    {"command":"photo.enhance","args":{}},
+                    {"command":"mail.send","args":{}}
+                ]}""",
+            ),
+        )
+        val agent = McosAgent(LlmPlanner(provider, registry), gateway, registry)
+
+        agent.runTurn("s21", "enhance and mail in parallel").toList()
+        val done = agent.resume("s21", approved = true).toList().single()
+
+        assertTrue(done is AgentTurnResult.Done, "approval executes to Done, got $done")
+        assertEquals(1, gateway.executedRequests.size, "one run submitted")
+        val payload = gateway.executedRequests[0].payload as Payload.IrJson
+        assertTrue(
+            payload.json.toString().contains("\"parallel\""),
+            "the submitted payload is the parallel workflow IR: ${payload.json}",
         )
     }
 

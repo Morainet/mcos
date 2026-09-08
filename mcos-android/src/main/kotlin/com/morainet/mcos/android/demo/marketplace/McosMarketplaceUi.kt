@@ -1,4 +1,4 @@
-package com.morainet.mcos.android.demo
+package com.morainet.mcos.android.demo.marketplace
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -41,6 +41,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.morainet.mcos.android.demo.McosColor
+import com.morainet.mcos.android.demo.McosRadius
+import com.morainet.mcos.android.demo.McosSpace
 import com.morainet.mcos.marketplace.InstallResult
 import com.morainet.mcos.marketplace.InstallState
 import com.morainet.mcos.marketplace.PackageMetadata

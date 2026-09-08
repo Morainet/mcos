@@ -16,27 +16,47 @@
 ```
 McosApplication（实现 McosHostApp：CompositionRoot.create + RuntimeBootstrap.ensureRehydrated）
   → MainActivity（唯一职责 setContent { MCOSApp(deps) }）
-  → MCOSApp（TopAppBar + 卡片流 + 四个 AlertDialog）
+  → shell/McosApp.kt MCOSApp（NavigationBar 5 tab + 页面路由 + 四个 AlertDialog）
 ```
 
-## UI 结构
+## 源码结构（子包，包名统一 `com.morainet.mcos.android.demo`）
 
-| 组件 | 文件 | 演示能力 |
-|------|------|----------|
-| `StatusBar` | McosShellCards.kt | 插件加载状态 + 命令面板开关 |
-| `MarketplaceCard` | McosMarketplaceUi.kt | 索引搜索、安装进度流、卸载、Recipe 搜索 |
-| `AiChatCard` | McosShellCards.kt | API key 管理（SecureStore）、provider 探活、NL→DSL 规划、Agent 模式开关 |
-| `McpServerCard` | McosShellCards.kt | MCP 服务器增/删/开关/重连 |
-| `DslInputCard` | McosShellCards.kt | DSL 输入 + 实时 preview（每键取消重发） |
-| `OutputLog` | McosShellCards.kt | 事件流控制台（上限 1000 行） |
-| 四个 AlertDialog | McosApp.kt | 运行确认（08 §5）/ Agent 计划审批（06 §11）/ 安装权限预览 / Recipe 向导 + 更新权限 diff |
+```
+demo/
+├── MainActivity.kt · McosApplication.kt · McosTheme.kt   # 入口与共享主题（留根）
+├── shell/       McosApp.kt（导航 + 对话框）· McosViewModel.kt（架构核心）
+├── chat/        McosChatPage.kt
+├── skills/      SkillsPage（McosSkillsPage.kt）· SkillStore.kt（导入/持久化）
+├── mcp/         McpPage.kt（server 管理 + JSON 导入 + 逐工具勾选）
+├── tools/       McosShellCards.kt（StatusBar / DslInputCard / OutputLog 等）
+├── settings/    McosSettingsPage.kt · McosVendors.kt
+└── marketplace/ MarketplaceViewModel.kt · McosMarketplaceUi.kt
+```
+
+> 子包统一保留根包名 `…android.demo`，`PackageBoundariesTest` 按最长前缀匹配自动归属
+> 本模块,无需改健身测试。
+
+## UI 结构（NavigationBar 5 tab）
+
+| Tab | 页面文件 | 演示能力 |
+|-----|----------|----------|
+| **Chat** | chat/McosChatPage.kt | API key 管理（SecureStore）、provider 探活、NL→DSL 规划、Agent 模式;对话 + 事件日志 |
+| **Skills** | skills/McosSkillsPage.kt | Claude 风格 skill 包导入(SKILL.md / JSON 粘贴)、启用开关、删除、指令预览 —— 注入 planner 系统提示 |
+| **MCP** | mcp/McpPage.kt | server 增/删/开关/重连、**粘贴 `mcp.json` 批量导入**、展开后**逐个工具勾选** |
+| **Tools** | tools/McosShellCards.kt · marketplace/McosMarketplaceUi.kt | 插件状态 + 命令面板、marketplace 搜索/安装/卸载/Recipe、DSL 输入 + 实时 preview、事件流控制台 |
+| **Settings** | settings/McosSettingsPage.kt | LLM 厂商切换与凭据 |
+| 四个 AlertDialog | shell/McosApp.kt | 运行确认（08 §5）/ Agent 计划审批（06 §11）/ 安装权限预览 / Recipe 向导 + 更新权限 diff |
 
 ## ViewModel（架构核心）
 
 - `McosViewModel`：`attach(deps)` 随 Activity onCreate 重绑；`run()`（preview→execute→observe）、
   `chat()`（ChatOrchestrator + PromptInjectionDetector）、`agentTurn()/resumeAgentTurn()/
   cancelAgentTurn()`（多轮 Agent）、`respondConfirmation()`；MCP 块只把 `McpServerController`
-  结果映射到 UI。
+  结果映射到 UI(含 `importMcpJson()`、逐工具 `setMcpToolEnabled()`)。`chat()/agentTurn()`
+  构建 planner 时懒读 `SkillStore.enabled()` 传入 `skills=`,skill 列表变更后经版本号使
+  agent bridge 重建。
+- `SkillStore`（skills/）：SecureStore key `skills` 存 JSON 列表(含 enabled);
+  `SkillParser` 识别 SKILL.md(YAML frontmatter + 正文)或 JSON,不引额外依赖。
 - `MarketplaceViewModel`：search/install/uninstall/searchRecipes/prepareRecipe/submitRecipe/
   confirmUpdate；`registryRevision` 单调计数驱动命令面板刷新。
 - 测试全部纯 JVM（`McosViewModelAgentTest` 有 agentBridgeOverride 测试缝）。

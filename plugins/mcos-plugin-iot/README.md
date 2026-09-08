@@ -1,4 +1,4 @@
-# mcos-plugin-iot
+】# mcos-plugin-iot
 
 IoT / 智能家居插件 —— `home.*` + `iot.*` 命令面（[04-plugin-sdk.md §9](../../docs/en/04-plugin-sdk.md)）。
 

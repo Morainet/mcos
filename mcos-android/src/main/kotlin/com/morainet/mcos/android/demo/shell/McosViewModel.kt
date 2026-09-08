@@ -1,4 +1,4 @@
-package com.morainet.mcos.android.demo
+package com.morainet.mcos.android.demo.shell
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -12,6 +12,9 @@ import com.morainet.mcos.android.McpServerBridge
 import com.morainet.mcos.android.McpServerController
 import com.morainet.mcos.android.McpServerRecord
 import com.morainet.mcos.android.SkippedBridgedTool
+import com.morainet.mcos.android.demo.settings.LlmVendor
+import com.morainet.mcos.android.demo.settings.LlmVendors
+import com.morainet.mcos.android.demo.skills.SkillStore
 import com.morainet.mcos.android.host.AndroidLlmHttpTransport
 import com.morainet.mcos.runtime.api.McosRuntime
 import com.morainet.mcos.runtime.core.api.ConfirmationDecision
@@ -20,6 +23,7 @@ import com.morainet.mcos.runtime.core.api.Payload
 import com.morainet.mcos.runtime.core.api.RuntimeEvent
 import com.morainet.mcos.runtime.core.api.Source
 import com.morainet.mcos.llm.AgentBridge
+import com.morainet.mcos.llm.AgentSessionStore
 import com.morainet.mcos.llm.AgentTurnResult
 import com.morainet.mcos.llm.ChatOrchestrator
 import com.morainet.mcos.llm.LlmConfig
@@ -29,11 +33,13 @@ import com.morainet.mcos.llm.McosAgent
 import com.morainet.mcos.llm.OpenAiLlmProvider
 import com.morainet.mcos.llm.PromptInjectionDetector
 import com.morainet.mcos.llm.ProviderHealth
+import com.morainet.mcos.llm.Skill
 import com.morainet.mcos.plugin.mcp.McpAdapter
 import com.morainet.mcos.plugin.mcp.McpServerConfig
 import com.morainet.mcos.runtime.core.ir.ExecutionIr
 import com.morainet.mcos.runtime.core.ir.IrInvoke
 import com.morainet.mcos.runtime.core.plugin.LoadResult
+import com.morainet.mcos.sdk.SecureStore
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -95,6 +101,11 @@ data class McosUiState(
     val agentWorking: Boolean = false,
     /** Agent 计划待审批（PlanReady 预览文本）— 驱动 Agent 审批对话框。 */
     val pendingAgentPlan: String? = null,
+    /**
+     * 上一个 Agent 轮次的终态自包含结论行（[AgentTurnResult.TerminalResult.headline]）。
+     * 宿主直接渲染这一行即可显示"这轮干了什么",无需回扫 flat log。
+     */
+    val lastAgentOutcome: String? = null,
     // ── MCP bridge (04 §10 per-server enablement / 10 §6.2) ─────────────
     val mcpServers: List<McpServerUi> = emptyList(),
     val mcpNewId: String = "",
@@ -206,7 +217,7 @@ class McosViewModel : ViewModel() {
     private var skillStore: SkillStore? = null
 
     /** Enabled skills, read once at attach and refreshed after each skill edit. */
-    private var cachedSkills: List<com.morainet.mcos.llm.Skill> = emptyList()
+    private var cachedSkills: List<Skill> = emptyList()
     private var cachedSkillsVersion: String = ""
 
     private fun skills(): SkillStore =
@@ -242,6 +253,10 @@ class McosViewModel : ViewModel() {
             bridge = DemoMcpBridge(deps),
         )
         skillStore = SkillStore(deps.secureStore)
+        // Agent sessions persist suspended turns (06 §11.4) so a scheduled
+        // resume survives process death; restore them before any turn runs.
+        val sessions = agentSessions
+            ?: AgentSessionStore(SecureStoreAgentSuspension(deps.secureStore)).also { agentSessions = it }
         // Load persisted vendor settings once (migrating the legacy single
         // key into the OpenAI slot), then probe every configured vendor.
         if (!persistedKeyLoaded) {
@@ -250,8 +265,23 @@ class McosViewModel : ViewModel() {
                 restoreVendors(deps.secureStore)
                 restoreMcpServers()
                 restoreSkills()
+                restoreSuspendedAgentTurns(sessions)
             }
         }
+    }
+
+    /**
+     * Rehydrate suspended agent sessions from SecureStore and, for any whose
+     * resume time has already passed while the process was dead, re-enter the
+     * loop now (06 §11.4). A future-dated resume is left for its scheduled
+     * wake-up. Runs after the bridge can be built (needs an LLM config).
+     */
+    private suspend fun restoreSuspendedAgentTurns(sessions: AgentSessionStore) {
+        val restored = sessions.restore()
+        if (restored.isEmpty()) return
+        log("[${now()}] restored ${restored.size} suspended agent turn(s)")
+        // The demo keeps one session id ("main"); resume it immediately if present.
+        if (agentSessionId in restored) scheduleAgentResume(System.currentTimeMillis())
     }
 
     /**
@@ -260,7 +290,7 @@ class McosViewModel : ViewModel() {
      * and then removed. After loading, every vendor with a key is registered
      * and probed so the settings page shows real health.
      */
-    private suspend fun restoreVendors(store: com.morainet.mcos.sdk.SecureStore) {
+    private suspend fun restoreVendors(store: SecureStore) {
         // One-time migration: legacy key → openai vendor (only if not already set).
         val legacy = store.get(LEGACY_LLM_API_KEY)?.decodeToString()
         if (!legacy.isNullOrBlank() && store.get(vendorKeyKey(LlmVendors.DEFAULT_ID)) == null) {
@@ -713,7 +743,7 @@ class McosViewModel : ViewModel() {
 
     /**
      * Re-read the registry command list. Called after marketplace installs or
-     * uninstalls mutate the registry at runtime (see [MarketplaceViewModel]),
+     * uninstalls mutate the registry at runtime (see [com.morainet.mcos.android.demo.marketplace.MarketplaceViewModel]),
      * so the command palette reflects newly available commands without a
      * restart — the registry resolves live, there is no cache to invalidate.
      */
@@ -870,6 +900,13 @@ class McosViewModel : ViewModel() {
     private var agentBridgeKey: String? = null
 
     /**
+     * Shared across every bridge rebuild so a suspended turn's session (06 §11.4)
+     * outlives a vendor/config change. Backed by [SecureStoreAgentSuspension] so
+     * a suspension survives process death; restored once at attach.
+     */
+    private var agentSessions: AgentSessionStore? = null
+
+    /**
      * Test seam: when set, agent turns/resumes run against this bridge
      * instead of a real [McosAgent] (keeps the JVM unit tests network-free).
      */
@@ -957,6 +994,9 @@ class McosViewModel : ViewModel() {
             registry = deps().registry,
             injectionDetector = PromptInjectionDetector(),
             eventBus = deps().eventBus,
+            sessions = agentSessions
+                ?: AgentSessionStore(SecureStoreAgentSuspension(deps().secureStore))
+                    .also { agentSessions = it },
         )
         agentBridge = bridge
         agentBridgeKey = cacheKey
@@ -965,25 +1005,56 @@ class McosViewModel : ViewModel() {
 
     /** Surface one streamed Agent state on the console (and dialogs). */
     private fun handleAgentResult(result: AgentTurnResult) {
+        // Non-terminal progress: log the detail, don't touch the outcome line.
+        if (result is AgentTurnResult.Probing) {
+            log("[${now()}] ⌖ probe: ${result.observation.replace("\n", " | ").take(120)}")
+            log("[${now()}] ↻ ${result.nextAction}")
+            return
+        }
+        // Terminal states carry a self-contained headline: record it verbatim
+        // as the turn outcome, then log any state-specific detail below it.
+        if (result is AgentTurnResult.TerminalResult) {
+            _uiState.update { it.copy(lastAgentOutcome = result.headline) }
+        }
         when (result) {
-            is AgentTurnResult.Probing -> {
-                log("[${now()}] ⌖ probe: ${result.observation.replace("\n", " | ").take(120)}")
-                log("[${now()}] ↻ ${result.nextAction}")
-            }
+            is AgentTurnResult.Probing -> Unit // handled above
             is AgentTurnResult.PlanReady -> {
                 val preview = describeIr(result.ir)
                 _uiState.update { it.copy(pendingAgentPlan = preview) }
-                log(
-                    "[${now()}] Plan ready" +
-                        (if (result.needsConfirmation) " — needs approval" else "") + ":",
-                )
+                log("[${now()}] ${result.headline}")
                 log(preview)
             }
-            is AgentTurnResult.Clarify -> log("[${now()}] ? ${result.question}")
-            is AgentTurnResult.Refuse ->
-                log("[ERROR] Agent refused (${result.category}): ${result.reason}")
-            is AgentTurnResult.Declined -> log("[${now()}] ✗ Declined: ${result.reason}")
-            is AgentTurnResult.Done -> log("[${now()}] ✓ ${result.summary}")
+            is AgentTurnResult.Clarify -> log("[${now()}] ? ${result.headline}")
+            is AgentTurnResult.Refuse -> log("[ERROR] ${result.headline}")
+            is AgentTurnResult.Declined -> log("[${now()}] ✗ ${result.headline}")
+            is AgentTurnResult.Done -> log("[${now()}] ✓ ${result.headline}")
+            is AgentTurnResult.Suspended -> {
+                log("[${now()}] ⏸ ${result.headline}")
+                scheduleAgentResume(result.resumeAtEpochMs)
+            }
+        }
+    }
+
+    /**
+     * Demo-scope resume of a suspended turn (06 §11.4): wait until the agent's
+     * chosen wall-clock time, then re-enter the loop via [AgentBridge.resumeSuspended].
+     * A production host would arm a `WakeScheduler` alarm so the resume survives
+     * process death; the foreground demo simply delays within [viewModelScope].
+     */
+    private fun scheduleAgentResume(resumeAtEpochMs: Long) {
+        val bridge = agentBridgeOverride ?: agentBridge ?: return
+        viewModelScope.launch {
+            val waitMs = (resumeAtEpochMs - System.currentTimeMillis()).coerceAtLeast(0L)
+            if (waitMs > 0) kotlinx.coroutines.delay(waitMs)
+            _uiState.update { it.copy(isExecuting = true, agentWorking = true) }
+            try {
+                log("[${now()}] ↻ resuming suspended turn…")
+                bridge.resumeSuspended(agentSessionId).collect { handleAgentResult(it) }
+            } catch (e: Exception) {
+                log("[ERROR] ${e.javaClass.simpleName}: ${e.message}")
+            } finally {
+                _uiState.update { it.copy(isExecuting = false, agentWorking = false) }
+            }
         }
     }
 

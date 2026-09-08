@@ -1,6 +1,7 @@
 package com.morainet.mcos.android.demo
 
 import androidx.lifecycle.viewModelScope
+import com.morainet.mcos.android.demo.shell.McosViewModel
 import com.morainet.mcos.llm.AgentBridge
 import com.morainet.mcos.llm.AgentTurnResult
 import com.morainet.mcos.runtime.core.ir.ExecutionIr
@@ -31,7 +32,7 @@ import org.junit.rules.TestWatcher
 import org.junit.runner.Description
 
 /**
- * Tests for the Agent-loop wiring in [McosViewModel] (06-agent.md §11 +
+ * Tests for the Agent-loop wiring in [com.morainet.mcos.android.demo.shell.McosViewModel] (06-agent.md §11 +
  * §17 shell integration).
  *
  * UI1 probe progress → plan preview · UI2 Allow → execution summary ·
@@ -83,7 +84,11 @@ class McosViewModelAgentTest {
         )
         bridge.turnResults = flowOf(
             AgentTurnResult.Probing("photo.search → {count:47}", "Replanning with observations…"),
-            AgentTurnResult.PlanReady(ir, needsConfirmation = true),
+            AgentTurnResult.PlanReady(
+                ir,
+                needsConfirmation = true,
+                headline = "Plan needs approval: photo.search, photo.enhance",
+            ),
         )
 
         startAgentTurn("find and enhance my photos")
@@ -100,6 +105,11 @@ class McosViewModelAgentTest {
         assertTrue("replan action is logged", vm.events.value.any { it.contains("Replanning") })
         assertTrue("confirmation hint is logged", vm.events.value.any { it.contains("needs approval") })
         assertFalse("progress indicator cleared at turn end", state.agentWorking)
+        assertEquals(
+            "terminal headline surfaced verbatim as the turn outcome",
+            "Plan needs approval: photo.search, photo.enhance",
+            state.lastAgentOutcome,
+        )
     }
 
     @Test
@@ -108,12 +118,15 @@ class McosViewModelAgentTest {
             AgentTurnResult.PlanReady(
                 ExecutionIr.Invoke(IrInvoke(id = "photo.enhance")),
                 needsConfirmation = true,
+                headline = "Plan needs approval: photo.enhance",
             )
         )
         startAgentTurn("enhance my photo")
         withTimeout(10_000) { vm.uiState.first { it.pendingAgentPlan != null } }
 
-        bridge.resumeResults = { flowOf(AgentTurnResult.Done("Executed 1 command(s) successfully")) }
+        bridge.resumeResults = {
+            flowOf(AgentTurnResult.Done("Executed 1 command(s) successfully: photo.enhance"))
+        }
         vm.resumeAgentTurn(true)
         withTimeout(10_000) { vm.uiState.first { !it.isExecuting } }
 
@@ -131,6 +144,7 @@ class McosViewModelAgentTest {
             AgentTurnResult.PlanReady(
                 ExecutionIr.Invoke(IrInvoke(id = "photo.enhance")),
                 needsConfirmation = true,
+                headline = "Plan needs approval: photo.enhance",
             )
         )
         startAgentTurn("enhance my photo")
@@ -143,6 +157,32 @@ class McosViewModelAgentTest {
         assertEquals("Deny forwards rejection to the bridge", false, bridge.lastApproved)
         assertNull(vm.uiState.value.pendingAgentPlan)
         assertTrue("decline is logged", vm.events.value.any { it.contains("Declined") })
+    }
+
+    @Test
+    fun `UI4-suspended turn records the headline and auto-resumes`() = runBlocking {
+        // Resume time already in the past → the scheduled delay is ~0.
+        bridge.turnResults = flowOf(
+            AgentTurnResult.Suspended(
+                resumeAtEpochMs = System.currentTimeMillis() - 1,
+                reason = "still downloading",
+                headline = "Suspended for 30s (still downloading); will re-evaluate",
+            )
+        )
+        bridge.resumeSuspendedResults = flowOf(
+            AgentTurnResult.Done("Executed 1 command(s) successfully: photo.enhance"),
+        )
+
+        startAgentTurn("enhance when the download finishes")
+        // The suspension is logged and, since the resume time is already past,
+        // the demo auto-resumes via resumeSuspended to the terminal Done outcome.
+        withTimeout(10_000) {
+            vm.uiState.first { it.lastAgentOutcome?.contains("Executed") == true && !it.isExecuting }
+        }
+
+        assertEquals("the demo re-entered via resumeSuspended", 1, bridge.resumeSuspendedCalls)
+        assertTrue("suspension is logged", vm.events.value.any { it.contains("Suspended") })
+        assertTrue("resume is logged", vm.events.value.any { it.contains("resuming suspended") })
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────
@@ -161,9 +201,12 @@ private class FakeAgentBridge : AgentBridge {
     var turnResults: Flow<AgentTurnResult> = emptyFlow()
     var resumeResults: (Boolean) -> Flow<AgentTurnResult> = { emptyFlow() }
 
+    var resumeSuspendedResults: Flow<AgentTurnResult> = emptyFlow()
+
     var lastSession: String? = null
     var lastMessage: String? = null
     var lastApproved: Boolean? = null
+    var resumeSuspendedCalls = 0
 
     override fun runTurn(sessionId: String, userMessage: String): Flow<AgentTurnResult> {
         lastSession = sessionId
@@ -178,5 +221,11 @@ private class FakeAgentBridge : AgentBridge {
 
     override suspend fun cancel(sessionId: String) {
         // no-op: the kernel-side cancel path is covered by AgentLoopTest A9.
+    }
+
+    override fun resumeSuspended(sessionId: String): Flow<AgentTurnResult> {
+        resumeSuspendedCalls++
+        lastSession = sessionId
+        return resumeSuspendedResults
     }
 }
