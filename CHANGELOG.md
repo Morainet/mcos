@@ -14,12 +14,14 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ### 发布流水线：Central deployment 文件数治理（2026-09-08）
 
-v0.0.4 / v0.0.5 的 deployment 被 Central 以「文件数超出 1000」驳回（实测 1140）。发布 bundle 是普通文件仓库，有两处放大：
+v0.0.5 发布成功，但 bundle 文件数达到 1140，逼近 Central 的 1000 文件上限，需要压缩。发布 bundle 是普通文件仓库，有两处放大：
 
 - **历史残留**：`build/central-bundle` 只写不清，一次遗留的 `0.0.0-ci` 发布就贡献了 235 个文件。现在发布前先 `rm -rf` 该目录。
-- **校验和放大**：Gradle 为每个产物与每个 `.asc` 各生成 md5/sha1/sha256/sha512 四个校验和，约 114 个主产物被放大成 1140 个文件。现在打包前删除 `*.md5` / `*.sha1`（Central 接受 sha256/sha512），预计降到 ~684。
+- **校验和放大**：Gradle 为每个产物与每个 `.asc` 各生成 md5/sha1/sha256/sha512 四个校验和，约 114 个主产物被放大成 1140 个文件。
 
-同时把 bundle 文件数写入 job summary，并**超过 900 直接让 job 失败** —— 上限从此在 CI 里可见并强制，不再等到 Central 异步校验才发现。
+**Central 到底要哪些校验和**，由 0.0.6 首次失败的反证确定：12 个组件共 120 条错误，清一色是 `Missing md5 checksum` / `Missing sha1 checksum`，没有一条提到更强的摘要 —— 所以 **md5 + sha1 是强制项，sha256 / sha512 只是可选附加**。正确做法是删除可选的 `*.sha256` / `*.sha512`（首次尝试误删了 md5/sha1，导致 0.0.6 组件校验全部失败，已修正）：每个主产物从 10 个文件降到 6 个，预计 1140 → ~684。
+
+同时把 bundle 文件数写入 job summary，并**超过 1000 直接让 job 失败** —— 上限从此在 CI 里可见并强制，不再等到 Central 异步校验才发现。
 
 ## [0.0.5] - 2026-09-08
 
