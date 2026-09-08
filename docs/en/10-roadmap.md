@@ -844,6 +844,41 @@ Performance budgets are enforced via a benchmark suite (`mcos-runtime/benchmarks
 
 ---
 
+## 17. Kernel 1.0 Stabilization Gate
+
+> **Origin:** issue #14 — an external architecture review (2026-09-08). Its central finding was that *feature velocity is outrunning core-model stability*, and that the project is decided by exactly three things: **Command Protocol, Runtime Semantics, Plugin Contract**. That finding is adopted here as an explicit cross-phase milestone. The review's other recommendations already matched the shipped state (conformance gate, plugin lifecycle, process isolation, multi-vendor planner, MCP-as-adapter — see [11 §6](./11-implementation-status.md)); the two that were **not** yet explicit were ecosystem maturity and this gate.
+
+### 17.0 What Freezes
+
+Kernel 1.0 is **not** a feature release. It is the moment the three contracts below stop moving, so plugin authors and Host ports can build against MCOS without re-validating on every merge.
+
+| Contract | Surface | "Frozen" means |
+|---|---|---|
+| **Command Protocol** | DSL grammar, IR shape, error-code table, `dslVersion` (02 §6, §7, §14, §15) | A shape change requires a new `dslVersion` minor + a migration note. A silent shape change is a bug, not a refactor. |
+| **Runtime Semantics** | Executor stage order, permission/egress decisions, scheduler lanes & cancellation, audit record shape (03 §8, §9, §13) | Observable behavior is pinned by tests. Reordering a stage must be argued as a spec revision, never as an optimization. |
+| **Plugin Contract** | `McosPlugin` / `CommandHandler` / `HostServices` / `ExecutionContext` / manifest schema (04 §3–§6) | Additive only — a new optional capability or optional manifest field. Anything breaking needs a major version bump. |
+
+**Explicitly out of scope of the freeze:** anything layered *on* the kernel — marketplace, recipe store, planner providers, Memory, Host ports (Android/iOS/desktop), and new plugins. Those keep moving; the kernel under them does not.
+
+### 17.1 Exit Criteria
+
+- [ ] Every surface in §17.0 has a conformance case that **fails** when the surface changes — `mcos-conformance` is the regression gate (10 §6.4, 09 §5.1) and `./gradlew :mcos-conformance:conformance` runs in CI.
+- [ ] The golden DSL↔IR fixtures (`docs/fixtures/`, 8 cases) stay green and unchanged for one full release cycle.
+- [ ] The optional-capability pattern is complete: **every** capability a Host may lack is nullable with a documented `UNAVAILABLE` degradation — no fabricated success anywhere in the tree.
+- [ ] The error-code table (02 §15) has no unassigned or ambiguous codes; every code has at least one test asserting it.
+- [ ] Protocol versioning (02 §14) is documented as *the* mechanism for change, with no silent evolution path left.
+
+### 17.2 Governance While the Gate Is Open
+
+- **Docs lead** (§1.1 principle 5): after freeze, any behavioral change ships with a spec revision **and** a CHANGELOG entry in the same PR — code never silently diverges.
+- **Feature pause is scoped**: new *protocol-surface* work (a new IR node, a new executor stage, a new mandatory manifest field) is deferred until the gate closes. Ecosystem work — marketplace, third-party plugins, Host ports, deployment — is explicitly **not** blocked, because it does not touch the frozen surface.
+
+### 17.3 Status
+
+**Proposed.** The residual work per contract surface is tracked in the "next up" list of [11-implementation-status.md](./11-implementation-status.md) — notably device-mutex key canonicalization (Runtime Semantics) and the isolated-process capability gaps (Plugin Contract). Closing that list closes this gate.
+
+---
+
 ## Document Index
 
 | # | Doc |

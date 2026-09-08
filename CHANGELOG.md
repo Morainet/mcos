@@ -10,6 +10,12 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### 路线图：Kernel 1.0 稳定门（10 §17，采纳自 issue #14）
+
+- 外部架构评审 issue #14 的核心结论 —— 功能增长快于核心模型稳定，决定项目成立与否的只有 Command Protocol / Runtime Semantics / Plugin Contract —— 落地为 `10-roadmap` §17 的显式跨阶段里程碑：定义三份契约的冻结范围、退出标准（`mcos-conformance` 作为回归门）、门开启期间的治理（协议表面工作暂缓，生态/市场/宿主移植工作明确不受阻）。EN/ZH 同步。
+- `11-implementation-status`（EN/ZH）的"下一步"清单与该门对齐：当前卡住冻结的两项是**设备互斥键规范化**（03 §8.5，键仍是字面量，待完整 Stage-4 Expand）与**隔离进程能力缺口**（04 §6.1/§6.7–6.11，如 `userFiles` 跨 Binder 为 null）。
+- 评审其余建议经核对均为已交付状态（一致性门禁 65 例、插件生命周期与崩溃隔离、进程隔离 item 36-50、多厂商 planner、MCP 仅作 adapter），已在 issue 下逐条回复说明，无需新增代码。
+
 ### 用户授予的沙箱外文件访问——系统选择器能力（04 §6.1，item 58）
 
 补上宿主能力图谱里最后一个 §6.1 🟡:此前插件只能触达自己的沙箱或只读媒体库,"用户通过系统选择器授予沙箱外访问"一直被推迟为宿主工作。
