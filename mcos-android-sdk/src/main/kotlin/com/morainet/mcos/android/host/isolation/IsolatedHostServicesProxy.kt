@@ -61,9 +61,12 @@ import java.util.Base64
  *   system picker on the main side; they surface an honest `UNAVAILABLE`
  *   failure rather than a silent no-op.
  * - optional capabilities (`notifications`, `media`, `deviceInfo`,
- *   `clipboard`, `haptics`, `events`) — null, following the §6.7-§6.11
- *   optional-capability pattern: plugins degrade to `UNAVAILABLE`, never
- *   fabricate.
+ *   `clipboard`, `haptics`, `events`, `userFiles`) — null, following the
+ *   §6.7-§6.11 optional-capability pattern: plugins degrade to
+ *   `UNAVAILABLE`, never fabricate. (`userFiles` — user-granted
+ *   out-of-sandbox files, 04 §6.1 — additionally needs main-process picker
+ *   UI plus cross-process token minting; wire ops for it are future work,
+ *   so isolated plugins always re-pick in-process or surface UNAVAILABLE.)
  *
  * A remote denial (the shared error envelope) is re-thrown as the original
  * [McosException] — code, message, retryable, and `details.reason` survive

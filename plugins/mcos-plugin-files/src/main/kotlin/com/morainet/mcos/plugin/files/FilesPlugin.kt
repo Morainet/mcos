@@ -261,6 +261,53 @@ class FilesPlugin : McosPlugin {
                         })
                     })
                 }
+            ),
+            // ─── User-granted files (04-plugin-sdk.md 6.1) ─────────────────
+            // Out-of-sandbox access the USER grants through the system
+            // picker — the picker dialog is the consent moment. Hosts
+            // without a picker surface UNAVAILABLE, never fake success.
+            CommandManifestEntry(
+                id = "file.pick", version = "1.0.0",
+                title = "Pick User File",
+                description = "Ask the user to pick a file via the system picker (the user's explicit grant)",
+                sideEffectClass = SideEffectClass.read,
+                timeoutMs = 120000,
+                examples = listOf(
+                    "file.pick()",
+                    """file.pick(mimeTypes=["text/plain"])"""
+                ),
+                inputSchema = buildJsonObject {
+                    put("type", JsonPrimitive("object"))
+                    put("properties", buildJsonObject {
+                        put("mimeTypes", buildJsonObject {
+                            put("type", JsonPrimitive("array"))
+                            put("items", buildJsonObject {
+                                put("type", JsonPrimitive("string"))
+                            })
+                            put("maxItems", JsonPrimitive(8))
+                            put("description", JsonPrimitive("Picker MIME filters, e.g. [\"text/plain\"] (default: [\"*/*\"])"))
+                        })
+                    })
+                }
+            ),
+            CommandManifestEntry(
+                id = "file.read_granted", version = "1.0.0",
+                title = "Read Granted File",
+                description = "Read a text file the user granted via file.pick",
+                sideEffectClass = SideEffectClass.read,
+                timeoutMs = 15000,
+                examples = listOf("""file.read_granted(ref="ug-...")"""),
+                inputSchema = buildJsonObject {
+                    put("type", JsonPrimitive("object"))
+                    put("required", buildJsonArray { add(JsonPrimitive("ref")) })
+                    put("properties", buildJsonObject {
+                        put("ref", buildJsonObject {
+                            put("type", JsonPrimitive("string"))
+                            put("minLength", JsonPrimitive(1))
+                            put("description", JsonPrimitive("Grant ref returned by file.pick"))
+                        })
+                    })
+                }
             )
         ),
         namespaces = listOf("file", "photo")
@@ -284,7 +331,9 @@ class FilesPlugin : McosPlugin {
         "file.write" to FileWriteHandler(),
         "file.read" to FileReadHandler(),
         "file.stat" to FileStatHandler(),
-        "file.delete" to FileDeleteHandler()
+        "file.delete" to FileDeleteHandler(),
+        "file.pick" to FilePickHandler(),
+        "file.read_granted" to FileReadGrantedHandler()
     )
 
     // ─── Handlers ────────────────────────────────────────────────────────
@@ -573,9 +622,103 @@ class FilesPlugin : McosPlugin {
         }
     }
 
+    // ─── User-granted file handlers (04-plugin-sdk.md 6.1) ────────────────
+    //
+    // Like the sandbox handlers above, these read the capability from
+    // ctx.services — the Executor's per-execution view — because the
+    // runtime layers per-plugin token scoping over it exactly where it
+    // layers sandbox namespacing; the onLoad field would carry the raw
+    // host-wide service and defeat the scoping.
+
+    inner class FilePickHandler : CommandHandler {
+        override suspend fun invoke(ctx: ExecutionContext): CommandResult {
+            val args = ctx.args.jsonObject
+            val mimeTypes = args["mimeTypes"]?.jsonArray
+                ?.map { it.jsonPrimitive.content }
+                ?.takeIf { it.isNotEmpty() }
+                ?: listOf("*/*")
+
+            val userFiles = ctx.services.userFiles
+                ?: throw McosException("UNAVAILABLE", "User file picking is not available on this host")
+            val grant = userFiles.pickForRead(mimeTypes)
+                // Cancel is a user-intent signal the planner can act on
+                // ("pick something else / stop"), not a failure — an Ok
+                // with picked:false, unlike camera.capture's CANCELLED.
+                ?: return CommandResult.Ok(
+                    value = buildJsonObject { put("picked", JsonPrimitive(false)) }
+                )
+
+            return CommandResult.Ok(
+                value = buildJsonObject {
+                    put("picked", JsonPrimitive(true))
+                    put("ref", JsonPrimitive(grant.ref))
+                    grant.name?.let { put("name", JsonPrimitive(it)) }
+                    grant.mimeType?.let { put("mimeType", JsonPrimitive(it)) }
+                    grant.sizeBytes?.let { put("size", JsonPrimitive(it)) }
+                },
+                // The consent event the audit trail keeps (Ok values are
+                // not recorded; artifacts are). The token, never the raw
+                // host ref.
+                artifacts = listOf(
+                    Artifact(type = "user-file-grant", uri = grant.ref, mimeType = grant.mimeType)
+                ),
+            )
+        }
+    }
+
+    inner class FileReadGrantedHandler : CommandHandler {
+        override suspend fun invoke(ctx: ExecutionContext): CommandResult {
+            val args = ctx.args.jsonObject
+            val ref = args["ref"]?.jsonPrimitive?.content
+                ?: throw McosException("SCHEMA_VIOLATION", "Missing required arg: ref")
+
+            val userFiles = ctx.services.userFiles
+                ?: throw McosException("UNAVAILABLE", "User file picking is not available on this host")
+            // Size check from stat BEFORE loading — reading first would
+            // defeat the cap and risk an OOM on a multi-megabyte pick
+            // (same surface-bound posture as file.read).
+            val entry = userFiles.statGranted(ref)
+                ?: throw McosException("files.not_found", "No granted file for ref: $ref")
+            entry.sizeBytes?.let { size ->
+                if (size > GRANT_MAX_FILE_BYTES) {
+                    throw McosException(
+                        code = "files.too_large",
+                        message = "Granted file exceeds the ${GRANT_MAX_FILE_BYTES / 1024} KiB command limit: ${entry.name ?: ref}",
+                    )
+                }
+            }
+            val bytes = userFiles.readGranted(ref)
+                ?: throw McosException("files.not_found", "No granted file for ref: $ref")
+            // Belt-and-braces for hosts whose stat cannot report a size
+            // (cloud document providers legitimately return null SIZE).
+            if (bytes.size > GRANT_MAX_FILE_BYTES) {
+                throw McosException(
+                    code = "files.too_large",
+                    message = "Granted file exceeds the ${GRANT_MAX_FILE_BYTES / 1024} KiB command limit: ${entry.name ?: ref}",
+                )
+            }
+
+            return CommandResult.Ok(
+                value = buildJsonObject {
+                    put("ref", JsonPrimitive(ref))
+                    put("size", JsonPrimitive(bytes.size.toLong()))
+                    put("text", JsonPrimitive(bytes.decodeToString()))
+                }
+            )
+        }
+    }
+
     companion object {
         /** Command-surface cap for sandbox text payloads (input AND output). */
         const val MAX_FILE_BYTES: Int = 1024 * 1024
+
+        /**
+         * Command-surface cap for user-granted file reads — separate from
+         * [MAX_FILE_BYTES] so the two can diverge deliberately: this one
+         * bounds how much user-chosen content a command may return into
+         * the conversation, the sandbox one bounds plugin storage payload.
+         */
+        const val GRANT_MAX_FILE_BYTES: Int = 1024 * 1024
 
         /**
          * Anchored glob match for `*` (any run) and `?` (exactly one char).

@@ -33,6 +33,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -426,5 +427,152 @@ class ScopedFacadeTest {
         assertEquals(1, net.requestCount)
         assertEquals("Bearer top-secret", net.lastHeaders["Authorization"], "inner §9.2 resolution still runs")
         assertNull(net.lastBody)
+    }
+
+    // ─── SF16–SF24: user-file grant scoping (04-plugin-sdk.md 6.1) ──────
+
+    /** Wraps the static reference impl and counts delegate touches. */
+    private class CountingGrantService : com.morainet.mcos.sdk.UserFileGrantService {
+        val delegate = com.morainet.mcos.sdk.StaticUserFileGrantService()
+        var statTouches = 0
+        var readTouches = 0
+
+        fun seed(ref: String, content: ByteArray, mime: String? = "text/plain") {
+            delegate.seed(
+                com.morainet.mcos.sdk.UserFileGrant(ref = ref, name = "picked.bin", mimeType = mime),
+                content,
+            )
+        }
+
+        override suspend fun pickForRead(mimeTypes: List<String>): com.morainet.mcos.sdk.UserFileGrant? =
+            delegate.pickForRead(mimeTypes)
+
+        override suspend fun statGranted(ref: String): com.morainet.mcos.sdk.UserFileGrant? {
+            statTouches++
+            return delegate.statGranted(ref)
+        }
+
+        override suspend fun readGranted(ref: String): ByteArray? {
+            readTouches++
+            return delegate.readGranted(ref)
+        }
+
+        override suspend fun releaseGranted(ref: String): Boolean = delegate.releaseGranted(ref)
+    }
+
+    @Test
+    fun `SF16-pick mints an opaque token and preserves the grant metadata`() = runBlocking {
+        val host = CountingGrantService().apply { seed("content://docs/123", "hello".toByteArray()) }
+        val scoped = PluginScopedUserFileGrants(host, "some.plugin", UserGrantRegistry())
+
+        val grant = scoped.pickForRead()!!
+
+        assertTrue(grant.ref.startsWith("ug-"), "token must be runtime-minted: ${grant.ref}")
+        assertTrue(grant.ref != "content://docs/123", "the raw ref must never cross to the plugin")
+        assertEquals("picked.bin", grant.name)
+    }
+
+    @Test
+    fun `SF17-a token redeems across decorator instances sharing the registry`() = runBlocking {
+        // file.pick and file.read_granted are separate command executions —
+        // two decorator instances (fresh per command) over one registry.
+        val host = CountingGrantService().apply { seed("content://docs/123", "hello".toByteArray()) }
+        val shared = UserGrantRegistry()
+        val picker = PluginScopedUserFileGrants(host, "some.plugin", shared)
+        val reader = PluginScopedUserFileGrants(host, "some.plugin", shared)
+
+        val token = picker.pickForRead()!!.ref
+        assertEquals("hello".toByteArray().toList(), reader.readGranted(token)!!.toList())
+    }
+
+    @Test
+    fun `SF18-an unknown token resolves to null without touching the delegate`() = runBlocking {
+        val host = CountingGrantService()
+        val scoped = PluginScopedUserFileGrants(host, "some.plugin", UserGrantRegistry())
+
+        assertNull(scoped.statGranted("ug-ffffffff-ffff-ffff-ffff-ffffffffffff"))
+        assertNull(scoped.readGranted("ug-ffffffff-ffff-ffff-ffff-ffffffffffff"))
+        assertEquals(0, host.statTouches)
+        assertEquals(0, host.readTouches)
+    }
+
+    @Test
+    fun `SF19-a raw content uri smuggled as a ref never reaches the delegate`() = runBlocking {
+        val host = CountingGrantService().apply { seed("content://docs/123", "hello".toByteArray()) }
+        val scoped = PluginScopedUserFileGrants(host, "some.plugin", UserGrantRegistry())
+
+        // The obvious smuggling attempt: hand the host's raw ref straight
+        // back. Tokens are the only currency — it must land in not-found.
+        assertNull(scoped.readGranted("content://docs/123"))
+        assertEquals(0, host.readTouches)
+    }
+
+    @Test
+    fun `SF20-cross-plugin redemption is a hard PERMISSION_DENIED`() = runBlocking {
+        val host = CountingGrantService().apply { seed("content://docs/123", "secret".toByteArray()) }
+        val shared = UserGrantRegistry()
+        val owner = PluginScopedUserFileGrants(host, "plugin.a", shared)
+        val attacker = PluginScopedUserFileGrants(host, "plugin.b", shared)
+
+        val token = owner.pickForRead()!!.ref
+        val e = assertFailsWith<McosException> { attacker.readGranted(token) }
+        assertEquals("PERMISSION_DENIED", e.code)
+        assertEquals("grant_not_authorized", e.details["reason"]?.jsonPrimitive?.content)
+        assertEquals(0, host.readTouches, "the delegate must not be consulted on a foreign token")
+        assertEquals("secret".toByteArray().toList(), owner.readGranted(token)!!.toList())
+    }
+
+    @Test
+    fun `SF21-release drops the token and a second release is false`() = runBlocking {
+        val host = CountingGrantService().apply { seed("content://docs/123", "hello".toByteArray()) }
+        val scoped = PluginScopedUserFileGrants(host, "some.plugin", UserGrantRegistry())
+
+        val token = scoped.pickForRead()!!.ref
+        assertTrue(scoped.releaseGranted(token))
+        assertFalse(scoped.releaseGranted(token))
+        assertNull(scoped.readGranted(token))
+    }
+
+    @Test
+    fun `SF22-a user cancel mints nothing`() = runBlocking {
+        val host = CountingGrantService()
+        val registry = UserGrantRegistry()
+        val scoped = PluginScopedUserFileGrants(host, "some.plugin", registry)
+
+        assertNull(scoped.pickForRead())
+        assertNull(scoped.readGranted("ug-anything"))
+    }
+
+    @Test
+    fun `SF23-a host that cannot pick propagates its UNAVAILABLE`() = runBlocking {
+        val host = object : com.morainet.mcos.sdk.UserFileGrantService {
+            override suspend fun pickForRead(mimeTypes: List<String>): com.morainet.mcos.sdk.UserFileGrant? =
+                throw McosException("UNAVAILABLE", "no picker")
+            override suspend fun statGranted(ref: String) = null
+            override suspend fun readGranted(ref: String): ByteArray? = null
+            override suspend fun releaseGranted(ref: String) = false
+        }
+        val scoped = PluginScopedUserFileGrants(host, "some.plugin", UserGrantRegistry())
+
+        val e = assertFailsWith<McosException> { scoped.pickForRead() }
+        assertEquals("UNAVAILABLE", e.code)
+    }
+
+    @Test
+    fun `SF24-the registry evicts a plugin's oldest grant at the per-plugin cap`() = runBlocking {
+        val host = CountingGrantService()
+        val cap = UserGrantRegistry.MAX_GRANTS_PER_PLUGIN
+        for (i in 0 until cap + 1) {
+            host.seed("content://docs/$i", i.toString().toByteArray())
+        }
+        val scoped = PluginScopedUserFileGrants(host, "some.plugin", UserGrantRegistry())
+
+        val tokens = (0 until cap + 1).map { scoped.pickForRead()!!.ref }
+        assertNull(scoped.readGranted(tokens.first()), "oldest grant evicted at cap")
+        assertEquals(
+            cap.toString().toByteArray().toList(),
+            scoped.readGranted(tokens.last())!!.toList(),
+            "newest grant still redeemable",
+        )
     }
 }

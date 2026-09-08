@@ -96,6 +96,15 @@ class Executor(
     private val schemaValidator = SchemaValidator()
 
     /**
+     * Executor-lifetime table of user-granted file tokens (04-plugin-sdk.md
+     * 6.1) — shared by every [PluginScopedUserFileGrants] facade this
+     * Executor composes, so a grant minted by one command's `file.pick` is
+     * redeemable by the plugin's later `file.read_granted` execution and by
+     * nothing else.
+     */
+    private val userGrantRegistry = UserGrantRegistry()
+
+    /**
      * Plugin ids whose best-effort in-process fallback ([08-security.md §8.1])
      * has already been audited, so the `plugin.isolation_fallback` record is
      * emitted once per plugin per Executor rather than on every invocation.
@@ -637,6 +646,11 @@ class Executor(
             // resolved inside the plugin's own namespace directory.
             override val sandbox: SandboxFileService? =
                 original.sandbox?.let { NamespacedSandbox(it, pluginId) }
+            // User-granted files are per-plugin too: every pick is re-minted
+            // as an opaque token bound to this plugin, so a grant is
+            // redeemable only by the plugin the user chose for (04 §6.1).
+            override val userFiles: UserFileGrantService? =
+                original.userFiles?.let { PluginScopedUserFileGrants(it, pluginId, userGrantRegistry) }
         }
     }
 

@@ -343,7 +343,7 @@ IR 的 `meta` 字段（[02 §8.2](./02-command-protocol.md)）—— `source`、
 
 ## 6. HostServices（面向插件的门面）
 
-> ✅ **Implementation status:** `HostServices` 与 §6.1–6.6 全部接口已在 `mcos-sdk` 落地（JVM 桩 + `mcos-android` 真实现）。**§6.2/§6.4/§6.5 已完成全量签名对齐**（item 46）：`NetService.request(HttpRequest): HttpResponse`（字节体、`timeoutMs`、多值响应头）、字节值 + `keys()` 的 `SecureStore`、`now(): Instant` + `monotonicMs()` 的 `Clock`。剩余 v0.x 差异：实现用 `val` 属性（规范示意 `fun`）；`websocket()` 为规范标记的 P2，刻意未实现（诚实缺席而非假实现）；`Clock.nowMs()` 保留为派生便捷方法（epoch-ms 仍是 IR/审计/调度的线上格式）。§6.7–6.10 的可选能力为 v0.x 增补；§6.1 的作用域存储也已于 v0.x 以可选能力 `sandbox` 交付（见 §6.1 的 as-built 说明）。
+> ✅ **Implementation status:** `HostServices` 与 §6.1–6.6 全部接口已在 `mcos-sdk` 落地（JVM 桩 + `mcos-android` 真实现）。**§6.2/§6.4/§6.5 已完成全量签名对齐**（item 46）：`NetService.request(HttpRequest): HttpResponse`（字节体、`timeoutMs`、多值响应头）、字节值 + `keys()` 的 `SecureStore`、`now(): Instant` + `monotonicMs()` 的 `Clock`。剩余 v0.x 差异：实现用 `val` 属性（规范示意 `fun`）；`websocket()` 为规范标记的 P2，刻意未实现（诚实缺席而非假实现）；`Clock.nowMs()` 保留为派生便捷方法（epoch-ms 仍是 IR/审计/调度的线上格式）。§6.7–6.10 的可选能力为 v0.x 增补；§6.1 的作用域存储也已于 v0.x 以可选能力 `sandbox` 交付（见 §6.1 的 as-built 说明）。**§6.1 的第三个表面 —— `userFiles: UserFileGrantService?`（经系统选择器授予的沙箱外文件访问）—— 同样已于 v0.x 以可选能力交付**（item 58）：运行时把每次选择重新铸枚为按插件作用域的 token，因此授权只能被用户所选的那个插件兑换。
 
 插件应当依赖**门面（facades）**，而非整个 Android 框架。
 
@@ -367,6 +367,7 @@ interface HostServices {
     val haptics: HapticsService?              // §6.10
     val events: EventPublisher?               // §6.11
     val sandbox: SandboxFileService?          // §6.1 作用域存储（可选，v0.x）
+    val userFiles: UserFileGrantService?      // §6.1 用户授予文件（可选，v0.x）
 }
 ```
 
@@ -374,10 +375,11 @@ interface HostServices {
 
 ### 6.1 `FileService` / `SandboxFileService` —— 媒体访问与作用域存储
 
-As-built（v0.x），本节覆盖**两个表面**：
+As-built（v0.x），本节覆盖**三个表面**：
 
 - **`HostServices.files: FileService`** —— **媒体库门面**：对设备媒体库的只读查询（`list(uri)`、`searchPhotos(mimeType, afterMs, beforeMs, limit)`），由 `file.list` / `file.search` / `photo.search` / `photo.compress` 消费。它**不是**通用文件 API。
 - **`HostServices.sandbox: SandboxFileService?`** —— 本节最初规定的**作用域存储**，以可选能力交付（§6.7–6.11 模式：接口默认 null —— 无存储能力的宿主不覆写即保持 null，沙箱命令如实上报 `UNAVAILABLE`，绝不假成功）。所有路径均为插件相对路径，解析落在插件的**命名空间沙箱**内；插件无法读写自身目录之外的内容。参考实现为 `DirectorySandbox(root)` —— 纯 `java.nio`，其 JVM 测试套件覆盖的正是 Android 宿主运行的同一份代码（`filesDir/plugin-sandbox`）。
+- **`HostServices.userFiles: UserFileGrantService?`** —— **用户授予的沙箱外访问**（本节过去推迟到 V1 的"系统选择器"流程）。宿主打开平台文档选择器，用户把一个文档交给插件；**选择器对话框本身就是同意时刻**，因此不再需要独立的确认挑战。授权是**会话作用域**的 —— 生命周期与运行时进程等长，宿主重启后插件需重新选择（重新征得同意）。无选择器的宿主（纯 JVM、无界面的调度运行）保持 null，命令如实上报 `UNAVAILABLE`，绝不做假成功。
 
 ```kotlin
 interface SandboxFileService {
@@ -400,7 +402,32 @@ data class SandboxEntry(val path: String, val isDir: Boolean, val size: Long?)
 
 处理器返回的产出物应使用 `tempFile(...)` 或稳定的沙箱路径，然后返回 URI —— 切勿在 `CommandResult.Ok` 中内联字节（见 §7.3）。**密钥绝不落入沙箱** —— 它是明文的应用私有存储；请使用 `SecureStore`（§6.4、[08 §9](./08-security.md)）。
 
-> 🟡 **v0.x 差异（诚实记录）：** 上述字节 API 比最初的流式示意（`openInput`/`openOutput` → `InputFlow`/`OutputFlow`）更精简——这是本节自身记录的 drift（NetService/Clock 的同族 drift 已随 item 46 对齐关闭）；"用户通过系统选择器授予沙箱外访问"的流程属 V1 宿主工作；超出单次写入 1 MiB 上限的按插件配额尚未实现。
+**用户授予的文件 —— 契约。** 宿主打开平台选择器，插件手里始终只有一个不透明 token：
+
+```kotlin
+interface UserFileGrantService {
+    /** 打开系统选择器并挂起，直到用户选择或取消。 */
+    suspend fun pickForRead(mimeTypes: List<String> = listOf("*/*")): UserFileGrant?
+    suspend fun statGranted(ref: String): UserFileGrant?   // 未知/已撤销时返回 null
+    suspend fun readGranted(ref: String): ByteArray?       // 已撤销/无法打开时返回 null
+    suspend fun releaseGranted(ref: String): Boolean       // ref 未知时返回 false
+}
+
+data class UserFileGrant(
+    val ref: String,                 // 不透明 token，绝不是原始 content URI
+    val name: String? = null,
+    val mimeType: String? = null,
+    val sizeBytes: Long? = null,     // 提供商无法上报时为 null
+)
+```
+
+**Token 作用域化 —— 契约中属于运行时的一半** —— 插件永远看不到宿主的原始引用（Android 上是 `content://` URI）。Executor 的 Stage-4 门面把该能力包进 `PluginScopedUserFileGrants`：每次选择都被换成由**Executor 生命周期**的 `UserGrantRegistry` 铸枚的不透明 token（`ug-…`）（`file.pick` 与 `file.read_granted` 是两次独立执行，授权必须在两次之间存活），并在触碰宿主委托之前先按调用方插件解析 token。外来 token 是硬 `PERMISSION_DENIED`，`details.reason = "grant_not_authorized"` —— 与 `sandbox_escape` 同一哲学，且这次探测根本到不了宿主。正因为如此，处理器必须读 `ctx.services.userFiles`：`onLoad` 捕获到的是宿主全局服务，会绕过作用域化。注册表是**纯内存**的 —— 会话级授权不得活得比产生它的同意更久 —— 并按插件设上限（32 个，最旧的先丢）以约束增长。
+
+**命令面** —— `file.pick {mimeTypes?}`（read 级，120 s 超时 —— 用户在环内；用户取消是 `Ok {picked: false}`，**不是**失败，planner 可以接着问"换一个？"）与 `file.read_granted {ref}`（read 级；未知/已撤销 → `files.not_found`；超过 1 MiB 命令上限 → `files.too_large`，先在 stat 上于字节物化**之前**检查，读完再复查一次 —— 云盘提供商确实可能不报大小）。`file.pick` 产出 `type = "user-file-grant"` 的产出物，携带的是 **token** 而非原始 URI，既让同意事件进入审计轨迹，又不泄露宿主引用。
+
+`StaticUserFileGrantService` 是 `DirectorySandbox` 的 JVM 播种对应物 —— 测试预置"用户会选什么"，驱动的正是对 Android 宿主运行的同一份代码路径。
+
+> 🟡 **v0.x 差异（诚实记录）：** 上述字节 API 比最初的流式示意（`openInput`/`openOutput` → `InputFlow`/`OutputFlow`）更精简——这是本节自身记录的 drift（NetService/Clock 的同族 drift 已随 item 46 对齐关闭）；上述用户授予流程**仅在进程内实现** —— 隔离（独立进程）插件的 `userFiles` 保持 null，因为选择器需要主进程 UI、跨进程铸枚尚未有 wire op，因此它们上报 `UNAVAILABLE`（诚实的边界，而非假成功）；超出单次写入 1 MiB 上限的按插件配额尚未实现。
 
 ### 6.2 `NetService` —— 策略感知的 HTTP
 

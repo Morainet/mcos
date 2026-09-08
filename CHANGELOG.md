@@ -10,6 +10,16 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### 用户授予的沙箱外文件访问——系统选择器能力（04 §6.1，item 58）
+
+补上宿主能力图谱里最后一个 §6.1 🟡:此前插件只能触达自己的沙箱或只读媒体库,"用户通过系统选择器授予沙箱外访问"一直被推迟为宿主工作。
+
+- **契约**（`mcos-sdk`):`UserFileGrantService { pickForRead / statGranted / readGranted / releaseGranted }` + `UserFileGrant(ref, name, mimeType, sizeBytes)`;`HostServices.userFiles` 沿用 §6.7–6.11 可选能力模式(null → 命令上报 `UNAVAILABLE`,绝不假成功)。授权**会话作用域**——选择器对话框本身就是同意时刻,宿主重启后插件重新选择(重新征得同意);`StaticUserFileGrantService` 作为 JVM 播种对应物,让测试驱动 Android 宿主运行的同一份代码路径。
+- **运行时作用域化**（`mcos-runtime-core`):`UserGrantRegistry`(Executor 生命周期 + 纯内存 + `ug-…` token + 每插件 32 个 FIFO 淘汰)+ `PluginScopedUserFileGrants`——`userFiles` 侧的 `NamespacedSandbox`,由同一个 Stage-4 门面紧挨着组装;外来 token 是硬 `PERMISSION_DENIED`(`details.reason = "grant_not_authorized"`),根本到不了宿主委托。
+- **Android 宿主**（`mcos-android-sdk`):`AndroidUserFileGrantService` 基于 `ACTION_OPEN_DOCUMENT`,`Mutex` 单飞(结果桥只有一个待决槽位),被 deadline 取消时 `bridge.cancelPending()`;刻意**不**调 `takePersistableUriPermission`,会话作用域让应用远离平台 128/512 持久授权上限。
+- **命令面**（`mcos-plugin-files`):新增 `file.pick {mimeTypes?}`(read 级、120 s;用户取消是 `Ok {picked: false}` 而非失败,planner 可接着问"换一个?")与 `file.read_granted {ref}`(未知 → `files.not_found`;超 1 MiB → `files.too_large`,stat 前置检查 + 读后复查);`file.pick` 产出 `user-file-grant` 产出物携带 token,同意事件进审计轨迹而不泄露宿主引用。测试 F26–F35(`FilesPluginTest`)+ SF14–SF23(`ScopedFacadeTest`)。
+- **诚实边界**:隔离(独立进程)插件的 `userFiles` 保持 null——选择器需要主进程 UI、跨进程铸枚尚无 wire op——因此上报 `UNAVAILABLE`;Android 选择器路径目前只有 JVM 覆盖,待真机验证。
+
 ### Agent 终态自包含结论行 + 自定节奏挂起/续跑 + planner 并行计划（2026-09-08）
 
 借鉴后台任务 harness 的模式,补 Agent 循环里现有能力图谱最刺眼的三处:终态缺少自包含结论、无任何后台续跑能力、planner 发不出并行计划(并行引擎已在下一层但对 agent 不可达)。

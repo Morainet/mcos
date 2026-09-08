@@ -105,6 +105,18 @@ interface HostServices {
      * [SecureStore].
      */
     val sandbox: SandboxFileService? get() = null
+
+    /**
+     * Optional user-granted file access (04-plugin-sdk.md 6.1): the host
+     * opens the system picker and the user hands the plugin a document
+     * OUTSIDE its sandbox. The runtime re-mints every pick as an opaque
+     * token scoped to the picking plugin, so grants are redeemable only by
+     * the plugin the user chose for. Null on hosts without a picker (plain
+     * JVM, headless run); plugins must surface UNAVAILABLE rather than a
+     * fake success. Grants are session-scoped — the picker dialog is the
+     * user-consent moment, and the plugin re-picks after a host restart.
+     */
+    val userFiles: UserFileGrantService? get() = null
 }
 
 /**
