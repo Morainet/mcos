@@ -69,6 +69,13 @@ jobs:
       - name: Build & test
         run: ./gradlew build -PmcosVersion="$MCOS_VERSION" --console=plain --no-daemon
 
+      # The bundle directory is a plain file repository: anything left in it
+      # from an earlier publish is zipped and uploaded too, and stale versions
+      # (a leftover 0.0.0-ci run contributed 235 files on its own) are exactly
+      # what pushes a deployment past Central's 1000-file ceiling. Start empty.
+      - name: Clean the bundle directory
+        run: rm -rf build/central-bundle
+
       # ORG_GRADLE_PROJECT_* maps to the matching project properties, so
       # signingKey/signingPassword are picked up by the root build convention.
       - name: Publish signed artifacts to staging repo
@@ -76,6 +83,21 @@ jobs:
           ORG_GRADLE_PROJECT_signingKey: ${{ secrets.GPG_PRIVATE_KEY }}
           ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.GPG_PASSPHRASE }}
         run: ./gradlew publish -PmcosVersion="$MCOS_VERSION" --console=plain --no-daemon
+
+      # Gradle emits four checksums per file (md5/sha1/sha256/sha512), and
+      # every signature (.asc) gets the same four — 4x amplification over the
+      # actual artifacts. Central accepts sha256/sha512 alone, so drop the two
+      # legacy ones: 12 modules x 6 primary files goes from ~690 files to ~414.
+      - name: Prune legacy checksums & report bundle size
+        run: |
+          find build/central-bundle -type f \( -name '*.md5' -o -name '*.sha1' \) -delete
+          COUNT=$(find build/central-bundle -type f | wc -l | tr -d ' ')
+          echo "Bundle file count: $COUNT (Central limit: 1000)"
+          echo "### Bundle file count: $COUNT / 1000" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$COUNT" -gt 900 ]; then
+            echo "::error::Bundle has $COUNT files — too close to (or over) Central's 1000-file limit."
+            exit 1
+          fi
 
       - name: Bundle artifacts for Central
         run: |
