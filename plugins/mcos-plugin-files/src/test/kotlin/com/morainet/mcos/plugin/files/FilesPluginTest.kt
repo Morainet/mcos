@@ -41,9 +41,9 @@ class FilesPluginTest {
     }
 
     @Test
-    fun `F2-manifest declares 8 file commands`() {
+    fun `F2-manifest declares 10 file commands`() {
         val commands = plugin.manifest.commands.map { it.id }.toSet()
-        assertEquals(8, commands.size)
+        assertEquals(10, commands.size)
         assertTrue(commands.contains("file.list"))
         assertTrue(commands.contains("file.search"))
         assertTrue(commands.contains("photo.search"))
@@ -52,6 +52,8 @@ class FilesPluginTest {
         assertTrue(commands.contains("file.read"))
         assertTrue(commands.contains("file.stat"))
         assertTrue(commands.contains("file.delete"))
+        assertTrue(commands.contains("file.pick"))
+        assertTrue(commands.contains("file.read_granted"))
     }
 
     @Test
@@ -65,9 +67,9 @@ class FilesPluginTest {
     // ═══════════════════════════════════════════════════════════════
 
     @Test
-    fun `F4-handlers returns all 8 command handlers`() {
+    fun `F4-handlers returns all 10 command handlers`() {
         val handlers = plugin.handlers()
-        assertEquals(8, handlers.size)
+        assertEquals(10, handlers.size)
         assertTrue(handlers.containsKey("file.list"))
         assertTrue(handlers.containsKey("file.search"))
         assertTrue(handlers.containsKey("photo.search"))
@@ -76,6 +78,8 @@ class FilesPluginTest {
         assertTrue(handlers.containsKey("file.read"))
         assertTrue(handlers.containsKey("file.stat"))
         assertTrue(handlers.containsKey("file.delete"))
+        assertTrue(handlers.containsKey("file.pick"))
+        assertTrue(handlers.containsKey("file.read_granted"))
     }
 
     @Test
@@ -447,6 +451,187 @@ class FilesPluginTest {
         assertEquals(SideEffectClass.read, byId.getValue("file.stat").sideEffectClass)
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // F26-F34: user-granted file commands (04-plugin-sdk.md 6.1)
+    //
+    // The out-of-sandbox surface beside the sandbox: the handlers read
+    // `userFiles` from ctx.services (the Executor's per-plugin TOKEN
+    // view), so these tests drive the handlers exactly as the runtime
+    // does — the onLoad stub has no picker, which is what makes the
+    // UNAVAILABLE case (F27) honest.
+    // ═══════════════════════════════════════════════════════════════
+
+    private fun grantCtx(
+        commandId: String,
+        args: JsonObject,
+        grants: UserFileGrantService,
+    ): ExecutionContext = execCtx(commandId, args, GrantsStubServices(grants))
+
+    @Test
+    fun `F26-file_pick returns the granted ref and records a grant artifact`() = runBlocking {
+        val grants = FakeUserFileGrants()
+        grants.queue += UserFileGrant(ref = "ug-abc", name = "note.txt", mimeType = "text/plain", sizeBytes = 11)
+        grants.contents["ug-abc"] = "hello grant".toByteArray()
+
+        val result = plugin.handlers()["file.pick"]!!.invoke(
+            grantCtx("file.pick", buildJsonObject { }, grants)
+        )
+
+        assertTrue(result is CommandResult.Ok, result.toString())
+        val value = (result as CommandResult.Ok).value.jsonObject
+        assertEquals(true, value["picked"]!!.jsonPrimitive.boolean)
+        assertEquals("ug-abc", value["ref"]!!.jsonPrimitive.content)
+        assertEquals("note.txt", value["name"]!!.jsonPrimitive.content)
+        assertEquals("text/plain", value["mimeType"]!!.jsonPrimitive.content)
+        assertEquals(11L, value["size"]!!.jsonPrimitive.long)
+
+        // The consent is auditable through the artifact — and the artifact
+        // carries the token, never the host's raw content URI.
+        val artifact = result.artifacts.single()
+        assertEquals("user-file-grant", artifact.type)
+        assertEquals("ug-abc", artifact.uri)
+        assertEquals("text/plain", artifact.mimeType)
+    }
+
+    @Test
+    fun `F27-grant commands are UNAVAILABLE without a picker`() = runBlocking {
+        // Plain onLoad stub: userFiles is null, as on a headless JVM host.
+        listOf(
+            "file.pick" to buildJsonObject { },
+            "file.read_granted" to buildJsonObject { put("ref", JsonPrimitive("ug-abc")) },
+        ).forEach { (commandId, args) ->
+            val e = assertFailsWith<McosException> {
+                plugin.handlers()[commandId]!!.invoke(execCtx(commandId, args))
+            }
+            assertEquals("UNAVAILABLE", e.code, commandId)
+        }
+    }
+
+    @Test
+    fun `F28-file_pick user cancel is an Ok with picked false`() = runBlocking {
+        val grants = FakeUserFileGrants() // empty queue = the user cancelled
+
+        val result = plugin.handlers()["file.pick"]!!.invoke(
+            grantCtx("file.pick", buildJsonObject { }, grants)
+        ) as CommandResult.Ok
+
+        val value = result.value.jsonObject
+        assertEquals(false, value["picked"]!!.jsonPrimitive.boolean)
+        assertNull(value["ref"])
+        // A cancel grants nothing, so there is nothing to audit.
+        assertTrue(result.artifacts.isEmpty())
+    }
+
+    @Test
+    fun `F29-file_pick forwards the mime filter and defaults to all types`() = runBlocking {
+        val grants = FakeUserFileGrants()
+        grants.queue += UserFileGrant(ref = "ug-1")
+
+        plugin.handlers()["file.pick"]!!.invoke(
+            grantCtx("file.pick", buildJsonObject {
+                put("mimeTypes", buildJsonArray {
+                    add(JsonPrimitive("text/plain"))
+                    add(JsonPrimitive("application/json"))
+                })
+            }, grants)
+        )
+
+        assertEquals(listOf(listOf("text/plain", "application/json")), grants.requestedMime)
+
+        // An empty array is not a filter — fall back to the all-types default.
+        grants.queue += UserFileGrant(ref = "ug-2")
+        plugin.handlers()["file.pick"]!!.invoke(
+            grantCtx("file.pick", buildJsonObject {
+                put("mimeTypes", buildJsonArray { })
+            }, grants)
+        )
+        assertEquals(listOf("*/*"), grants.requestedMime[1])
+    }
+
+    @Test
+    fun `F30-file_read_granted returns ref size text and keeps the grant`() = runBlocking {
+        val grants = FakeUserFileGrants()
+        grants.contents["ug-abc"] = "hello grant".toByteArray()
+
+        val result = plugin.handlers()["file.read_granted"]!!.invoke(
+            grantCtx("file.read_granted", buildJsonObject { put("ref", JsonPrimitive("ug-abc")) }, grants)
+        )
+
+        assertTrue(result is CommandResult.Ok, result.toString())
+        val value = (result as CommandResult.Ok).value.jsonObject
+        assertEquals("ug-abc", value["ref"]!!.jsonPrimitive.content)
+        assertEquals(11L, value["size"]!!.jsonPrimitive.long)
+        assertEquals("hello grant", value["text"]!!.jsonPrimitive.content)
+        assertEquals(listOf("ug-abc"), grants.readRefs)
+        // Reading must not consume the grant — another read stays legal.
+        assertTrue(grants.released.isEmpty())
+    }
+
+    @Test
+    fun `F31-file_read_granted of an unknown ref is files not_found`() = runBlocking {
+        val grants = FakeUserFileGrants() // nothing granted
+        val e = assertFailsWith<McosException> {
+            plugin.handlers()["file.read_granted"]!!.invoke(
+                grantCtx("file.read_granted", buildJsonObject { put("ref", JsonPrimitive("ug-gone")) }, grants)
+            )
+        }
+        assertEquals("files.not_found", e.code)
+        assertTrue(grants.readRefs.isEmpty(), "no read may be attempted for an unknown ref")
+    }
+
+    @Test
+    fun `F32-file_read_granted over the cap is files too_large before the read`() = runBlocking {
+        val grants = FakeUserFileGrants()
+        grants.contents["ug-big"] = "small".toByteArray()
+        // The provider reports a size over the cap — the handler must bail
+        // on the stat rather than materializing the bytes.
+        grants.statSize["ug-big"] = FilesPlugin.GRANT_MAX_FILE_BYTES + 1L
+
+        val e = assertFailsWith<McosException> {
+            plugin.handlers()["file.read_granted"]!!.invoke(
+                grantCtx("file.read_granted", buildJsonObject { put("ref", JsonPrimitive("ug-big")) }, grants)
+            )
+        }
+        assertEquals("files.too_large", e.code)
+        assertTrue(grants.readRefs.isEmpty(), "the cap must hold before any read")
+    }
+
+    @Test
+    fun `F33-file_read_granted caps even when stat reports no size`() = runBlocking {
+        val grants = FakeUserFileGrants()
+        // Cloud providers legitimately report no SIZE — the belt-and-braces
+        // post-read check is the only thing standing between the command
+        // surface and a multi-megabyte payload.
+        grants.statSize["ug-cloud"] = null
+        grants.contents["ug-cloud"] = ByteArray(FilesPlugin.GRANT_MAX_FILE_BYTES + 1)
+
+        val e = assertFailsWith<McosException> {
+            plugin.handlers()["file.read_granted"]!!.invoke(
+                grantCtx("file.read_granted", buildJsonObject { put("ref", JsonPrimitive("ug-cloud")) }, grants)
+            )
+        }
+        assertEquals("files.too_large", e.code)
+    }
+
+    @Test
+    fun `F34-file_read_granted without a ref is SCHEMA_VIOLATION`() = runBlocking {
+        val e = assertFailsWith<McosException> {
+            plugin.handlers()["file.read_granted"]!!.invoke(
+                grantCtx("file.read_granted", buildJsonObject { }, FakeUserFileGrants())
+            )
+        }
+        assertEquals("SCHEMA_VIOLATION", e.code)
+    }
+
+    @Test
+    fun `F35-manifest marks the grant commands read-class`() {
+        val byId = plugin.manifest.commands.associateBy { it.id }
+        // The picker IS the user-consent moment, so neither command needs a
+        // confirmation challenge — but both stay read-class: no write path.
+        assertEquals(SideEffectClass.read, byId.getValue("file.pick").sideEffectClass)
+        assertEquals(SideEffectClass.read, byId.getValue("file.read_granted").sideEffectClass)
+    }
+
     // ─── Helpers ──────────────────────────────────────────────────────────
 
     private fun execCtx(commandId: String, args: JsonObject, services: HostServices = stubServices): ExecutionContext {
@@ -462,6 +647,49 @@ class FilesPluginTest {
 /** [HostServices] stub whose only addition is a sandbox capability. */
 class SandboxedStubServices(private val sandboxService: SandboxFileService) : HostServices by StubFilesHostServices() {
     override val sandbox: SandboxFileService get() = sandboxService
+}
+
+/** [HostServices] stub whose only addition is the user-grant capability (04 §6.1). */
+class GrantsStubServices(private val grants: UserFileGrantService) : HostServices by StubFilesHostServices() {
+    override val userFiles: UserFileGrantService get() = grants
+}
+
+/**
+ * Recording [UserFileGrantService] fake standing in for the host picker.
+ *
+ * `queue` drives `pickForRead` — an empty queue is the user cancelling,
+ * which is exactly the shape the handler must not report as a failure.
+ * `statSize` lets a test declare what the provider reports (including
+ * "nothing", the cloud-provider case) independently of the real bytes.
+ */
+class FakeUserFileGrants : UserFileGrantService {
+    val queue = ArrayDeque<UserFileGrant?>()
+    val contents = mutableMapOf<String, ByteArray>()
+    val statSize = mutableMapOf<String, Long?>()
+    val requestedMime = mutableListOf<List<String>>()
+    val readRefs = mutableListOf<String>()
+    val released = mutableListOf<String>()
+
+    override suspend fun pickForRead(mimeTypes: List<String>): UserFileGrant? {
+        requestedMime += mimeTypes
+        return queue.removeFirstOrNull()
+    }
+
+    override suspend fun statGranted(ref: String): UserFileGrant? {
+        val size = if (statSize.containsKey(ref)) statSize[ref] else contents[ref]?.size?.toLong()
+        if (size == null && !contents.containsKey(ref) && !statSize.containsKey(ref)) return null
+        return UserFileGrant(ref = ref, sizeBytes = size)
+    }
+
+    override suspend fun readGranted(ref: String): ByteArray? {
+        readRefs += ref
+        return contents[ref]
+    }
+
+    override suspend fun releaseGranted(ref: String): Boolean {
+        released += ref
+        return contents.remove(ref) != null
+    }
 }
 
 /** Recording fake with an in-memory backing map (real-call assertions). */

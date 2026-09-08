@@ -83,6 +83,15 @@ class AndroidHostServices(
      */
     override val sandbox: SandboxFileService =
         DirectorySandbox(File(context.filesDir, "plugin-sandbox").toPath())
+
+    /**
+     * User-granted out-of-sandbox files (04 §6.1): the system document
+     * picker over the activity-result bridge. Session-scoped by design —
+     * the picker is the consent moment, and the runtime's token registry
+     * scopes every pick to the picking plugin.
+     */
+    override val userFiles: UserFileGrantService =
+        AndroidUserFileGrantService(context, resultBridge)
 }
 
 // ── FileService ─────────────────────────────────────────────────────────────

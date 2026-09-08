@@ -341,7 +341,7 @@ The IR `meta` field ([02 §8.2](./02-command-protocol.md)) — `source`, `confid
 
 ## 6. HostServices (Plugin-Facing Facade)
 
-> ✅ **Implementation status:** `HostServices` and every §6.1–6.6 interface live in `mcos-sdk` (JVM stubs + real Android implementations in `mcos-android`). **§6.2/§6.4/§6.5 are now full-signature aligned** (item 46): `NetService.request(HttpRequest): HttpResponse` (byte bodies, `timeoutMs`, multi-value response headers), a byte-valued `SecureStore` with `keys()`, and a `Clock` with `now(): Instant` + `monotonicMs()`. Remaining v0.x deltas: services are `val` properties (the spec sketch shows `fun`); `websocket()` is spec-marked P2 and deliberately absent (an honest absence, not a fake); `Clock.nowMs()` stays as a derived convenience (epoch-ms remains the IR/audit/schedule wire format). §6.7–6.10 optional capabilities were added in v0.x, and §6.1's scoped storage shipped in v0.x as the optional `sandbox` capability (see §6.1's as-built note).
+> ✅ **Implementation status:** `HostServices` and every §6.1–6.6 interface live in `mcos-sdk` (JVM stubs + real Android implementations in `mcos-android`). **§6.2/§6.4/§6.5 are now full-signature aligned** (item 46): `NetService.request(HttpRequest): HttpResponse` (byte bodies, `timeoutMs`, multi-value response headers), a byte-valued `SecureStore` with `keys()`, and a `Clock` with `now(): Instant` + `monotonicMs()`. Remaining v0.x deltas: services are `val` properties (the spec sketch shows `fun`); `websocket()` is spec-marked P2 and deliberately absent (an honest absence, not a fake); `Clock.nowMs()` stays as a derived convenience (epoch-ms remains the IR/audit/schedule wire format). §6.7–6.10 optional capabilities were added in v0.x, and §6.1's scoped storage shipped in v0.x as the optional `sandbox` capability (see §6.1's as-built note). **§6.1's third surface — `userFiles: UserFileGrantService?`, user-granted out-of-sandbox files through the system picker — shipped in v0.x as another optional capability** (item 58); the runtime re-mints every pick as a plugin-scoped token, so a grant is redeemable only by the plugin the user chose for.
 
 Plugins should depend on **facades**, not the entire Android framework.
 
@@ -365,6 +365,7 @@ interface HostServices {
     val haptics: HapticsService?              // §6.10
     val events: EventPublisher?               // §6.11
     val sandbox: SandboxFileService?          // §6.1 scoped storage (optional, v0.x)
+    val userFiles: UserFileGrantService?      // §6.1 user-granted files (optional, v0.x)
 }
 ```
 
@@ -372,10 +373,11 @@ Each service interface is specified in §6.1–6.6 below. MVP pragmatism: the Ca
 
 ### 6.1 `FileService` / `SandboxFileService` — Media Access & Scoped Storage
 
-As built (v0.x), this section covers **two surfaces**:
+As built (v0.x), this section covers **three surfaces**:
 
 - **`HostServices.files: FileService`** — the **media-store facade**: read-only queries over the device media library (`list(uri)`, `searchPhotos(mimeType, afterMs, beforeMs, limit)`), consumed by `file.list` / `file.search` / `photo.search` / `photo.compress`. It is *not* a general file API.
 - **`HostServices.sandbox: SandboxFileService?`** — the **scoped storage** this section originally specified, shipped as an optional capability (the §6.7–6.11 pattern: interface default null — a host without storage simply does not override, and the sandbox commands surface `UNAVAILABLE`, never fake success). All paths are plugin-relative and resolve inside the plugin's **namespaced sandbox**; a plugin cannot read or write outside its own directory. The reference implementation is `DirectorySandbox(root)` — pure `java.nio`, so its JVM test suite covers the exact code the Android host runs (`filesDir/plugin-sandbox`).
+- **`HostServices.userFiles: UserFileGrantService?`** — **user-granted access outside the sandbox** (the "system picker" flow this section used to defer to V1). The host opens the platform document picker and the user hands the plugin one document; the *picker dialog is the consent moment*, so there is no separate confirmation challenge. Grants are **session-scoped** — they live as long as the runtime process, and a plugin re-picks (re-consents) after a host restart. Hosts without a picker (plain JVM, headless schedule run) leave the capability null and the commands surface `UNAVAILABLE`, never a fabricated success.
 
 ```kotlin
 interface SandboxFileService {
@@ -398,7 +400,32 @@ data class SandboxEntry(val path: String, val isDir: Boolean, val size: Long?)
 
 Artifacts returned from handlers SHOULD use `tempFile(...)` or a stable sandbox path, then return the URI — never inline bytes in `CommandResult.Ok` (see §7.3). **Secrets MUST never live in the sandbox** — it is plaintext app-private storage; use `SecureStore` (§6.4, [08 §9](./08-security.md)).
 
-> 🟡 **v0.x deltas (honest):** the byte API above is leaner than the original streaming sketch (`openInput`/`openOutput` → `InputFlow`/`OutputFlow` — a drift this section records for itself; the same-family NetService/Clock drift was closed by item 46); the "user grants access outside the sandbox via a system picker" flow is V1 host work; per-plugin storage quotas beyond the 1 MiB-per-write cap are not implemented.
+**User-granted files — the contract.** The host opens the platform picker; the plugin only ever holds an opaque token:
+
+```kotlin
+interface UserFileGrantService {
+    /** Opens the system picker and suspends until the user picks or cancels. */
+    suspend fun pickForRead(mimeTypes: List<String> = listOf("*/*")): UserFileGrant?
+    suspend fun statGranted(ref: String): UserFileGrant?   // null when unknown/revoked
+    suspend fun readGranted(ref: String): ByteArray?       // null when revoked / unopenable
+    suspend fun releaseGranted(ref: String): Boolean       // false when the ref was unknown
+}
+
+data class UserFileGrant(
+    val ref: String,                 // opaque token, never a raw content URI
+    val name: String? = null,
+    val mimeType: String? = null,
+    val sizeBytes: Long? = null,     // null when the provider cannot report it
+)
+```
+
+**Token scoping — the runtime's half of the contract** — a plugin never sees the host's raw ref (a `content://` URI on Android). The Executor's Stage-4 facade wraps the capability in `PluginScopedUserFileGrants`, which swaps every pick for an opaque token (`ug-…`) minted by an **Executor-lifetime** `UserGrantRegistry` (`file.pick` and `file.read_granted` are separate executions, so the grant must survive between them), and resolves the token against the calling plugin before the host delegate is touched. A foreign token is a hard `PERMISSION_DENIED` with `details.reason = "grant_not_authorized"` — the same philosophy as `sandbox_escape`, and the probe never reaches the host. Handlers MUST read `ctx.services.userFiles` for exactly this reason: an `onLoad`-captured service is the raw host-wide one and defeats the scoping. The registry is **memory-only** — a session-scoped grant must not outlive the consent that produced it — with a per-plugin cap (32, oldest dropped first) bounding growth.
+
+**Command surface** — `file.pick {mimeTypes?}` (read class, 120 s timeout — the user is in the loop; a cancel is `Ok {picked: false}`, *not* a failure, so the planner can offer "pick something else") and `file.read_granted {ref}` (read class; unknown/revoked → `files.not_found`; over the 1 MiB command cap → `files.too_large`, checked on the stat *before* the bytes are materialized and again after — cloud providers legitimately report no size). `file.pick` emits an artifact `type = "user-file-grant"` carrying the **token**, never the raw URI, so the consent event reaches the audit trail without leaking the host ref.
+
+`StaticUserFileGrantService` is the JVM seeding analogue of `DirectorySandbox` — tests pre-populate what "the user" would pick and drive the exact code paths the Android host runs.
+
+> 🟡 **v0.x deltas (honest):** the byte API above is leaner than the original streaming sketch (`openInput`/`openOutput` → `InputFlow`/`OutputFlow` — a drift this section records for itself; the same-family NetService/Clock drift was closed by item 46); the user-grant flow above is implemented **in-process only** — isolated (separate-process) plugins keep `userFiles` null, because the picker needs main-process UI and cross-process token minting has no wire ops yet, so they surface `UNAVAILABLE` (an honest boundary, not a fake success); per-plugin storage quotas beyond the 1 MiB-per-write cap are not implemented.
 
 ### 6.2 `NetService` — Policy-Aware HTTP
 

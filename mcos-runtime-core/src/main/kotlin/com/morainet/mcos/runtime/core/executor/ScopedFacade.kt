@@ -12,10 +12,13 @@ import com.morainet.mcos.sdk.NetService
 import com.morainet.mcos.sdk.SandboxEntry
 import com.morainet.mcos.sdk.SandboxFileService
 import com.morainet.mcos.sdk.SecureStore
+import com.morainet.mcos.sdk.UserFileGrant
+import com.morainet.mcos.sdk.UserFileGrantService
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Machine-readable denial reasons emitted by [StampScopedNetService]
@@ -195,6 +198,121 @@ class NamespacedSandbox(
         val name = "${prefix.ifEmpty { "mcos" }}-${UUID.randomUUID()}$suffix"
         delegate.write(scoped(name), ByteArray(0))
         return name
+    }
+}
+
+/**
+ * Executor-lifetime table of user-granted file tokens
+ * (04-plugin-sdk.md 6.1) — token → (owning plugin, host-facing raw ref).
+ * One instance per [Executor] (not per command): `file.pick` and
+ * `file.read_granted` are separate executions, and the grant must survive
+ * between them. Memory-only by design — the grant is session-scoped, so a
+ * host restart makes the plugin re-pick (re-consent); a durable token
+ * table is future work and is a precondition for any persisted OS grant.
+ */
+class UserGrantRegistry {
+
+    data class Entry(val pluginId: String, val rawRef: String)
+
+    private val tokens = ConcurrentHashMap<String, Entry>()
+    /** Per-plugin creation order (token → sequence) drives LRU-free FIFO eviction. */
+    private val perPluginOrder = ConcurrentHashMap<String, ArrayDeque<String>>()
+
+    /** Mint an unguessable token for [pluginId] over the host's raw [rawRef]. */
+    fun mint(pluginId: String, rawRef: String): String {
+        val token = "ug-${UUID.randomUUID()}"
+        tokens[token] = Entry(pluginId, rawRef)
+        perPluginOrder.getOrPut(pluginId) { ArrayDeque() }.addLast(token)
+        evictIfOverCap(pluginId)
+        return token
+    }
+
+    /**
+     * Resolve [token] for [pluginId]. Null when the token is unknown or
+     * released (the handler surfaces `files.not_found`); throws
+     * [McosException] (`PERMISSION_DENIED`,
+     * `details.reason = "grant_not_authorized"`) when the token exists but
+     * belongs to a different plugin — a cross-plugin probe is a hard
+     * denial, same philosophy as `sandbox_escape`.
+     */
+    fun resolve(token: String, pluginId: String): String? {
+        val entry = tokens[token] ?: return null
+        if (entry.pluginId != pluginId) {
+            throw McosException(
+                code = McosErrorCode.PERMISSION_DENIED.name,
+                message = "user-file grant belongs to another plugin: ${entry.pluginId}",
+                details = buildJsonObject { put("reason", JsonPrimitive("grant_not_authorized")) },
+            )
+        }
+        return entry.rawRef
+    }
+
+    /** Drop [token]; returns false when it was already unknown. */
+    fun release(token: String): Boolean {
+        val removed = tokens.remove(token) ?: return false
+        perPluginOrder[removed.pluginId]?.remove(token)
+        return true
+    }
+
+    /**
+     * Cap active grants per plugin — a plugin can only mint through real
+     * user picks, but the host's picker may be seeded/scripted in tests and
+     * the cap bounds growth regardless. Oldest grant is dropped first.
+     */
+    private fun evictIfOverCap(pluginId: String) {
+        val queue = perPluginOrder[pluginId] ?: return
+        while (queue.size > MAX_GRANTS_PER_PLUGIN) {
+            val oldest = queue.removeFirstOrNull() ?: break
+            tokens.remove(oldest)
+        }
+    }
+
+    companion object {
+        const val MAX_GRANTS_PER_PLUGIN = 32
+    }
+}
+
+/**
+ * [UserFileGrantService] decorator that scopes every user-granted file to
+ * the picking plugin (04-plugin-sdk.md 6.1) — the `userFiles` analogue of
+ * [NamespacedSandbox]. The plugin never sees the host's raw ref (a content
+ * URI on Android): [pickForRead] swaps it for an opaque
+ * [UserGrantRegistry]-minted token, and every redeem call resolves the
+ * token against the owning plugin before the delegate is touched.
+ *
+ * Public like [NamespacedSandbox] so the Android isolated facade server
+ * composes the same decorator the in-process [Executor] hands a plugin
+ * (item 41) — the two boundaries cannot drift. (In v0.x the isolated
+ * proxy keeps the capability null — pickers need main-process UI; wire
+ * ops are future work.)
+ */
+class PluginScopedUserFileGrants(
+    private val delegate: UserFileGrantService,
+    private val pluginId: String,
+    private val registry: UserGrantRegistry,
+) : UserFileGrantService {
+
+    override suspend fun pickForRead(mimeTypes: List<String>): UserFileGrant? {
+        val granted = delegate.pickForRead(mimeTypes) ?: return null
+        val token = registry.mint(pluginId, granted.ref)
+        return granted.copy(ref = token)
+    }
+
+    override suspend fun statGranted(ref: String): UserFileGrant? =
+        registry.resolve(ref, pluginId)?.let { raw ->
+            delegate.statGranted(raw)
+        }
+
+    override suspend fun readGranted(ref: String): ByteArray? =
+        registry.resolve(ref, pluginId)?.let { raw ->
+            delegate.readGranted(raw)
+        }
+
+    override suspend fun releaseGranted(ref: String): Boolean {
+        // Resolve first so a foreign token still takes the hard denial,
+        // then drop the token and forward the release to the host.
+        registry.resolve(ref, pluginId)
+        return registry.release(ref)
     }
 }
 
