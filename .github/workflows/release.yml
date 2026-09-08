@@ -103,11 +103,17 @@ jobs:
           ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.GPG_PASSPHRASE }}
         run: ./gradlew publish -PmcosVersion="$MCOS_VERSION" --console=plain --no-daemon
 
-      # Central requires md5 + sha1 checksums for *every* artifact and every
-      # .asc signature; "valid" is "md5 present and sha1 present" — sha256 /
-      # sha512 alone are not accepted. The count here is what Central sees.
-      - name: Report bundle size
+      # Central's component validation failed with "Missing md5 checksum" /
+      # "Missing sha1 checksum" (and nothing else) when those two were absent,
+      # so md5 + sha1 are MANDATORY for every artifact and every .asc, while
+      # sha256 / sha512 are optional extras. Gradle emits all four, so pruning
+      # the two optional ones takes each primary artifact from 10 files
+      # (self + .asc + 4 checksums each) down to 6 — ~40% off the bundle.
+      #
+      # Do NOT prune *.md5 / *.sha1: that is what failed the 0.0.6 deployment.
+      - name: Prune optional checksums & report bundle size
         run: |
+          find build/central-bundle -type f \( -name '*.sha256' -o -name '*.sha512' \) -delete
           COUNT=$(find build/central-bundle -type f | wc -l | tr -d ' ')
           echo "Bundle file count: $COUNT (Central limit: 1000)"
           echo "### Bundle file count: $COUNT / 1000" >> "$GITHUB_STEP_SUMMARY"
