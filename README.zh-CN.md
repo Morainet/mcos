@@ -115,7 +115,7 @@ dependencyResolutionManagement {
 ```kotlin
 // build.gradle.kts —— 推荐走 BOM，保证各模块版本对齐
 dependencies {
-    implementation(platform("io.github.morainet:mcos-bom:0.0.5"))
+    implementation(platform("io.github.morainet:mcos-bom:0.0.6"))
     implementation("io.github.morainet:mcos-android-sdk")
 }
 ```
@@ -137,7 +137,7 @@ class MyApplication : Application(), McosHostApp {
 
 ```kotlin
 dependencies {
-    implementation(platform("io.github.morainet:mcos-bom:0.0.5"))
+    implementation(platform("io.github.morainet:mcos-bom:0.0.6"))
     implementation("io.github.morainet:mcos-runtime")   // JVM 宿主（服务端 / CLI / 桌面）
     // implementation("io.github.morainet:mcos-sdk")    // 插件作者：仅需契约层
 }

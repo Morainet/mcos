@@ -10,6 +10,17 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+## [0.0.6] - 2026-09-08
+
+### 发布流水线：Central deployment 文件数治理（2026-09-08）
+
+v0.0.4 / v0.0.5 的 deployment 被 Central 以「文件数超出 1000」驳回（实测 1140）。发布 bundle 是普通文件仓库，有两处放大：
+
+- **历史残留**：`build/central-bundle` 只写不清，一次遗留的 `0.0.0-ci` 发布就贡献了 235 个文件。现在发布前先 `rm -rf` 该目录。
+- **校验和放大**：Gradle 为每个产物与每个 `.asc` 各生成 md5/sha1/sha256/sha512 四个校验和，约 114 个主产物被放大成 1140 个文件。现在打包前删除 `*.md5` / `*.sha1`（Central 接受 sha256/sha512），预计降到 ~684。
+
+同时把 bundle 文件数写入 job summary，并**超过 900 直接让 job 失败** —— 上限从此在 CI 里可见并强制，不再等到 Central 异步校验才发现。
+
 ## [0.0.5] - 2026-09-08
 
 ### 路线图：Kernel 1.0 稳定门（10 §17，采纳自 issue #14）
