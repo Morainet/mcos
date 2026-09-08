@@ -10,6 +10,8 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+## [0.0.5] - 2026-09-08
+
 ### 路线图：Kernel 1.0 稳定门（10 §17，采纳自 issue #14）
 
 - 外部架构评审 issue #14 的核心结论 —— 功能增长快于核心模型稳定，决定项目成立与否的只有 Command Protocol / Runtime Semantics / Plugin Contract —— 落地为 `10-roadmap` §17 的显式跨阶段里程碑：定义三份契约的冻结范围、退出标准（`mcos-conformance` 作为回归门）、门开启期间的治理（协议表面工作暂缓，生态/市场/宿主移植工作明确不受阻）。EN/ZH 同步。
@@ -82,43 +84,7 @@ Android demo shell（`mcos-android`）的界面重做:从单页深色（OLED）�
 
 ---
 
-## [0.0.4] - 2026-09-06
-
-*首个 JVM 全量发布：11 个 library + BOM 一起进入 Central（此前 v0.0.1–v0.0.3 仅为 `mcos-android-sdk` 的 Central 冒烟）。本段切片 = origin/main 之上的三个提交：item 53 远程企业策略下发、item 54 fail-closed Stage-10 审计、item 55 调度器热调参；主线上早于这三者的其余累积代码（item 45–52 等）随本版首次发布、未另作 changelog 分段。*
-
-发布门禁期间另收录四处修复：`DirectorySandbox.list/tempFile` 输出统一为虚拟 `/` 分隔路径（Windows JVM 下不再泄出原生 `\`，返回值可回喂 `read`/`write`，Android 行为零变化）；`mcos-index-server` 的 `AvScannerTest` 外部扫描器 wrapper 改为按宿主 OS 生成（Windows 走 `cmd /c` 批处理），裁决语义不变；`RunScheduler.shutdown` 快照并发在飞 job 的 `ConcurrentHashMap` 时改用 hasNext 优先迭代——Kotlin `Collection.toList()` 对 `size==1` 走 `iterator().next()` 捷径跳过 `hasNext()`，恰好撞上 finishing worker 的并发 `remove` 时弱一致迭代器会抛 `NoSuchElementException`（CI 与本地各复现于 `McosRuntimeSchedulerTest` S1/S2 的 tearDown，属 shutdown 自身竞态而非用例断言）；`DeviceIsolatedPluginTest` DF2 的 pid 断言原写死"桌面 JVM 无 `/proc` 故 pid 为 `JsonNull`"，但 Linux CI runner 可读 `/proc/self/stat`、handler 会如实返回数字 pid——断言改为按宿主是否可读 `/proc/self/stat` 断言相应形态（`/proc` 是 Android/Linux 专属，macOS/Windows 才取 `JsonNull` 分支），本地与 CI 都能过。
-
-### 调度器运行时热调参 — `RunScheduler.reconfigure`（2026-09-06）
-
-03 §19.1 "hot-reload" 的代码落地（item 55）：`SchedulerConfig` 顶部与 §5 行曾诚实标注 "热调参仅限构建期（信号量与 worker 构建时固定）"，本切片把该缺口收掉，保留诚实边界（通道容量/每插件 limiter 仍构建期固定，漂移响亮拒绝）。
-
-- **原语 `scheduler/RunConcurrencyGate`**：取代全局 `Semaphore(maxConcurrentInvokes)` 的可调大小计数门——上调先把新许可交给等待者（FIFO）；下调只收回空闲许可，在飞许可绝不回收（§19.1：在飞 run 不被中断，并发随 body 结束衰减到新上限）；排队中取消的等待者自行摘出（无许可泄漏）。
-- **`RunScheduler.reconfigure(new)`**：返回先前 config 供宿主记录；`maxConcurrentInvokes` 校验到 §19.1 的 1..16（非法值 `IllegalArgumentException` 响亮拒绝、绝不静默取整）；实时应用全局上限（重设闸门 + 为上调用补足每通道 worker，防构建期池饿死）、退避曲线（自下一次拒绝计算生效：500 ms → 1 s 基线同一升级 500 → 2 000 ms）、背压阈值。构建期字段（`laneCapacity`/`drainGraceMs`/每插件上限）变化即拒绝——调度器与启动时定尺寸的 Executor limiter 永不静默分叉。
-- **facade**：`McosRuntime.reconfigureScheduler(new)`；注入自定义调度器的宿主直接调 `reconfigure`。诚实边界：调度器级旋钮——完整 §19 RuntimeConfig 来源/优先级管理器留待后续切片。
-- **测试 +12 JVM**：`RunConcurrencyGateTest` 6（可调上限语义）· `RunSchedulerRetuneTest` 4（热上调/热下调/退避重调/非法与关停后拒绝）· `McosRuntimeSchedulerRetuneTest` 2（facade 重调 + 返回旧 config、构建期漂移与关停后拒绝）。**基线 1457/1645 → 1469/1657**。
-
-### fail-closed Stage-10 审计 — `auditFailClosed` 接线（2026-09-06）
-
-03 §13.3 / 08 §14 的收口（item 54）：此前 `AuditLog` 的 Stage-10 写是 fire-and-forget——磁盘满等写失败被静默吞掉，规范里"enterprise 下可配置 fail-closed（run 以 `INTERNAL` 失败）"没有代码路径。本切片把持久化确认与 fail-closed 决策接上。
-
-- **Sink 契约**：`AuditLog.appendVerified(record)`——`append` 的可挂起持久化确认变体，默认即历史 fire-and-forget（永远成功），只有能观察持久化的 sink 覆盖它：`FileAuditLog` 由单写者在行真正写入并 flush 后作答（不可写路径 / 写失败 / 写者已死 → `false`；失败仍保留内存索引，非 fail-closed 流量与从前一致降级 memory-only）；`InMemoryAuditLog` 回答活动写者是否接收（未 start / 已 stop → `false`）；`NullAuditLog` 刻意永远 `false`（空 sink 无法满足 fail-closed——配错即响亮失败）。
-- **强制**：`SecurityConfig.auditFailClosed`（默认 `false`）驱动 Executor Stage 10——置位时记录写需确认，拒绝 → run 以 `Err INTERNAL` 失败（message 点名 `auditFailClosed=true`）；`WorkflowEngine` 对聚合记录取自己的 `auditFailClosed`——写拒绝把本应 COMPLETED 的 workflow 翻 FAILED + INTERNAL 步骤。
-- **facade**：`McosRuntime.Builder.withAuditFailClosed(true)` 接线默认 executor/引擎；`withExecutor`/`withWorkflowEngine` 注入方在组件上直接置位（builder 已注明）。
-- **测试 +13 JVM**：`AuditFailClosedTest` 6（sink 语义）· `AuditFailClosedWiringTest` 5（Executor/WorkflowEngine 强制）· `McosRuntimeAuditFailClosedTest` 2（facade 端到端：置位 → `RunFailed` 点名 auditFailClosed；默认 → 同一 run `RunSucceeded`）。**基线 1444/1632 → 1457/1645**。
-- **诚实边界**：内存/空 sink 的 "verified" 只保证活写者接收，非磁盘持久化（加密落盘仍待 SQLCipher 切片）；ack 路径依赖写者存活——与既有 `flush()` 同款风险姿态。
-
-### 远程企业策略下发 — `HttpEnterprisePolicySource` + mcos-server `/enterprise/policy` 管理通道（2026-09-06）
-
-08 §13.3 的 P3 剩余项收口：此前企业策略只能经 fixed/file 源送达，"经 `mcos-server` 或 MDM 下发"这条通道没有代码。本切片把它做成纯 JVM、可整链验证的交付。
-
-- **`HttpEnterprisePolicySource`**（`mcos-security`）：HTTP(S) 周期拉取策略文档，逐字执行 §13.3 语义——节奏按 `refreshIntervalMs` 节流（默认 3 600 000 ms = 规范的"每 1 小时"，间隔是两次网络拉取间的最短间距，首次访问必拉，拉取跑在 `current()` 调用线程上、绝不抛错）；传输失败/非 2xx → 服务上一份好策略并发 `PolicyFetchFailed`，无缓存 → `FAIL_CLOSED`；解析/版本失败 → `FAIL_CLOSED` + 携带肇事文档 SHA-256 指纹的 `PolicyParseFailed`；成功 → `PolicyUpdated`（旧/新版本 + 签发方）；内容未变（同 SHA-256）由缓存供出、不重复解析也不重发事件；解析失败后保持 `FAIL_CLOSED` 直到再次拿到可解析字节再恢复（H10 钉死"服务器重发与缓存完全相同字节"的边界——FAIL_CLOSED 是状态不是粘性缓存）。拉取缝 `EnterprisePolicyHttpTransport`（fun interface，MUST NOT throw）。
-- **`JdkEnterprisePolicyHttpTransport`**（`mcos-runtime-core`）：默认 JVM 实现——`java.net.http`、可选 bearer token、5 s 连接 / 15 s 请求超时、非 2xx 折入 `Failure`。Android 无 `java.net.http`，Android 宿主稍后自供 `HttpURLConnection` 传输（与 `SyncBlobTransport`/`LlmHttpTransport` 同款缝切分）。
-- **`mcos-server` 管理通道**：新增 `PUT|GET|DELETE /enterprise/policy`，挂在既有强制 Bearer token 面上——blob 服务器**唯一**会解析的文档：`PUT` 用 `EnterprisePolicy.parse` 校验，畸形/不支持版本 JSON 拒 400（运营方笔误上传即被拦下，而不是推给客户端让它们下次拉取时 fail closed）、超大（> 1 MiB）拒 413、落已知槽位且重启持久化。
-- **测试 +25 JVM**：`HttpEnterprisePolicySourceTest` H1-H11 · `JdkEnterprisePolicyHttpTransportTest` JT1-JT4 · `PolicyEndpointTest` EP1-EP10（live-server + 真实客户端链互操作：401/404 fail-closed、上传校验、鉴权、删除幂等、重启持久化、热更新）。**基线 1419/1607 → 1444/1632**。
-- **诚实边界**：MDM（Android Enterprise）臂属设备侧，待 Android `HttpURLConnection` 传输（或 managed-config 源）后续接入，本仓库无需模拟器或 MDM；源内无后台调度器——宿主启动调一次 `current()` 即预热；§13.3 第 5 步的 ConfigChanged 审计记录仍是宿主消费侧（源发生命周期事件）。
-- **文档**：08-security §13.3 as-built（en/zh）· `11-implementation-status` §6 补回 item 52 条目（index-server + 共享 `CiGateEngine` + `market` 套件回填）并新增 item 53（远程策略下发，en/zh 镜像）· REPOSITORIES（en/zh）"远程策略下发仍为 P3" → 已落地 · `mcos-server/README.md` REST 表 + 企业策略通道章节。
-
-## [Unreleased]
+---
 
 ### Conformance "market" 套件 — 作者侧驱动共享 `CiGateEngine`（2026-09-06）
 
@@ -763,6 +729,46 @@ The repository has moved from design-only to a working implementation:
 
 ### Docs — Workflow Engine expansion (merged into 05-workflow.md) + error code sync
 - Expanded [docs/en/05-workflow.md](./docs/en/05-workflow.md) (+ Chinese mirror) from a ~491-line sketch (zero Kotlin types, most sections bullet/JSON-example only) into a ~1295-line **implementable engine design** by inserting 16 new subsections in place and resolving **11 gaps** discovered during cross-doc exploration. Strategy: **cross-reference rather than duplicate** — types already normative in [01](./docs/en/01-architecture.md) (`RuntimeEvent` 11 variants with step-level events, `McosErrorCode` enum as single source of truth, `ExecuteRequest.Payload.WorkflowRef`, `RunId`/`StepId`, 10-stage pipeline, `workflow` Scheduler queue, structured-concurrency rules), [02](./docs/en/02-command-protocol.md) (workflow IR wrapper §7.3, canonicalizer explicitly skips workflow body §7.5, `onFailure` §9.6), [03](./docs/en/03-runtime.md) (`WorkflowRef.body` opaque `JsonObject` §5.1, "re-enters Permission Kernel + Executor" §10, `requiresDevices` per-step IoT mutex §8.5), [06](./docs/en/06-agent.md) (Planner emits workflow IR), [07](./docs/en/07-memory.md) (`$memory` in event filters §13), and [09](./docs/en/09-marketplace.md) (recipe artifact §8) are compressed to pointers; the new material is the engine-internal detail that was missing or only sketched. Key additions: §1.1 engine positioning (sub-component above the pipeline, not a pipeline stage) + §1.2 **compile-time/run-time separation architecture** (the central design decision — compile pass produces frozen `CompiledWorkflow` at load time; execute pass re-enters the 10-stage pipeline at Stage 6 Authorize per step, skipping redundant Parse/Canonicalize/Resolve while preserving per-step AuthStamp + Audit), §3.1 Run lifecycle state machine (Created→Running↔Paused→Succeeded/Failed/Cancelled with mermaid `stateDiagram-v2` + per-state event mapping to 01 §11.5), §4.0 **normative Kotlin types for the first time** (`CompiledWorkflow`, sealed `Step` with 9 variants, `Edge`, `JoinPolicy`, `RetryPolicy`, `WorkflowAction`, `ConfirmationPolicy`, sealed `Trigger` — previously the doc had zero Kotlin types), §4.3 parallel form canonicalization algorithm (compact→explicit normalization, normative pseudocode, resolving the two undocumented forms), §5.0 `invoke` field reference table + §5.4–5.8 (`switch`/`wait_delay`/`noop`/`confirm`/`compensate` — three of these previously had no examples at all) + §5.9 **predicate language specification** (9-operator table with typing rules + security constraints — previously "JSONLogic-like subset" with zero enumerated operators), §6.0 `$ref` path grammar (normative BNF + source table + missing-path behavior + resolution algorithm) + §6.4 **three-ref-token disambiguation** (`$ref` vs `$memory` vs `x-mcos-ref` — previously undefined relationship), §7.0 **error handling decision tree** (normative fixed-priority ordering of retry→on-error→join→compensation, resolving the previously-unspecified interaction between these four mechanisms) + §7.1–7.4 (retry `retryOn` code alignment with 01 §15.1, on-error edge `onError` semantics, step-level `compensate` vs workflow-level `onFailure` **semantic scope distinction** — `compensate` = per-step reverse-order rollback, `onFailure` = single workflow-level fallback, resolving the naming conflict between 05 §7.3 `compensate` and 02 §9.6 `onFailure` by scoping them differently) + §7.5 workflow error code details schemas, §8 join policy expansion (4-strategy sibling-cancellation semantics table + concurrency admission rules + `quorum:N` validation), §9 trigger expansion (manual JSON + event `$memory` arming/fire-time resolution + schedule `misfirePolicy` 3-variant table + §9.4 **voice trigger** as a `source` variant of manual, not a separate type — resolving the gap where `Source.VOICE` existed in 01 §11.6 but no voice trigger was defined), §10.1 **concurrency model & cancellation propagation** (run-scope `Job` hierarchy diagram + 3 cancellation modes + engine lifecycle — stateless, absent from 03 §3.1 boot order intentionally), §11.1–11.2 **normative compile + execute algorithms** (replacing the 13-line "Informative" sketch with full pseudocode; compile: parse→validate→canonicalize→resolve→cycle-detect→freeze; execute: frontier-based dispatch with per-step pipeline re-entry at Stage 6, compensation stack, terminal-state handling), §13 Planner emission rules (compile-checkability + `debug.allowPartial`), §14.1 **recipe envelope schema** (full field table + placeholder binding + security constraints, expanding 09 §8's 5-line sketch), §15 MVP vs V1 table (expanded from 9 to 19 rows, aligned with 03 §21), §17 testing matrix (12-category table replacing 4 bullets). **5 new workflow error codes added to 01 §15.1** (single source of truth, EN+ZH synced): `WORKFLOW_INVALID`, `MAX_ITERATIONS_EXCEEDED`, `COMPENSATION_FAILED`, `JOIN_FAILED`, `TRIGGER_MISFIRE` — bringing the enum from 12 to 17 codes. **11 gaps resolved:** compensation naming conflict (`compensate` vs `onFailure` → scoped distinctly), `requiresDevices` absent from 05 (now cross-referenced from 03 §8.5), no workflow error codes (5 added), pipeline re-entry point unspecified (Stage 6 Authorize, justified), `WorkflowRef.body` opaque parsing location (compile pass), three ref-token overlap (disambiguated), no voice trigger (added as manual `source` variant), no workflow-lifecycle `RuntimeEvent` variants (Run-level events reused, documented), engine absent from boot order (intentionally stateless, documented), parallel form canonicalization (algorithm specified), open IR encoding question (01 §19 #2 — JSON confirmed by this design). No content in 02/03/06/07/08/09 was modified; 01 §15.1/§15.2 received only the 5 new error code additions.
+
+---
+
+---
+
+## [0.0.4] - 2026-09-06
+
+*首个 JVM 全量发布：11 个 library + BOM 一起进入 Central（此前 v0.0.1–v0.0.3 仅为 `mcos-android-sdk` 的 Central 冒烟）。本段切片 = origin/main 之上的三个提交：item 53 远程企业策略下发、item 54 fail-closed Stage-10 审计、item 55 调度器热调参；主线上早于这三者的其余累积代码（item 45–52 等）随本版首次发布、未另作 changelog 分段。*
+
+发布门禁期间另收录四处修复：`DirectorySandbox.list/tempFile` 输出统一为虚拟 `/` 分隔路径（Windows JVM 下不再泄出原生 `\`，返回值可回喂 `read`/`write`，Android 行为零变化）；`mcos-index-server` 的 `AvScannerTest` 外部扫描器 wrapper 改为按宿主 OS 生成（Windows 走 `cmd /c` 批处理），裁决语义不变；`RunScheduler.shutdown` 快照并发在飞 job 的 `ConcurrentHashMap` 时改用 hasNext 优先迭代——Kotlin `Collection.toList()` 对 `size==1` 走 `iterator().next()` 捷径跳过 `hasNext()`，恰好撞上 finishing worker 的并发 `remove` 时弱一致迭代器会抛 `NoSuchElementException`（CI 与本地各复现于 `McosRuntimeSchedulerTest` S1/S2 的 tearDown，属 shutdown 自身竞态而非用例断言）；`DeviceIsolatedPluginTest` DF2 的 pid 断言原写死"桌面 JVM 无 `/proc` 故 pid 为 `JsonNull`"，但 Linux CI runner 可读 `/proc/self/stat`、handler 会如实返回数字 pid——断言改为按宿主是否可读 `/proc/self/stat` 断言相应形态（`/proc` 是 Android/Linux 专属，macOS/Windows 才取 `JsonNull` 分支），本地与 CI 都能过。
+
+### 调度器运行时热调参 — `RunScheduler.reconfigure`（2026-09-06）
+
+03 §19.1 "hot-reload" 的代码落地（item 55）：`SchedulerConfig` 顶部与 §5 行曾诚实标注 "热调参仅限构建期（信号量与 worker 构建时固定）"，本切片把该缺口收掉，保留诚实边界（通道容量/每插件 limiter 仍构建期固定，漂移响亮拒绝）。
+
+- **原语 `scheduler/RunConcurrencyGate`**：取代全局 `Semaphore(maxConcurrentInvokes)` 的可调大小计数门——上调先把新许可交给等待者（FIFO）；下调只收回空闲许可，在飞许可绝不回收（§19.1：在飞 run 不被中断，并发随 body 结束衰减到新上限）；排队中取消的等待者自行摘出（无许可泄漏）。
+- **`RunScheduler.reconfigure(new)`**：返回先前 config 供宿主记录；`maxConcurrentInvokes` 校验到 §19.1 的 1..16（非法值 `IllegalArgumentException` 响亮拒绝、绝不静默取整）；实时应用全局上限（重设闸门 + 为上调用补足每通道 worker，防构建期池饿死）、退避曲线（自下一次拒绝计算生效：500 ms → 1 s 基线同一升级 500 → 2 000 ms）、背压阈值。构建期字段（`laneCapacity`/`drainGraceMs`/每插件上限）变化即拒绝——调度器与启动时定尺寸的 Executor limiter 永不静默分叉。
+- **facade**：`McosRuntime.reconfigureScheduler(new)`；注入自定义调度器的宿主直接调 `reconfigure`。诚实边界：调度器级旋钮——完整 §19 RuntimeConfig 来源/优先级管理器留待后续切片。
+- **测试 +12 JVM**：`RunConcurrencyGateTest` 6（可调上限语义）· `RunSchedulerRetuneTest` 4（热上调/热下调/退避重调/非法与关停后拒绝）· `McosRuntimeSchedulerRetuneTest` 2（facade 重调 + 返回旧 config、构建期漂移与关停后拒绝）。**基线 1457/1645 → 1469/1657**。
+
+### fail-closed Stage-10 审计 — `auditFailClosed` 接线（2026-09-06）
+
+03 §13.3 / 08 §14 的收口（item 54）：此前 `AuditLog` 的 Stage-10 写是 fire-and-forget——磁盘满等写失败被静默吞掉，规范里"enterprise 下可配置 fail-closed（run 以 `INTERNAL` 失败）"没有代码路径。本切片把持久化确认与 fail-closed 决策接上。
+
+- **Sink 契约**：`AuditLog.appendVerified(record)`——`append` 的可挂起持久化确认变体，默认即历史 fire-and-forget（永远成功），只有能观察持久化的 sink 覆盖它：`FileAuditLog` 由单写者在行真正写入并 flush 后作答（不可写路径 / 写失败 / 写者已死 → `false`；失败仍保留内存索引，非 fail-closed 流量与从前一致降级 memory-only）；`InMemoryAuditLog` 回答活动写者是否接收（未 start / 已 stop → `false`）；`NullAuditLog` 刻意永远 `false`（空 sink 无法满足 fail-closed——配错即响亮失败）。
+- **强制**：`SecurityConfig.auditFailClosed`（默认 `false`）驱动 Executor Stage 10——置位时记录写需确认，拒绝 → run 以 `Err INTERNAL` 失败（message 点名 `auditFailClosed=true`）；`WorkflowEngine` 对聚合记录取自己的 `auditFailClosed`——写拒绝把本应 COMPLETED 的 workflow 翻 FAILED + INTERNAL 步骤。
+- **facade**：`McosRuntime.Builder.withAuditFailClosed(true)` 接线默认 executor/引擎；`withExecutor`/`withWorkflowEngine` 注入方在组件上直接置位（builder 已注明）。
+- **测试 +13 JVM**：`AuditFailClosedTest` 6（sink 语义）· `AuditFailClosedWiringTest` 5（Executor/WorkflowEngine 强制）· `McosRuntimeAuditFailClosedTest` 2（facade 端到端：置位 → `RunFailed` 点名 auditFailClosed；默认 → 同一 run `RunSucceeded`）。**基线 1444/1632 → 1457/1645**。
+- **诚实边界**：内存/空 sink 的 "verified" 只保证活写者接收，非磁盘持久化（加密落盘仍待 SQLCipher 切片）；ack 路径依赖写者存活——与既有 `flush()` 同款风险姿态。
+
+### 远程企业策略下发 — `HttpEnterprisePolicySource` + mcos-server `/enterprise/policy` 管理通道（2026-09-06）
+
+08 §13.3 的 P3 剩余项收口：此前企业策略只能经 fixed/file 源送达，"经 `mcos-server` 或 MDM 下发"这条通道没有代码。本切片把它做成纯 JVM、可整链验证的交付。
+
+- **`HttpEnterprisePolicySource`**（`mcos-security`）：HTTP(S) 周期拉取策略文档，逐字执行 §13.3 语义——节奏按 `refreshIntervalMs` 节流（默认 3 600 000 ms = 规范的"每 1 小时"，间隔是两次网络拉取间的最短间距，首次访问必拉，拉取跑在 `current()` 调用线程上、绝不抛错）；传输失败/非 2xx → 服务上一份好策略并发 `PolicyFetchFailed`，无缓存 → `FAIL_CLOSED`；解析/版本失败 → `FAIL_CLOSED` + 携带肇事文档 SHA-256 指纹的 `PolicyParseFailed`；成功 → `PolicyUpdated`（旧/新版本 + 签发方）；内容未变（同 SHA-256）由缓存供出、不重复解析也不重发事件；解析失败后保持 `FAIL_CLOSED` 直到再次拿到可解析字节再恢复（H10 钉死"服务器重发与缓存完全相同字节"的边界——FAIL_CLOSED 是状态不是粘性缓存）。拉取缝 `EnterprisePolicyHttpTransport`（fun interface，MUST NOT throw）。
+- **`JdkEnterprisePolicyHttpTransport`**（`mcos-runtime-core`）：默认 JVM 实现——`java.net.http`、可选 bearer token、5 s 连接 / 15 s 请求超时、非 2xx 折入 `Failure`。Android 无 `java.net.http`，Android 宿主稍后自供 `HttpURLConnection` 传输（与 `SyncBlobTransport`/`LlmHttpTransport` 同款缝切分）。
+- **`mcos-server` 管理通道**：新增 `PUT|GET|DELETE /enterprise/policy`，挂在既有强制 Bearer token 面上——blob 服务器**唯一**会解析的文档：`PUT` 用 `EnterprisePolicy.parse` 校验，畸形/不支持版本 JSON 拒 400（运营方笔误上传即被拦下，而不是推给客户端让它们下次拉取时 fail closed）、超大（> 1 MiB）拒 413、落已知槽位且重启持久化。
+- **测试 +25 JVM**：`HttpEnterprisePolicySourceTest` H1-H11 · `JdkEnterprisePolicyHttpTransportTest` JT1-JT4 · `PolicyEndpointTest` EP1-EP10（live-server + 真实客户端链互操作：401/404 fail-closed、上传校验、鉴权、删除幂等、重启持久化、热更新）。**基线 1419/1607 → 1444/1632**。
+- **诚实边界**：MDM（Android Enterprise）臂属设备侧，待 Android `HttpURLConnection` 传输（或 managed-config 源）后续接入，本仓库无需模拟器或 MDM；源内无后台调度器——宿主启动调一次 `current()` 即预热；§13.3 第 5 步的 ConfigChanged 审计记录仍是宿主消费侧（源发生命周期事件）。
+- **文档**：08-security §13.3 as-built（en/zh）· `11-implementation-status` §6 补回 item 52 条目（index-server + 共享 `CiGateEngine` + `market` 套件回填）并新增 item 53（远程策略下发，en/zh 镜像）· REPOSITORIES（en/zh）"远程策略下发仍为 P3" → 已落地 · `mcos-server/README.md` REST 表 + 企业策略通道章节。
 
 ---
 
