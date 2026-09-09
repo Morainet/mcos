@@ -23,9 +23,12 @@ internal interface AvScanner {
  *  1. sha256 denylist file (`<data-dir>/av-denylist.txt`, one hex hash per line) —
  *     a hit is [AvVerdict.MALICIOUS], authoritative and checked first;
  *  2. an external scanner command (`MCOS_AV_SCANNER_CMD`, §8.3) that receives the
- *     artifact path on stdin and prints `CLEAN` / `MALICIOUS`;
- *  3. otherwise [AvVerdict.UNSCANNED] (with a denylist present but no hit, the file
- *     acts as a wired engine and reports CLEAN — preserving prior behaviour).
+ *     artifact path on stdin and prints `CLEAN` / `MALICIOUS`. Once wired it is
+ *     authoritative: a failure to produce a verdict yields
+ *     [AvVerdict.UNSCANNED], never a fallback to CLEAN;
+ *  3. otherwise [AvVerdict.UNSCANNED] (with a denylist present but no hit and no
+ *     external engine, the denylist acts as the wired engine and reports CLEAN
+ *     — preserving prior behaviour).
  */
 internal class CompositeAvScanner(
     private val denylistFile: Path?,
@@ -38,8 +41,15 @@ internal class CompositeAvScanner(
         val denylist = denylistFile?.let { loadSha256Denylist(it) } ?: emptySet()
         if (sha in denylist) return ArtifactScan(AvVerdict.MALICIOUS, "sha256-denylist")
 
-        scannerCommand?.let { command ->
-            runExternal(command, artifactPath)?.let { return it }
+        // An external engine, once wired, is authoritative for CLEAN: if it
+        // cannot produce a verdict (launch failure, timeout, non-zero exit,
+        // unrecognised output) the outcome is UNSCANNED → human review. The
+        // failure must NOT fall through to the denylist's CLEAN below — a hash
+        // list that simply did not match is not a scan that happened, and
+        // reporting CLEAN here would let a crashed scanner approve malware.
+        if (scannerCommand != null) {
+            return runExternal(scannerCommand, artifactPath)
+                ?: ArtifactScan(AvVerdict.UNSCANNED, "external-scanner-unavailable")
         }
 
         val denylistWired = denylistFile != null && Files.exists(denylistFile)

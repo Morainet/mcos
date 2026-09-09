@@ -158,9 +158,9 @@ internal class IndexServices(
         }
         val signingKey = publisher.keys.firstOrNull { it.keyId == sig.signingKeyId && it.status.name == "ACTIVE" }
         val checks = mutableListOf<GateCheck>()
-        val extraFails = mutableListOf<GateCheck>()
+        val extraChecks = mutableListOf<GateCheck>()
         if (signingKey == null) {
-            extraFails += GateCheck.fail(
+            extraChecks += GateCheck.fail(
                 8, "Signature verification",
                 "signingKeyId '${sig.signingKeyId}' is not an ACTIVE key of publisher '${publisher.id}'",
                 manifest.id,
@@ -187,14 +187,14 @@ internal class IndexServices(
                 val result = verifier.verify(artifactBytes, sig, manifest.id)
                 if (result !is VerifyResult.Verified) {
                     val reason = (result as? VerifyResult.Rejected)?.reason ?: "unknown"
-                    extraFails += GateCheck.fail(
+                    extraChecks += GateCheck.fail(
                         8, "Signature verification",
                         "signature rejected for key '${sig.signingKeyId}': $reason",
                         manifest.id,
                     )
                 }
             } catch (e: Exception) {
-                extraFails += GateCheck.fail(
+                extraChecks += GateCheck.fail(
                     8, "Signature verification",
                     "signature verification error: ${e.message}",
                     manifest.id,
@@ -205,12 +205,19 @@ internal class IndexServices(
         // for `{{secret.*}}` markers / `x-mcos-secret` (a compressed byte scan
         // would never see inside zip payloads). Only small textual entries are
         // scanned; oversized/binary entries are skipped.
-        if (containsSecretLiteral(artifactBytes)) {
-            extraFails += GateCheck.fail(
+        when (containsSecretLiteral(artifactBytes)) {
+            true -> extraChecks += GateCheck.fail(
                 7, "Secret containment",
                 "artifact contains '{{secret.*}}' or 'x-mcos-secret' literals",
                 manifest.id,
             )
+            null -> extraChecks += GateCheck.warning(
+                7, "Secret containment",
+                "artifact could not be scanned for '{{secret.*}}' literals — " +
+                    "routes to human review",
+                manifest.id,
+            )
+            false -> Unit
         }
         // Gate 9: AV seam (sha256 denylist + optional external scanner command;
         // no engine ⇒ UNSCANNED). The external scanner reads a real path, so the
@@ -238,10 +245,16 @@ internal class IndexServices(
             ),
         )
         val engineReport = engine.evaluate(manifest, scan)
-        checks += engineReport.checks + extraFails
+        checks += engineReport.checks + extraChecks
 
         val overall = when {
-            extraFails.any { it.severity == "error" } -> ReviewOverall.CI_REJECTED
+            extraChecks.any { it.severity == "error" } -> ReviewOverall.CI_REJECTED
+            // An unscannable artifact is a gate-7 warning, and a warning must
+            // upgrade an otherwise-clean verdict to human review (09 §5.2) —
+            // without this branch it would be recorded in `checks` yet silently
+            // ignored here, which is the fail-open this gate exists to prevent.
+            extraChecks.any { it.severity == "warning" } &&
+                engineReport.overall != ReviewOverall.CI_REJECTED -> ReviewOverall.HUMAN_REVIEW
             else -> engineReport.overall
         }
         val report = CiReviewReport(overall, checks.sortedBy { it.gate })
@@ -656,8 +669,16 @@ internal class IndexServices(
         )
     }
 
-    /** Gate 7 scan (12-index-server §6): secret literals inside zip entries. */
-    private fun containsSecretLiteral(artifactBytes: ByteArray): Boolean {
+    /**
+     * Gate 7 scan (12-index-server §6): secret literals inside zip entries.
+     *
+     * Three states, deliberately: `true` = a secret literal was found,
+     * `false` = the scan ran and found none, `null` = the artifact could not
+     * be scanned. A scan that did not complete is **not** evidence of
+     * absence, so the caller escalates `null` to human review rather than
+     * letting an unreadable artifact pass the gate.
+     */
+    private fun containsSecretLiteral(artifactBytes: ByteArray): Boolean? {
         if (SECRET_RE.containsMatchIn(artifactBytes.toString(Charsets.ISO_8859_1))) return true
         return try {
             var found = false
@@ -685,9 +706,10 @@ internal class IndexServices(
             }
             found
         } catch (e: Exception) {
-            // The .mcos was already validated upstream (zip header + manifest
-            // decode); a scan failure here must not fabricate a reject.
-            false
+            // Fail closed in both directions: a failed scan must neither
+            // fabricate a reject nor fabricate a pass. `null` tells the caller
+            // "unknown", which becomes a gate-7 warning → human review.
+            null
         }
     }
 

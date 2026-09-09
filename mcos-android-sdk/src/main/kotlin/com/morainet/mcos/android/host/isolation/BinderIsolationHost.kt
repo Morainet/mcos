@@ -12,6 +12,7 @@ import com.morainet.mcos.runtime.core.executor.IsolationHost
 import com.morainet.mcos.security.AuthStampSigner
 import com.morainet.mcos.sdk.CommandResult
 import com.morainet.mcos.sdk.HostServices
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.sync.Mutex
@@ -37,8 +38,9 @@ import java.util.concurrent.ConcurrentHashMap
  * invoke reconnects (a stale endpoint would throw `DeadObjectException`,
  * which maps to `PLUGIN_ERROR`/`isolation_transport_failure` anyway;
  * re-binding is the recovery, not the safety net). Only the bind/cache
- * bookkeeping runs under the mutex — the plugin run itself dispatches
- * lock-free so one plugin cannot block another's first invoke.
+ * bookkeeping runs under a **per-plugin** lock — the plugin run itself
+ * dispatches lock-free, and a slow bind of one plugin never blocks another's
+ * first invoke.
  *
  * One [IsolatedFacadeServer] per plugin id pins the §8.2 admission (who the
  * facade agrees to serve) at bind time; the expected UID is this app's own
@@ -69,9 +71,13 @@ class BinderIsolationHost(
     private val bindTimeoutMs: Long = 10_000,
 ) : IsolationHost {
 
-    private val mutex = Mutex()
+    // Per-plugin bind serialization. A single global mutex here would let the
+    // first bind of plugin A (up to bindTimeoutMs) block the first invoke of
+    // every other plugin — the class KDoc promises it does not.
+    private val bindLocks = ConcurrentHashMap<String, Mutex>()
 
-    // Written under [mutex], cleared by death recipients from Binder threads.
+    // Guarded by the per-plugin bind lock; also cleared by death recipients
+    // running on Binder threads.
     private val connections = ConcurrentHashMap<String, PluginConnection>()
 
     private class PluginConnection(
@@ -93,13 +99,21 @@ class BinderIsolationHost(
         ).invoke(request)
     }
 
-    /** Bind/cache bookkeeping only; the invocation itself runs lock-free. */
-    private suspend fun endpointFor(pluginId: String): IBinder? = mutex.withLock {
-        connections[pluginId]?.takeIf { it.endpoint.pingBinder() }?.let { return it.endpoint }
-        connections.remove(pluginId)?.let { release(pluginId, it) }
-        bind(pluginId)?.let { connection ->
-            connections[pluginId] = connection
-            connection.endpoint
+    /**
+     * Bind/cache bookkeeping for [pluginId]. Only same-plugin bookkeeping
+     * serializes: the lock is per plugin id, so a slow bind of one plugin
+     * cannot delay another's first invoke. The invocation itself runs
+     * lock-free.
+     */
+    private suspend fun endpointFor(pluginId: String): IBinder? {
+        val lock = bindLocks.computeIfAbsent(pluginId) { Mutex() }
+        return lock.withLock {
+            connections[pluginId]?.takeIf { it.endpoint.pingBinder() }?.let { return it.endpoint }
+            connections.remove(pluginId)?.let { release(pluginId, it) }
+            bind(pluginId)?.let { connection ->
+                connections[pluginId] = connection
+                connection.endpoint
+            }
         }
     }
 
@@ -144,9 +158,14 @@ class BinderIsolationHost(
             }
             endpoint.linkToDeath(deathWatch, 0)
             PluginConnection(endpoint, serviceConnection, deathWatch)
-        } catch (e: TimeoutCancellationException) {
+        } catch (e: CancellationException) {
+            // Every cancellation path must release the binding, not just the
+            // bind timeout: a run cancelled for any other reason would leak
+            // the ServiceConnection and keep the plugin process alive. The
+            // timeout is the only cancellation that is a legitimate "no
+            // endpoint" outcome; anything else propagates.
             context.unbindService(serviceConnection)
-            null
+            if (e is TimeoutCancellationException) null else throw e
         }
     }
 

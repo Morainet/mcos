@@ -10,6 +10,23 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### 代码质量审查：fail-closed 缺口与取消语义收口（2026-09-09）
+
+一次针对"绝不假成功"原则的专项审查，修掉 9 处**成功路径扎实、异常路径事后补**的缺口——它们违反的都是项目自己写在规范里的原则。另有一项经查为规范契约、非缺陷（见末条）。
+
+- **AV 扫描器不再伪造 CLEAN**（`mcos-index-server`）：外部扫描器启动失败 / 超时 / 非零退出 / 输出不识别时，只要配了 denylist 文件，旧逻辑就落到"denylist 命中检查通过 → CLEAN"——一次扫描进程崩溃等价于"已扫描且干净"，恶意样本可过 gate 9 直接 APPROVED。现在**一旦接了外部引擎它就是权威**：拿不到结论即 `UNSCANNED`（→ 人工复核），绝不再回落到 CLEAN。原有失败用例恰好传 `denylistFile = null`，从未走到这条分支，故补 `AvScannerTest` 覆盖真实配置。
+- **验签不再被缓存绕过吊销**（`mcos-security`）：blocklist 检查原本排在缓存查询**之后**，而缓存 TTL 是 7 天——包被吊销后 7 天内 `verify` 仍会缓存命中返回 `Verified`，`rehydrate` / 重装能把已摘掉的包重新注册回来。现提到缓存**之前**；blocklist 是本地查询，快路径无可测代价。`V17` 钉死"先验证建立缓存 → 再吊销 → 立即拒绝"。
+- **隔离边界 `sandbox.delete` 不再永远返回 true**（`mcos-android-sdk`）：服务端发 `{"deleted": false}`，代理侧只判 `.get("deleted") != null`（键存在即真），删除失败也报成功。现按布尔值解析，缺字段视为协议错误而不是成功。
+- **设备互斥锁的释放不再依赖可取消挂起**（`mcos-runtime-core`）：`finally` 原以 `bookkeeping.withLock` 开头——它是挂起点，若在 bookkeeping 争用期间被取消（Executor `withTimeout` 或显式 `cancel`），抛 `CancellationException` 使其后的 `releaseAll` 永不执行，设备锁永久泄漏。改为：先做同步的 `releaseAll`，bookkeeping 用普通 monitor（临界区本就不挂起）。顺带修掉"先清注册、后释放锁"的顺序问题——那会开出同 runId 并发调用自死锁的窗口。`DM9` 锁定"取消后锁确实释放且可被下一 run 获得"。
+- **Gate 7 扫描失败不再等于"没有密钥"**（`mcos-index-server`）：`containsSecretLiteral` 异常时返回 `false` = 未发现 = 放行。改为三态 `Boolean?`（`null` = 无法扫描），调用方升级为 gate-7 **warning**；同时补上 overall 判定里缺失的"warning 升级 HUMAN_REVIEW"分支——否则 warning 只写进 `checks` 却在裁决时被静默忽略。既不伪造 reject，也不伪造 pass。
+- **补偿循环不再吞掉取消**（`mcos-runtime-core`）：`WorkflowEngine.executeTry` 的 `catch (_: Exception)` 会捕获 `CancellationException`，把取消变成 `COMPENSATION_FAILED` 并让工作流继续跑。现与 `execute` 一致：先 `catch (CancellationException) { throw e }`。
+- **审计 `flush()` 不再可能永久挂起**（`mcos-security`）：`FileAuditLog` / `InMemoryAuditLog` 的 `flush` 丢弃了 `trySend` 的返回值——channel 若在 `isActive` 检查之后被 `stop()` 关闭，sentinel 无人消费，`await()` 永久挂起（正是该方法 P0-C5 注释要防的场景）。现与 `appendVerified` 一致：发送失败即返回。
+- **绑定不再因非超时取消而泄漏**（`mcos-android-sdk`）：`BinderIsolationHost.bind` 只 catch `TimeoutCancellationException` 才 `unbindService`；其他取消路径会泄漏 ServiceConnection 并拖住插件进程。现 catch `CancellationException`，超时仍是"无 endpoint"的正常结果，其余向上传播。
+- **绑定锁改为按插件**（`mcos-android-sdk`）：`endpointFor` 原用单一全局 mutex 包住整个 `bind`（内含最长 `bindTimeoutMs` 的等待），插件 A 的首次绑定会阻塞 B / C 的首次调用——与该文件 KDoc 的承诺相反。改为 per-pluginId 锁。
+- **一项撤回**：`AndroidNetService` 把传输失败映射为 `HttpResponse(status = 0)` 曾被列为"假成功"。经查 04 §6.2 明确写了 *"maps transport failures to an honest `status = 0` response with the failure text as body"* 并标为 ✅ as-built —— **代码符合规范，不是缺陷**，故不改。`RunScheduler.shutdown()` 的 `runBlocking` 同样只补调用方约束文档（不可从受限 dispatcher 线程调用），未改签名。
+
+测试：新增 `DM9` / `V17` / AV denylist 三个用例；全量 `test` + `:mcos-conformance:conformance`（65/65）+ `:mcos-android-sdk:compileDebugKotlin` 全绿。
+
 ## [0.0.6] - 2026-09-08
 
 ### 发布流水线：Central deployment 文件数治理（2026-09-08）

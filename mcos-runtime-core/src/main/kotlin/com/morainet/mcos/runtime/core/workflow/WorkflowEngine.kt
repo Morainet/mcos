@@ -500,6 +500,13 @@ class WorkflowEngine(
             for (compensateStep in step.compensation) {
                 try {
                     executeStep(compensateStep, ctx, collector)
+                } catch (e: CancellationException) {
+                    // Structured concurrency: a cancelled run must stay
+                    // cancelled. Catching this as a generic Exception would
+                    // turn the cancellation into a COMPENSATION_FAILED step
+                    // and let the workflow continue as if nothing interrupted
+                    // it — the same rethrow `execute` already does (above).
+                    throw e
                 } catch (_: Exception) {
                     collector.add(
                         WorkflowStepResult(

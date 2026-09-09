@@ -119,4 +119,28 @@ class AvScannerTest {
             )
         }
     }
+
+    @Test
+    fun `external scanner failure is UNSCANNED even when a denylist is wired`() {
+        val dir = tempDir()
+        val bytes = "payload".toByteArray()
+        // The regression this pins: a denylist file makes the scanner
+        // "wired", so a FAILED external scan used to fall through and report
+        // CLEAN — a crashed scanner approved the artifact. The pre-existing
+        // failure cases pass `denylistFile = null` and so never reached the
+        // fall-through branch at all.
+        val denylist = dir.resolve("av-denylist.txt")
+        Files.writeString(denylist, "0000000000000000000000000000000000000000000000000000000000000000\n")
+
+        val failing = CompositeAvScanner(denylist, scannerScript(dir, "CLEAN", exitCode = 3))
+        assertEquals(AvVerdict.UNSCANNED, failing.scan(stageArtifact(dir, bytes), bytes).verdict)
+
+        val unlaunchable = CompositeAvScanner(denylist, "/nonexistent/scanner-binary")
+        assertEquals(AvVerdict.UNSCANNED, unlaunchable.scan(stageArtifact(dir, bytes), bytes).verdict)
+
+        // Control: with no external engine the denylist IS the engine, so a
+        // non-matching artifact legitimately reports CLEAN.
+        val denylistOnly = CompositeAvScanner(denylist, null)
+        assertEquals(AvVerdict.CLEAN, denylistOnly.scan(stageArtifact(dir, bytes), bytes).verdict)
+    }
 }

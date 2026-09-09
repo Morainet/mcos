@@ -162,7 +162,11 @@ class FileAuditLog(
         val job = writerJob
         if (job == null || !job.isActive) return
         val sentinel = CompletableDeferred<Unit>()
-        channel.trySend(ChannelMsg.Flush(sentinel))
+        // A failed trySend means there is no consumer (a concurrent stop()
+        // closed the channel between the isActive check and here); awaiting a
+        // sentinel nobody will consume is precisely the deadlock this guard
+        // exists to prevent.
+        if (!channel.trySend(ChannelMsg.Flush(sentinel)).isSuccess) return
         sentinel.await()
     }
 

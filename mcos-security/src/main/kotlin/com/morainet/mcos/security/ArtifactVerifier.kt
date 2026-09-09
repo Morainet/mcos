@@ -36,9 +36,12 @@ sealed class VerifyResult {
  * 1. SHA-256 integrity check against the declared payload hash.
  * 2. Resolve the signing key from the [PublisherKeyStore].
  * 3. Key status check — REVOKED keys are rejected.
- * 4. Signature verification (Ed25519 preferred, RSA-PSS-4096 legacy).
- * 5. Blocklist check by (packageId, version).
- * 6. Cache the result keyed by (signingKeyId, payloadSha256).
+ * 4. Blocklist check by (packageId, version) — evaluated *before* the cache
+ *    lookup, so a revocation takes effect immediately rather than at cache
+ *    expiry.
+ * 5. Verification cache lookup (offline fast path).
+ * 6. Signature verification (Ed25519 preferred, RSA-PSS-4096 legacy).
+ * 7. Cache the result keyed by (signingKeyId, payloadSha256).
  *
  * Failures are fail-closed: any step failure yields [VerifyResult.Rejected].
  */
@@ -88,7 +91,17 @@ class ArtifactVerifier(
             return VerifyResult.Rejected(reason = "key_revoked", keyId = signature.signingKeyId)
         }
 
-        // 4. Check the verification cache first (offline fast path).
+        // 4. Blocklist check — deliberately BEFORE the cache. A package revoked
+        //    *after* it was verified must not keep riding a cached `trusted`
+        //    entry for the rest of the cache TTL (7 days); that would silently
+        //    defeat emergency revocation (09 §6.3 / §14.4). The blocklist is a
+        //    local lookup, so this costs nothing measurable on the fast path.
+        if (blocklist.isBlocklisted(packageId, version)) {
+            cache.put(signature.signingKeyId, computedHash, VerifyCacheEntry(clock(), trusted = false))
+            return VerifyResult.Rejected(reason = "blocklisted", keyId = signature.signingKeyId)
+        }
+
+        // 5. Check the verification cache (offline fast path).
         val cached = cache.get(signature.signingKeyId, computedHash)
         if (cached != null) {
             return if (cached.trusted) {
@@ -98,7 +111,7 @@ class ArtifactVerifier(
             }
         }
 
-        // 5. Verify signature cryptographically.
+        // 6. Verify signature cryptographically.
         val publicKey = try {
             keyStore.publicKey(signature.signingKeyId)
         } catch (_: Exception) {
@@ -111,12 +124,6 @@ class ArtifactVerifier(
         if (!valid) {
             cache.put(signature.signingKeyId, computedHash, VerifyCacheEntry(clock(), trusted = false))
             return VerifyResult.Rejected(reason = "signature_invalid", keyId = signature.signingKeyId)
-        }
-
-        // 6. Blocklist check.
-        if (blocklist.isBlocklisted(packageId, version)) {
-            cache.put(signature.signingKeyId, computedHash, VerifyCacheEntry(clock(), trusted = false))
-            return VerifyResult.Rejected(reason = "blocklisted", keyId = signature.signingKeyId)
         }
 
         // 7. Cache the successful verification.
