@@ -6,6 +6,8 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
@@ -202,5 +204,34 @@ class DeviceMutexMapTest {
 
         release.complete(Unit)
         withTimeout(5_000) { first.await() }
+    }
+
+    @Test
+    fun `DM9-cancellation releases the devices instead of leaking them`() = runBlocking<Unit> {
+        val entered = CompletableDeferred<Unit>()
+        val job = async {
+            devices.withDevices("run-1", listOf("light-1")) {
+                entered.complete(Unit)
+                awaitCancellation()
+            }
+        }
+        withTimeout(5_000) { entered.await() }
+        assertTrue(devices.heldDevices("run-1").contains("light-1"))
+
+        job.cancelAndJoin()
+
+        // Cancellation safety: the release must not depend on any cancellable
+        // suspension. The previous code put `bookkeeping.withLock` — a
+        // suspension point — *before* `releaseAll`, so a cancellation arriving
+        // while that lock was contended skipped the release and leaked the
+        // device permanently. Monitor + release-first makes it unconditional.
+        assertTrue(devices.heldDevices("run-1").isEmpty())
+
+        // The mutex is genuinely free, not merely unreported.
+        val secondEntered = CompletableDeferred<Unit>()
+        withTimeout(5_000) {
+            devices.withDevices("run-2", listOf("light-1")) { secondEntered.complete(Unit) }
+            secondEntered.await()
+        }
     }
 }

@@ -31,6 +31,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
@@ -178,7 +179,11 @@ class IsolatedHostServicesProxy(
 
         override suspend fun delete(path: String): Boolean =
             call(IsolationOps.OP_SANDBOX_DELETE, buildJsonObject { put("path", path) })
-                .get("deleted") != null
+                .booleanOrNull("deleted")
+                // A missing/non-boolean field is a protocol error, not a
+                // success: the old `!= null` test returned true even when the
+                // host reported `{"deleted": false}` (never fake success).
+                ?: unavailable("sandbox.delete")
 
         override suspend fun list(dir: String): List<SandboxEntry> =
             call(IsolationOps.OP_SANDBOX_LIST, buildJsonObject { put("dir", dir) })
@@ -271,6 +276,9 @@ class IsolatedHostServicesProxy(
 
 private fun JsonObject.stringOrNull(key: String): String? =
     (this[key] as? JsonPrimitive)?.takeIf { it !is JsonNull }?.contentOrNull
+
+private fun JsonObject.booleanOrNull(key: String): Boolean? =
+    (this[key] as? JsonPrimitive)?.takeIf { it !is JsonNull }?.booleanOrNull
 
 private fun JsonObject.intOrNull(key: String): Int? =
     longOrNullField(key)?.toInt()

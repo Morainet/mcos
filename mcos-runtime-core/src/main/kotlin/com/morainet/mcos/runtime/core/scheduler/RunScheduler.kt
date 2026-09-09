@@ -395,6 +395,13 @@ class RunScheduler(
      *
      * @return runIds whose bodies never ran (dropped at shutdown) — the caller
      *         should publish terminal `RunCancelled` events for them.
+     *
+     * Caller constraint: the drain uses `runBlocking`, so this must not be
+     * invoked from a thread of a limited-parallelism dispatcher that the
+     * scheduler's own workers also need — joining them from such a thread can
+     * starve them and turn the drain into a `drainGraceMs` timeout. Call it
+     * from an ordinary thread (main, or a test teardown); the
+     * `withTimeoutOrNull` drain is the backstop, not the plan.
      */
     fun shutdown(): List<String> {
         if (!shutdownFlag.compareAndSet(false, true)) return emptyList()

@@ -4,7 +4,6 @@ import com.morainet.mcos.runtime.core.error.McosErrorCode
 import com.morainet.mcos.sdk.McosException
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -28,6 +27,15 @@ import kotlinx.serialization.json.put
  *    that genuinely need to act on two devices must declare both in a single
  *    call.
  *
+ * Cancellation discipline (load-bearing): every release path runs the
+ * synchronous `releaseAll` **before** the bookkeeping cleanup, and the
+ * bookkeeping lock is a monitor rather than a coroutine `Mutex`. A
+ * `Mutex.withLock` inside a `finally` is a cancellable suspension point — if
+ * the run is already cancelled (Executor `withTimeout`, or an explicit
+ * `cancel()`) it throws and every statement after it is skipped, which would
+ * leak the device locks forever and permanently block every future run that
+ * needs those devices.
+ *
  * Driven by the WorkflowEngine: a step's device set is its literal
  * `requiresDevices` declaration (05 §5.0) plus ids resolved from the
  * command's `x-mcos-semantic: "device"` schema fields (03 §8.5 / 04 §4.5).
@@ -37,8 +45,13 @@ class DeviceMutexMap {
     private val mutexes = ConcurrentHashMap<String, Mutex>()
     private val heldByRun = ConcurrentHashMap<String, MutableSet<String>>()
 
-    /** Guards the heldByRun check-and-register / remove only (never a device wait). */
-    private val bookkeeping = Mutex()
+    /**
+     * Guards the heldByRun check-and-register / remove only (never a device
+     * wait). Deliberately a plain monitor rather than a coroutine `Mutex`:
+     * nothing under this lock suspends, and a monitor is not a cancellation
+     * point — so no `finally` block can skip the bookkeeping cleanup.
+     */
+    private val bookkeeping = Any()
 
     /**
      * Acquire all [devices] (deduplicated, sorted) for [runId], run [block],
@@ -58,7 +71,7 @@ class DeviceMutexMap {
         // second acquisition by the same runId sees the registration and is
         // rejected deterministically, rather than both racing past the check
         // and corrupting the held-by-run bookkeeping.
-        val held: List<String>? = bookkeeping.withLock {
+        val held: List<String>? = synchronized(bookkeeping) {
             val existing = heldByRun[runId]
             if (existing.isNullOrEmpty()) {
                 heldByRun[runId] = ConcurrentHashMap.newKeySet<String>().apply { addAll(requested) }
@@ -83,7 +96,9 @@ class DeviceMutexMap {
             )
         }
         // Sorted acquire-all-at-once; on failure mid-way, release what was
-        // taken and clear the run's registration.
+        // taken and clear the run's registration. `releaseAll` runs FIRST and
+        // is plain synchronous work: it can never be skipped by cancellation,
+        // so a cancelled run cannot leak its device locks.
         val acquired = mutableListOf<Mutex>()
         try {
             for (device in requested) {
@@ -92,15 +107,15 @@ class DeviceMutexMap {
                 acquired.add(mutex)
             }
         } catch (e: Throwable) {
-            bookkeeping.withLock { heldByRun.remove(runId) }
             releaseAll(acquired)
+            synchronized(bookkeeping) { heldByRun.remove(runId) }
             throw e
         }
         try {
             return block()
         } finally {
-            bookkeeping.withLock { heldByRun.remove(runId) }
             releaseAll(acquired)
+            synchronized(bookkeeping) { heldByRun.remove(runId) }
         }
     }
 
@@ -109,7 +124,7 @@ class DeviceMutexMap {
      * empty when none).
      */
     fun heldDevices(runId: String): List<String> =
-        heldByRun[runId]?.toList()?.sorted() ?: emptyList()
+        synchronized(bookkeeping) { heldByRun[runId]?.toList()?.sorted() ?: emptyList() }
 
     private fun releaseAll(acquired: List<Mutex>) {
         // Reverse order for symmetry with the sorted acquisition; every mutex in

@@ -408,7 +408,9 @@ class InMemoryAuditLog : AuditLog {
         val job = writerJob
         if (job == null || !job.isActive) return
         val sentinel = CompletableDeferred<Unit>()
-        writerChannel.trySend(ChannelMsg.Flush(sentinel))
+        // As in appendVerified: a failed trySend means no consumer, so awaiting
+        // the sentinel would hang forever.
+        if (!writerChannel.trySend(ChannelMsg.Flush(sentinel)).isSuccess) return
         sentinel.await()
     }
 

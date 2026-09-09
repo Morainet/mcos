@@ -311,4 +311,24 @@ class ArtifactVerifierTest {
         assertIs<VerifyResult.Verified>(result)
         assertFalse(result.fromCache)
     }
+
+    @Test
+    fun `V17-blocklist is checked before the cache so revocation is immediate`() {
+        val (store, keyPair) = keyStoreWith()
+        val payload = byteArrayOf(1, 2)
+        var blocked = false
+        val verifier = ArtifactVerifier(store, blocklist = Blocklist { _, _ -> blocked })
+        val signature = signatureFor(payload, keyPair)
+
+        // Verify while not blocklisted → trusted and cached.
+        assertIs<VerifyResult.Verified>(verifier.verify(payload, signature, "com.example.evil", "1.0.0"))
+
+        // Revoked afterwards. A cached `trusted` entry must not keep the
+        // package loadable for the rest of the 7-day TTL: the blocklist check
+        // runs before the cache lookup, so the revocation takes effect now.
+        blocked = true
+        val result = verifier.verify(payload, signature, "com.example.evil", "1.0.0")
+        assertIs<VerifyResult.Rejected>(result)
+        assertEquals("blocklisted", result.reason)
+    }
 }
