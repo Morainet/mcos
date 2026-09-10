@@ -46,6 +46,14 @@ jobs:
           --tests "com.morainet.mcos.runtime.core.parse.DslParserTest"
           --console=plain --no-daemon
 
+      # The Kernel 1.0 stabilization gate's regression harness (10 §17.1):
+      # protocol/IR/manifest/trust/marketplace/kernel surfaces, diffed against
+      # the committed baseline — a failing or unregistered case fails the PR.
+      - name: Conformance gate (kernel surfaces vs committed baseline)
+        run: >-
+          timeout -k 60s 8m ./gradlew :mcos-conformance:conformance
+          --console=plain --no-daemon
+
   # ── JVM tests, sharded to run in parallel ───────────────────────────────
   # Pure Kotlin/JVM modules (sdk + the runtime split: security, runtime-core,
   # llm, marketplace, facade + 4 plugins). Each shard is an independent job so

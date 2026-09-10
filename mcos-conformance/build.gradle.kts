@@ -75,17 +75,22 @@ val conformanceRun by tasks.registering(JavaExec::class) {
     )
 }
 
+// The baseline lives IN the repo (not build/) so CI can diff against it:
+// a case that starts failing, or a suite added without re-capturing, fails
+// the gate with exit 2 instead of silently passing.
+val conformanceBaselinePath = "mcos-conformance/baseline.json"
+
 val conformanceBaselineAdd by tasks.registering(JavaExec::class) {
     conformanceCli(
         "Run all conformance suites and capture the current pass set as a baseline JSON.",
-        "baseline-add", "--baseline", "build/conformance/baseline.json",
+        "baseline-add", "--baseline", conformanceBaselinePath,
     )
 }
 
 val conformanceBaselineCheck by tasks.registering(JavaExec::class) {
     conformanceCli(
         "Run all conformance suites and diff against the captured baseline JSON (CI gate).",
-        "baseline-check", "--baseline", "build/conformance/baseline.json",
+        "baseline-check", "--baseline", conformanceBaselinePath,
     )
 }
 

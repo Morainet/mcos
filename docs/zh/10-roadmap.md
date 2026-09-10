@@ -864,7 +864,7 @@ Kernel 1.0 **不是**一个功能版本。它是下面三份契约停止变动�
 
 ### 17.1 退出标准
 
-- [ ] §17.0 中每个表面都有一条**会随该表面变化而失败**的一致性用例 —— Command Protocol 表面由 `dsl`/`ir`/`kernel` 套件覆盖、Plugin Contract 表面由 `manifest`/`trust` 覆盖；Runtime Semantics 表面（Executor 阶段顺序、调度通道）由 JVM 单测钉住，但尚无专门的一致性用例。（`mcos-conformance` 即回归门——10 §6.4、09 §5.1；6 套件 / 69 用例。）
+- [x] §17.0 中每个表面都有一条**会随该表面变化而失败**的一致性用例 —— Command Protocol 表面由 `dsl`/`ir`/`kernel` 套件覆盖、Plugin Contract 表面由 `manifest`/`trust` 覆盖、Runtime Semantics 表面（Executor 阶段顺序）由 `kernel` 套件的阶段顺序用例覆盖。（`mcos-conformance` 即回归门——10 §6.4、09 §5.1；6 套件 / 72 用例，baseline 入库并在 CI 中比对。）*（2026-09-10，item 60。）*
 - [ ] 黄金 DSL↔IR 用例（`docs/fixtures/`，8 例）在一个完整发布周期内保持全绿且未改动。
 - [x] 可选能力模式完整：**每一个**宿主可能缺失的能力都是可空类型，并配有在案的 `UNAVAILABLE` 降级路径 —— 树中不存在任何假成功。*（2026-09-10，item 59。）*
 - [x] 错误码表（02 §10.3 + 01 §15.1）没有未分配或有歧义的编码；每个编码至少有一条测试断言它 —— `kernel` 套件钉住编码词汇表、retryable 集与测试覆盖登记表。*（2026-09-10，item 60。）*
@@ -877,7 +877,7 @@ Kernel 1.0 **不是**一个功能版本。它是下面三份契约停止变动�
 
 ### 17.3 状态
 
-**剩余项已收口（2026-09-10）；§17.1 五条标准已满足三条。** 卡住冻结的两项契约表面工作已完成（[11 item 59](./11-implementation-status.md)）：设备互斥键规范化（03 §8.5）与隔离进程的能力缺口（04 §6.1——跨 Binder 边界无假成功）。验证的一半也已到位（[11 item 60](./11-implementation-status.md)）：`kernel` 一致性套件钉住错误码词汇表、retryable 集与逐码测试覆盖登记表，并拒绝未来 `dslVersion`。门关闭前还剩：专门的 Runtime Semantics 一致性表面（Executor 阶段顺序、调度通道——目前仅由 JVM 单测钉住），以及黄金 fixtures 在一个完整发布周期内保持全绿。
+**剩余项已收口（2026-09-10）；§17.1 五条标准已满足四条。** 卡住冻结的两项契约表面工作已完成（[11 item 59](./11-implementation-status.md)）：设备互斥键规范化（03 §8.5）与隔离进程的能力缺口（04 §6.1——跨 Binder 边界无假成功）。验证的一半也已到位（[11 item 60](./11-implementation-status.md)）：`kernel` 一致性套件钉住错误码词汇表、retryable 集、逐码测试覆盖登记表、未来 `dslVersion` 拒绝与 Executor 阶段顺序——且套件在 CI 中对入库 baseline 比对。**唯一开放的标准是时间条件**：黄金 fixtures 在一个完整发布周期内保持全绿且未改动。该周期完成之日，即门关闭之时。
 
 ---
 

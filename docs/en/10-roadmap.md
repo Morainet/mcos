@@ -862,7 +862,7 @@ Kernel 1.0 is **not** a feature release. It is the moment the three contracts be
 
 ### 17.1 Exit Criteria
 
-- [ ] Every surface in §17.0 has a conformance case that **fails** when the surface changes — the Command Protocol surface is covered by the `dsl`/`ir`/`kernel` suites and the Plugin Contract surface by `manifest`/`trust`; the Runtime Semantics surface (executor stage order, scheduler lanes) is pinned by JVM unit tests but has no dedicated conformance cases yet. (`mcos-conformance` is the regression gate — 10 §6.4, 09 §5.1; 6 suites / 69 cases.)
+- [x] Every surface in §17.0 has a conformance case that **fails** when the surface changes — the Command Protocol surface by the `dsl`/`ir`/`kernel` suites, the Plugin Contract surface by `manifest`/`trust`, and the Runtime Semantics surface (executor stage order) by the `kernel` suite's stage-order cases. (`mcos-conformance` is the regression gate — 10 §6.4, 09 §5.1; 6 suites / 72 cases, baseline committed and diffed in CI.) *(2026-09-10, item 60.)*
 - [ ] The golden DSL↔IR fixtures (`docs/fixtures/`, 8 cases) stay green and unchanged for one full release cycle.
 - [x] The optional-capability pattern is complete: **every** capability a Host may lack is nullable with a documented `UNAVAILABLE` degradation — no fabricated success anywhere in the tree. *(2026-09-10, item 59.)*
 - [x] The error-code table (02 §10.3 + 01 §15.1) has no unassigned or ambiguous codes; every code has at least one test asserting it — the `kernel` suite pins the vocabulary, the retryable set, and the test-coverage registry. *(2026-09-10, item 60.)*
@@ -875,7 +875,7 @@ Kernel 1.0 is **not** a feature release. It is the moment the three contracts be
 
 ### 17.3 Status
 
-**Residuals closed (2026-09-10); 3 of 5 §17.1 criteria met.** The two contract-surface items that blocked the freeze are done ([11 item 59](./11-implementation-status.md)): device-mutex key canonicalization (03 §8.5) and the isolated-process capability gaps (04 §6.1 — no fabricated success across the Binder boundary). The verification half is also in place ([11 item 60](./11-implementation-status.md)): the `kernel` conformance suite pins the error-code vocabulary, retryable set, and per-code test-coverage registry, and rejects a future `dslVersion`. What remains before the gate closes: a dedicated Runtime Semantics conformance surface (executor stage order, scheduler lanes — currently pinned by JVM unit tests only), and the golden fixtures holding green for one full release cycle.
+**Residuals closed (2026-09-10); 4 of 5 §17.1 criteria met.** The two contract-surface items that blocked the freeze are done ([11 item 59](./11-implementation-status.md)): device-mutex key canonicalization (03 §8.5) and the isolated-process capability gaps (04 §6.1 — no fabricated success across the Binder boundary). The verification half is also in place ([11 item 60](./11-implementation-status.md)): the `kernel` conformance suite pins the error-code vocabulary, the retryable set, the per-code test-coverage registry, the future-`dslVersion` rejection, and the executor stage order — and the suite runs in CI against a committed baseline. **The one open criterion is time-bound:** the golden fixtures holding green and unchanged for one full release cycle. When that cycle completes, the gate closes.
 
 ---
 

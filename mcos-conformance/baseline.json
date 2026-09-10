@@ -1,0 +1,367 @@
+{
+    "version": "0.1.0",
+    "capturedAt": "2026-09-10T12:14:22.794015Z",
+    "spec": "10 §6.4 / 09 §5.1",
+    "cases": [
+        {
+            "suite": "dsl",
+            "case": "dsl-positive-01-empty-args",
+            "status": "pass"
+        },
+        {
+            "suite": "dsl",
+            "case": "dsl-positive-02-named-string",
+            "status": "pass"
+        },
+        {
+            "suite": "dsl",
+            "case": "dsl-positive-03-array-and-int",
+            "status": "pass"
+        },
+        {
+            "suite": "dsl",
+            "case": "dsl-positive-04-sequence",
+            "status": "pass"
+        },
+        {
+            "suite": "dsl",
+            "case": "dsl-positive-05-mixed-literals",
+            "status": "pass"
+        },
+        {
+            "suite": "dsl",
+            "case": "dsl-negative-06-nested-call",
+            "status": "pass"
+        },
+        {
+            "suite": "dsl",
+            "case": "dsl-negative-07-positional-arg",
+            "status": "pass"
+        },
+        {
+            "suite": "dsl",
+            "case": "dsl-negative-08-malformed",
+            "status": "pass"
+        },
+        {
+            "suite": "manifest",
+            "case": "manifest-gate1-valid",
+            "status": "pass"
+        },
+        {
+            "suite": "manifest",
+            "case": "manifest-gate1-missing-id",
+            "status": "pass"
+        },
+        {
+            "suite": "manifest",
+            "case": "manifest-gate1-missing-entry",
+            "status": "pass"
+        },
+        {
+            "suite": "manifest",
+            "case": "manifest-gate1-unknown-side-effect",
+            "status": "pass"
+        },
+        {
+            "suite": "manifest",
+            "case": "manifest-gate1-malformed-zip",
+            "status": "pass"
+        },
+        {
+            "suite": "manifest",
+            "case": "manifest-gate1-no-plugin-json",
+            "status": "pass"
+        },
+        {
+            "suite": "manifest",
+            "case": "manifest-gate2-reserved-mcos",
+            "status": "pass"
+        },
+        {
+            "suite": "manifest",
+            "case": "manifest-gate2-reserved-sys",
+            "status": "pass"
+        },
+        {
+            "suite": "manifest",
+            "case": "manifest-gate2-reserved-mcp",
+            "status": "pass"
+        },
+        {
+            "suite": "manifest",
+            "case": "manifest-gate2-reserved-std",
+            "status": "pass"
+        },
+        {
+            "suite": "manifest",
+            "case": "manifest-gate2-non-reserved",
+            "status": "pass"
+        },
+        {
+            "suite": "manifest",
+            "case": "manifest-gate3-duplicate-commands",
+            "status": "pass"
+        },
+        {
+            "suite": "manifest",
+            "case": "manifest-gate3-unique-commands",
+            "status": "pass"
+        },
+        {
+            "suite": "manifest",
+            "case": "manifest-gate7-recipe-secret-template",
+            "status": "pass"
+        },
+        {
+            "suite": "trust",
+            "case": "trust-artifact-ed25519-valid",
+            "status": "pass"
+        },
+        {
+            "suite": "trust",
+            "case": "trust-artifact-rsa-pss-4096-valid",
+            "status": "pass"
+        },
+        {
+            "suite": "trust",
+            "case": "trust-artifact-hash-mismatch",
+            "status": "pass"
+        },
+        {
+            "suite": "trust",
+            "case": "trust-artifact-unknown-key",
+            "status": "pass"
+        },
+        {
+            "suite": "trust",
+            "case": "trust-artifact-revoked-key",
+            "status": "pass"
+        },
+        {
+            "suite": "trust",
+            "case": "trust-artifact-algorithm-mismatch",
+            "status": "pass"
+        },
+        {
+            "suite": "trust",
+            "case": "trust-artifact-wrong-key",
+            "status": "pass"
+        },
+        {
+            "suite": "trust",
+            "case": "trust-artifact-blocklisted",
+            "status": "pass"
+        },
+        {
+            "suite": "trust",
+            "case": "trust-artifact-cache-hit",
+            "status": "pass"
+        },
+        {
+            "suite": "trust",
+            "case": "trust-artifact-malformed-signature",
+            "status": "pass"
+        },
+        {
+            "suite": "trust",
+            "case": "trust-gate-builtin",
+            "status": "pass"
+        },
+        {
+            "suite": "trust",
+            "case": "trust-gate-signed-verified",
+            "status": "pass"
+        },
+        {
+            "suite": "trust",
+            "case": "trust-gate-signed-no-verifier",
+            "status": "pass"
+        },
+        {
+            "suite": "trust",
+            "case": "trust-gate-sideload-debug",
+            "status": "pass"
+        },
+        {
+            "suite": "trust",
+            "case": "trust-gate-sideload-production",
+            "status": "pass"
+        },
+        {
+            "suite": "trust",
+            "case": "trust-gate-sideload-disabled-by-policy",
+            "status": "pass"
+        },
+        {
+            "suite": "trust",
+            "case": "trust-blocklist-signature-valid",
+            "status": "pass"
+        },
+        {
+            "suite": "trust",
+            "case": "trust-blocklist-signature-tampered",
+            "status": "pass"
+        },
+        {
+            "suite": "trust",
+            "case": "trust-blocklist-signature-missing",
+            "status": "pass"
+        },
+        {
+            "suite": "trust",
+            "case": "trust-blocklist-signature-blank",
+            "status": "pass"
+        },
+        {
+            "suite": "ir",
+            "case": "ir-invoke-defaults",
+            "status": "pass"
+        },
+        {
+            "suite": "ir",
+            "case": "ir-sequence-shape",
+            "status": "pass"
+        },
+        {
+            "suite": "ir",
+            "case": "ir-args-key-sort",
+            "status": "pass"
+        },
+        {
+            "suite": "ir",
+            "case": "ir-empty-args-object",
+            "status": "pass"
+        },
+        {
+            "suite": "ir",
+            "case": "ir-parse-error-known-code",
+            "status": "pass"
+        },
+        {
+            "suite": "ir",
+            "case": "ir-parse-error-location-one-based",
+            "status": "pass"
+        },
+        {
+            "suite": "market",
+            "case": "market-green-first-publication",
+            "status": "pass"
+        },
+        {
+            "suite": "market",
+            "case": "market-reserved-prefix-rejects",
+            "status": "pass"
+        },
+        {
+            "suite": "market",
+            "case": "market-read-with-egress-warns",
+            "status": "pass"
+        },
+        {
+            "suite": "market",
+            "case": "market-write-without-permissions-warns",
+            "status": "pass"
+        },
+        {
+            "suite": "market",
+            "case": "market-non-semver-rejects",
+            "status": "pass"
+        },
+        {
+            "suite": "market",
+            "case": "market-plugin-downgrade-rejects",
+            "status": "pass"
+        },
+        {
+            "suite": "market",
+            "case": "market-major-bump-requires-owned-command-major",
+            "status": "pass"
+        },
+        {
+            "suite": "market",
+            "case": "market-major-bump-with-command-major-green",
+            "status": "pass"
+        },
+        {
+            "suite": "market",
+            "case": "market-partial-locale-i18n-rejects",
+            "status": "pass"
+        },
+        {
+            "suite": "market",
+            "case": "market-complete-locale-green",
+            "status": "pass"
+        },
+        {
+            "suite": "market",
+            "case": "market-unscanned-routes-human-review",
+            "status": "pass"
+        },
+        {
+            "suite": "market",
+            "case": "market-malware-rejects",
+            "status": "pass"
+        },
+        {
+            "suite": "market",
+            "case": "market-claimed-command-rejects",
+            "status": "pass"
+        },
+        {
+            "suite": "market",
+            "case": "market-own-command-not-a-conflict",
+            "status": "pass"
+        },
+        {
+            "suite": "market",
+            "case": "market-future-runtime-rejects",
+            "status": "pass"
+        },
+        {
+            "suite": "market",
+            "case": "market-lowered-min-runtime-rejects",
+            "status": "pass"
+        },
+        {
+            "suite": "market",
+            "case": "market-error-precedes-warning",
+            "status": "pass"
+        },
+        {
+            "suite": "kernel",
+            "case": "kernel-error-code-vocabulary",
+            "status": "pass"
+        },
+        {
+            "suite": "kernel",
+            "case": "kernel-error-code-retryable",
+            "status": "pass"
+        },
+        {
+            "suite": "kernel",
+            "case": "kernel-error-code-test-coverage",
+            "status": "pass"
+        },
+        {
+            "suite": "kernel",
+            "case": "kernel-future-dsl-version-rejected",
+            "status": "pass"
+        },
+        {
+            "suite": "kernel",
+            "case": "kernel-stage-registry-before-schema",
+            "status": "pass"
+        },
+        {
+            "suite": "kernel",
+            "case": "kernel-stage-schema-before-handler",
+            "status": "pass"
+        },
+        {
+            "suite": "kernel",
+            "case": "kernel-stage-valid-call-runs-once",
+            "status": "pass"
+        }
+    ]
+}
