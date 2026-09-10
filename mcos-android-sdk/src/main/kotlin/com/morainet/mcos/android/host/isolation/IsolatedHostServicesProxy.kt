@@ -120,8 +120,12 @@ class IsolatedHostServicesProxy(
                     put("timeoutMs", req.timeoutMs)
                 },
             )
+            // A missing status is a protocol error, NOT a transport failure:
+            // `status = 0` is the *contract* for "transport failed" (04 §6.2),
+            // so defaulting to it would report a failure the host never had.
+            val status = reply.intOrNull("status") ?: unavailable("net.request")
             return HttpResponse(
-                status = reply.intOrNull("status") ?: 0,
+                status = status,
                 headers = (reply["headers"] as? JsonObject)?.mapValues { (_, values) ->
                     (values as? JsonArray)
                         ?.mapNotNull { it.jsonPrimitive.contentOrNull }
@@ -186,8 +190,12 @@ class IsolatedHostServicesProxy(
                 ?: unavailable("sandbox.delete")
 
         override suspend fun list(dir: String): List<SandboxEntry> =
+            // An empty directory replies with a present-but-empty "entries"
+            // array, so the Elvis fires only on a malformed reply — which must
+            // not be reported as "the directory is empty".
             call(IsolationOps.OP_SANDBOX_LIST, buildJsonObject { put("dir", dir) })
-                .get("entries")?.jsonArray?.map { decodeEntry(it.jsonObject) } ?: emptyList()
+                .get("entries")?.jsonArray?.map { decodeEntry(it.jsonObject) }
+                ?: unavailable("sandbox.list")
 
         override suspend fun tempFile(prefix: String, suffix: String): String =
             call(
@@ -212,7 +220,11 @@ class IsolatedHostServicesProxy(
         override fun monotonicMs(): Long = System.nanoTime() / 1_000_000
 
         private fun nowMsOverWire(): Long = runBlocking {
-            call(IsolationOps.OP_CLOCK_NOW, JsonObject(emptyMap())).longOrNullField("nowMs") ?: 0L
+            // A missing nowMs must not become epoch 0: a fabricated 1970
+            // timestamp would silently poison caches, expiry checks and audit
+            // entries far from the actual fault.
+            call(IsolationOps.OP_CLOCK_NOW, JsonObject(emptyMap())).longOrNullField("nowMs")
+                ?: unavailable("clock.now")
         }
     }
 
@@ -234,10 +246,17 @@ class IsolatedHostServicesProxy(
                 },
             )["resolved"]?.jsonObject ?: return ResolveResult.NotFound("isolation_decode")
             return when (reply.stringOrNull("kind")) {
-                "resolved" -> ResolveResult.Resolved(
-                    id = reply.stringOrNull("id") ?: "",
-                    confidence = reply["confidence"]?.jsonPrimitive?.contentOrNull?.toFloatOrNull() ?: 1.0f,
-                )
+                "resolved" -> {
+                    // An empty id would be a fabricated resolution: downstream
+                    // consumers (device mutex keys, memory paths) would treat
+                    // "" as a real identifier.
+                    val id = reply.stringOrNull("id")?.takeIf { it.isNotEmpty() }
+                        ?: return ResolveResult.NotFound("isolation_decode")
+                    ResolveResult.Resolved(
+                        id = id,
+                        confidence = reply["confidence"]?.jsonPrimitive?.contentOrNull?.toFloatOrNull() ?: 1.0f,
+                    )
+                }
                 "ambiguous" -> ResolveResult.Ambiguous(
                     candidates = reply["candidates"]?.jsonArray
                         ?.mapNotNull { it.jsonPrimitive.contentOrNull } ?: emptyList(),

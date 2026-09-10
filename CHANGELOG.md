@@ -10,6 +10,16 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### Kernel 1.0 稳定门剩余项收口——设备互斥键规范化 + 隔离代理诚实性（2026-09-10）
+
+10 §17.3 点名的两项卡冻结契约表面工作收口（item 59）。门**尚未关闭**——§17.1 剩余标准（错误码覆盖断言、逐表面 conformance 用例）是验证工作而非代码。
+
+- **设备互斥键规范化（03 §8.5，Runtime Semantics）**：`DeviceSemantics.resolveDeviceIds` 在字面量提取之上叠加尽力而为的 Memory 规范化——`x-mcos-semantic: "device"` 的值经 `MemoryFacade.resolveRef(value, "device")` 解析为 canonical id，自然语言别名与其 canonical id 从此对**同一把** §8.5 互斥锁串行化（此前"空调"和 `home.ac.living` 是两把锁，并发 run 用不同叫法命名同一设备根本不会争用——恰是 §8.5 要防的）。诚实边界：不可解析/歧义/**抛异常**的解析器一律保留字面量拼写——Memory 是增强不是互斥键的硬依赖，run 绝不因解析失败而失败；`Executor.deviceSemanticIds` 改 `suspend`（唯一调用方 WorkflowEngine 步骤路径本就是 suspend），读宿主级 `HostServices.memory`。
+- **隔离代理诚实性（04 §6.1，Plugin Contract）**：排查 `IsolatedHostServicesProxy` 发现四处防御分支会把畸形的 wire 回复铸成看似合理的值——`net.request` 缺 `status` 默认 `0`（传输失败的*契约*值，宿主自己的协议错误会被误报为网络失败）、`clock.now()` 缺 `nowMs` 默认 epoch 0（伪造的 1970 时间戳会污染远离故障点的缓存/过期判断/审计）、`memory.resolveRef` 缺 `id` 铸出 `""`、`sandbox.list` 缺 `entries` 读成"目录为空"；四处全部改为上报 `UNAVAILABLE`/`NotFound`。连同上一 PR 的 `sandbox.delete` 修复，隔离边界满足 10 §17.1 的"树中任何地方都无假成功"。
+- **文档**：`11-implementation-status` item 59 + next-up 段、`10-roadmap` §17.3 状态更新（EN/ZH 同步）：两项剩余项已收口，门关闭前剩验证工作。
+- **测试 +9 JVM**：DS8–DS12（别名→canonical 映射、双拼写折叠成单键、不可解析回退字面量、抛异常解析器降级、宿主 memory **getter** 抛异常也回退）+ `IsolatedHostServicesProxyTest` 四个畸形回复用例（经真实 loopback 传输钉死 UNAVAILABLE/NotFound）。
+- **一次被测试基线抓住的回归（值得记录）**：`deviceSemanticIds` 的首个实现急切求值 `hostServices.memory`——即便命令没有任何 device 参数、即便宿主 stub 的 memory getter 只是抛 `MemoryFacade not available in test`，**每个** workflow 步骤都会失败（`AuditFailClosedWiringTest` 两个用例变红）。修复后 memory 访问严格惰性：先用纯函数提取 device 值，为空则根本不碰 memory；getter 异常与 resolver 异常同级回退字面量。教训：**"Memory 是增强"的承诺必须覆盖 getter 本身，而不只是 `resolveRef`**。
+
 ### 代码质量审查：fail-closed 缺口与取消语义收口（2026-09-09）
 
 一次针对"绝不假成功"原则的专项审查，修掉 9 处**成功路径扎实、异常路径事后补**的缺口——它们违反的都是项目自己写在规范里的原则。另有一项经查为规范契约、非缺陷（见末条）。

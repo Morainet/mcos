@@ -875,7 +875,7 @@ Kernel 1.0 is **not** a feature release. It is the moment the three contracts be
 
 ### 17.3 Status
 
-**Proposed.** The residual work per contract surface is tracked in the "next up" list of [11-implementation-status.md](./11-implementation-status.md) — notably device-mutex key canonicalization (Runtime Semantics) and the isolated-process capability gaps (Plugin Contract). Closing that list closes this gate.
+**Residuals closed (2026-09-10), gate not yet closed.** The two contract-surface items that blocked the freeze are done ([11 item 59](./11-implementation-status.md)): device-mutex key canonicalization (03 §8.5 — aliases now resolve to canonical Memory ids, best-effort with a documented literal fallback) and the isolated-process capability gaps (04 §6.1 — the proxy's defensive branches now fail loudly; no fabricated success across the Binder boundary). What remains before the gate closes is verification, not code: the §17.1 error-code coverage assertions and per-surface conformance cases.
 
 ---
 

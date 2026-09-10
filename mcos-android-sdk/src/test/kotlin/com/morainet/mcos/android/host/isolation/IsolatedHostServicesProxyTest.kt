@@ -9,8 +9,10 @@ import com.morainet.mcos.sdk.ResolveResult
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -233,5 +235,61 @@ class IsolatedHostServicesProxyTest {
         assertEquals(null, proxy.clipboard)
         assertEquals(null, proxy.haptics)
         assertEquals(null, proxy.events)
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Malformed replies — a missing field is a protocol error, never a
+    // plausible-looking value (Kernel 1.0 gate, 10 §17.1: no fabricated
+    // success anywhere in the tree).
+    // ══════════════════════════════════════════════════════════════════════
+
+    /** Answers every op with a fixed reply that carries no "error" envelope. */
+    private fun stubbedChannel(reply: JsonObject): IsolationChannel =
+        IsolationChannel { _, _ -> reply }
+
+    @Test
+    fun aReplyWithoutStatusIsUnavailableNotATransportFailure() = runTest {
+        // `status = 0` is the *contract* for a failed transport (04 §6.2), so
+        // defaulting a missing status to it would report a failure the host
+        // never had — the opposite of an honest boundary.
+        val proxy = IsolatedHostServicesProxy(stubbedChannel(JsonObject(emptyMap())), stamp())
+        val e = assertThrows(McosException::class.java) {
+            kotlinx.coroutines.runBlocking {
+                proxy.net.request(HttpRequest(url = "https://api.example.test/"))
+            }
+        }
+        assertEquals("UNAVAILABLE", e.code)
+    }
+
+    @Test
+    fun aReplyMissingNowMsIsUnavailableNotEpochZero() {
+        // Epoch 0 would be a fabricated 1970 timestamp, poisoning caches,
+        // expiry checks and audit entries far away from the actual fault.
+        val proxy = IsolatedHostServicesProxy(stubbedChannel(JsonObject(emptyMap())), stamp())
+        val e = assertThrows(McosException::class.java) { proxy.clock.now() }
+        assertEquals("UNAVAILABLE", e.code)
+    }
+
+    @Test
+    fun aReplyMissingEntriesIsUnavailableNotAnEmptyDirectory() = runTest {
+        // An empty directory replies with a present-but-empty "entries" array,
+        // so a missing field is malformed and must not read as "empty".
+        val proxy = IsolatedHostServicesProxy(stubbedChannel(JsonObject(emptyMap())), stamp())
+        val e = assertThrows(McosException::class.java) {
+            kotlinx.coroutines.runBlocking { proxy.sandbox.list("") }
+        }
+        assertEquals("UNAVAILABLE", e.code)
+    }
+
+    @Test
+    fun aResolvedReferenceWithoutAnIdIsNotFoundNotAnEmptyIdentifier() = runTest {
+        // An empty-string id would be a fabricated identifier: device mutex
+        // keys and memory paths would all treat "" as something real.
+        val reply = buildJsonObject {
+            put("resolved", buildJsonObject { put("kind", "resolved") })
+        }
+        val proxy = IsolatedHostServicesProxy(stubbedChannel(reply), stamp())
+        val result = proxy.memory.resolveRef("AC", "device")
+        assertTrue(result is ResolveResult.NotFound)
     }
 }
