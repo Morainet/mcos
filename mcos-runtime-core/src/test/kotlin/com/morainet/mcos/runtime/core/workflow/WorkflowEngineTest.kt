@@ -692,6 +692,66 @@ class WorkflowEngineTest {
     // Helpers
     // ═══════════════════════════════════════════════════════════════
 
+    // ═══════════════════════════════════════════════════════════════
+    // Error-code surface (02 §10.3 / 01 §15.1): the defensive paths
+    // WORKFLOW_INVALID and COMPENSATION_FAILED, pinned so every
+    // McosErrorCode has at least one asserting test (10 §17.1).
+    // ═══════════════════════════════════════════════════════════════
+
+    /** Registers a command that always answers CONFIRMATION_REQUIRED. */
+    private fun registerConfirmPlugin(id: String) {
+        registry.register(createPlugin(id, "1.0.0", mapOf("confirm.cmd" to object : CommandHandler {
+            override suspend fun invoke(ctx: ExecutionContext): CommandResult =
+                CommandResult.Err(McosErrorCode.CONFIRMATION_REQUIRED.name, "needs approval", false)
+        })))
+    }
+
+    /**
+     * A host confirmation hook that blows up. The step path catches only
+     * [McosException] (the §8.5 device-locked shape), so a plain
+     * [IllegalStateException] from the host propagates — the deterministic
+     * trigger for the engine's defensive error codes.
+     */
+    private val explodingConfirmFor: suspend (String, CommandResult.Err) -> AuthStamp? =
+        { _, _ -> throw IllegalStateException("host hook blew up") }
+
+    @Test
+    fun `W30-orchestration-layer exception surfaces as WORKFLOW_INVALID`() = runBlocking {
+        registerConfirmPlugin("wf.confirm")
+        val result = engine.execute(
+            WorkflowStep.Command("confirm.cmd"),
+            confirmFor = explodingConfirmFor,
+        )
+        assertEquals(WorkflowOutcome.FAILED, result.outcome)
+        val step = result.steps.last()
+        assertFalse(step.ok)
+        assertEquals(McosErrorCode.WORKFLOW_INVALID.name, step.code)
+        assertTrue(step.message?.contains("host hook blew up") == true)
+    }
+
+    @Test
+    fun `W31-compensation failure surfaces as COMPENSATION_FAILED`() = runBlocking {
+        registry.register(createPlugin("wf.fail", "1.0.0", mapOf("wf.fail.cmd" to object : CommandHandler {
+            override suspend fun invoke(ctx: ExecutionContext): CommandResult =
+                CommandResult.Err("TEST_ERROR", "intentional failure", false)
+        })))
+        registerConfirmPlugin("wf.confirm")
+        // The primary step fails normally (Err, no throw); the compensation
+        // step then throws through the exploding confirm hook — that is the
+        // failure COMPENSATION_FAILED exists to record.
+        val result = engine.execute(
+            WorkflowStep.Try(
+                step = WorkflowStep.Command("wf.fail.cmd"),
+                compensation = listOf(WorkflowStep.Command("confirm.cmd")),
+            ),
+            confirmFor = explodingConfirmFor,
+        )
+        assertEquals(WorkflowOutcome.FAILED, result.outcome)
+        val step = result.steps.last()
+        assertFalse(step.ok)
+        assertEquals(McosErrorCode.COMPENSATION_FAILED.name, step.code)
+    }
+
     private fun registerPlugin(id: String, response: String): McosPlugin {
         val plugin = createPlugin(id, "1.0.0", mapOf(id to object : CommandHandler {
             override suspend fun invoke(ctx: ExecutionContext): CommandResult =

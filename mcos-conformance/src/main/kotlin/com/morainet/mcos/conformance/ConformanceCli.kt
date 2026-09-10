@@ -6,6 +6,7 @@ import com.morainet.mcos.conformance.api.ConformanceRunner
 import com.morainet.mcos.conformance.api.ConformanceSuite
 import com.morainet.mcos.conformance.dsl.DslConformanceSuite
 import com.morainet.mcos.conformance.ir.IrConformanceSuite
+import com.morainet.mcos.conformance.kernel.KernelConformanceSuite
 import com.morainet.mcos.conformance.manifest.ManifestConformanceSuite
 import com.morainet.mcos.conformance.market.MarketConformanceSuite
 import com.morainet.mcos.conformance.reporters.HumanReporter
@@ -297,6 +298,7 @@ object ConformanceCli {
         TrustConformanceSuite(),
         IrConformanceSuite(),
         MarketConformanceSuite(),
+        KernelConformanceSuite(),
     )
 
     private data class CliOpts(

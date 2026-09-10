@@ -41,7 +41,14 @@ enum class McosErrorCode(val retryable: Boolean) {
     WORKFLOW_INVALID(false),
     MAX_ITERATIONS_EXCEEDED(false),
     COMPENSATION_FAILED(false),
+    // Reserved (01 §15.1): parallel branch failures carry their own command
+    // code (02 §10.3), so no production path produces JOIN_FAILED today. Kept
+    // enumerated because the spec names it — this note is the honest record
+    // (10 §17.1: no unassigned or ambiguous codes).
     JOIN_FAILED(false),
     // Triggers may legitimately fire again on the next schedule tick.
+    // Reserved (01 §15.1): the managers skip-and-audit a missed fire instead
+    // of erroring, so no production path produces this code today (see
+    // ScheduleTriggerManager).
     TRIGGER_MISFIRE(true),
 }
