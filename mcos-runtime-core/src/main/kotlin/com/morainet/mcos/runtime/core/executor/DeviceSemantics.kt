@@ -1,5 +1,7 @@
 package com.morainet.mcos.runtime.core.executor
 
+import com.morainet.mcos.sdk.MemoryFacade
+import com.morainet.mcos.sdk.ResolveResult
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -16,12 +18,11 @@ import kotlinx.serialization.json.contentOrNull
  * additionally derives device mutex keys from any arg whose input-schema
  * property is marked device-semantic.
  *
- * Honest boundary (as-built): values are taken **literally** as mutex keys —
- * an `x-mcos-ref` natural-language value ("空调") serializes against the same
- * string, not against its canonicalized Memory id. Ref canonicalization via
- * `MemoryFacade.resolveRef` belongs to the full Stage-4 Expand (the Executor
- * pipeline has no such stage today); same-alias runs still serialize
- * correctly because the key is stable per spelling.
+ * Honest boundary: [deviceIds] takes values **literally** — it is the pure
+ * schema-driven extraction and stays testable without a Memory.
+ * [resolveDeviceIds] layers the canonicalization on top, resolving a
+ * natural-language value to its canonical Memory id so that two spellings of
+ * the same device serialize against ONE mutex key.
  */
 object DeviceSemantics {
 
@@ -53,4 +54,45 @@ object DeviceSemantics {
         }
         return ids
     }
+
+    /**
+     * [deviceIds] with the 03 §8.5 canonicalization applied: every extracted
+     * value is resolved through [memory] (`resolveRef(value, "device")`) to
+     * its canonical Memory id.
+     *
+     * This is what makes a natural-language alias and the canonical id
+     * serialize against the *same* mutex. Without it, two concurrent runs
+     * naming the same device differently would not contend at all — precisely
+     * the cross-run hazard §8.5 exists to prevent.
+     *
+     * Honest boundary: canonicalization is **best-effort**. A ref that does
+     * not resolve ([ResolveResult.NotFound]) or resolves ambiguously
+     * ([ResolveResult.Ambiguous]) keeps its literal spelling, i.e. the
+     * pre-canonicalization behaviour. A run is therefore never failed because
+     * Memory could not resolve a name — but an unresolvable alias still gets
+     * its own key and so serializes against itself, not against the canonical
+     * id. A resolver that *throws* is treated the same way: Memory is an
+     * enhancement here, not a hard dependency of the mutex key.
+     */
+    suspend fun resolveDeviceIds(
+        inputSchema: JsonObject,
+        args: JsonObject,
+        memory: MemoryFacade,
+    ): List<String> {
+        val literal = deviceIds(inputSchema, args)
+        if (literal.isEmpty()) return literal
+        return literal.map { canonicalize(it, memory) }.distinct()
+    }
+
+    /** Canonical id for [value], or [value] itself whenever Memory cannot supply one. */
+    private suspend fun canonicalize(value: String, memory: MemoryFacade): String =
+        try {
+            when (val result = memory.resolveRef(value, VALUE_DEVICE)) {
+                is ResolveResult.Resolved -> result.id.takeIf { it.isNotBlank() } ?: value
+                // Ambiguous / NotFound — keep the literal spelling (see KDoc).
+                else -> value
+            }
+        } catch (_: Exception) {
+            value
+        }
 }

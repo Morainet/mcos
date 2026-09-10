@@ -348,6 +348,21 @@ class AgentLoopTest {
         assertEquals(AgentTurnResult.Refuse("POLICY", "no photo library access"), results.single())
     }
 
+    @Test
+    fun `A22-a compile that yields no commands surfaces as Refuse COMPILE_FAILED`() = runBlocking {
+        // A plan that neither succeeds (no commands) nor carries a structured
+        // Clarify/Refuse/Defer lands in the COMPILE_FAILED refuse category —
+        // the terminal the host renders when the planner produced nothing
+        // usable (01 §15.1 error-code coverage, 10 §17.1).
+        val provider = FakeConstrainedProvider(listOf("""{"type":"sequence","steps":[]}"""))
+        val agent = McosAgent(LlmPlanner(provider, registry), FakeRuntimeGateway(), registry)
+
+        val results = agent.runTurn("s22", "do something").toList()
+
+        val refuse = assertIs<AgentTurnResult.Refuse>(results.single())
+        assertEquals("COMPILE_FAILED", refuse.category)
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // A13: session persistence and isolation
     // ═══════════════════════════════════════════════════════════════

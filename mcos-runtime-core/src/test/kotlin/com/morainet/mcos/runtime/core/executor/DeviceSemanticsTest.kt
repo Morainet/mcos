@@ -8,9 +8,13 @@ import com.morainet.mcos.sdk.CommandResult
 import com.morainet.mcos.sdk.ExecutionContext
 import com.morainet.mcos.sdk.HostServices
 import com.morainet.mcos.sdk.McosPlugin
+import com.morainet.mcos.sdk.MemoryFacade
 import com.morainet.mcos.sdk.PluginManifest
 import com.morainet.mcos.sdk.ProviderInfo
+import com.morainet.mcos.sdk.ResolveResult
 import com.morainet.mcos.sdk.SideEffectClass
+import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -106,8 +110,7 @@ class DeviceSemanticsTest {
 
     // ─── Registry-backed query ───────────────────────────────────────────
 
-    @Test
-    fun `DS6-executor query resolves schema from the registry`() {
+    private fun registryWithDeviceCommand(): CommandRegistry {
         val registry = CommandRegistry()
         val deviceSchema = schema("id" to prop("device"))
         registry.register(
@@ -138,7 +141,12 @@ class DeviceSemanticsTest {
                     )
             }
         )
-        val executor = Executor(registry, ExecutorTest.StubHostServices(), SecurityConfig.permissive())
+        return registry
+    }
+
+    @Test
+    fun `DS6-executor query resolves schema from the registry`() = runBlocking<Unit> {
+        val executor = Executor(registryWithDeviceCommand(), ExecutorTest.StubHostServices(), SecurityConfig.permissive())
 
         assertEquals(
             listOf("living-room"),
@@ -150,7 +158,7 @@ class DeviceSemanticsTest {
     }
 
     @Test
-    fun `DS7-executor query on unknown command yields empty`() {
+    fun `DS7-executor query on unknown command yields empty`() = runBlocking<Unit> {
         val executor = Executor(
             CommandRegistry(),
             ExecutorTest.StubHostServices(),
@@ -162,6 +170,108 @@ class DeviceSemanticsTest {
                 "nope.missing",
                 JsonObject(mapOf("id" to JsonPrimitive("x")))
             ).isEmpty()
+        )
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // 03 §8.5 canonicalization — two spellings of one device must share a
+    // mutex key; Memory is best-effort, never a hard dependency.
+    // ══════════════════════════════════════════════════════════════════════
+
+    private fun args(vararg entries: Pair<String, String>): JsonObject =
+        JsonObject(entries.associate { (k, v) -> k to JsonPrimitive(v) })
+
+    private class StubMemory(
+        private val canonical: Map<String, String> = emptyMap(),
+        private val resolverThrows: Boolean = false,
+    ) : MemoryFacade {
+        override suspend fun get(path: String): JsonElement? = null
+
+        override suspend fun resolveRef(ref: String, semanticType: String?): ResolveResult {
+            if (resolverThrows) throw RuntimeException("memory down")
+            val id = canonical[ref] ?: return ResolveResult.NotFound()
+            return ResolveResult.Resolved(id, 0.9f)
+        }
+    }
+
+    @Test
+    fun `DS8-canonicalization maps an alias onto its canonical memory id`() = runBlocking<Unit> {
+        val memory = StubMemory(canonical = mapOf("living-room" to "home.light.living"))
+        assertEquals(
+            listOf("home.light.living"),
+            DeviceSemantics.resolveDeviceIds(
+                schema("id" to prop("device")),
+                args("id" to "living-room"),
+                memory
+            )
+        )
+    }
+
+    @Test
+    fun `DS9-two spellings of one device collapse to a single mutex key`() = runBlocking<Unit> {
+        val memory = StubMemory(
+            canonical = mapOf(
+                "living-room" to "home.light.living",
+                "the lounge" to "home.light.living",
+            )
+        )
+        // Two device-semantic args naming the same device differently: after
+        // canonicalization they are ONE key, so the run acquires one mutex
+        // instead of two independent ones.
+        assertEquals(
+            listOf("home.light.living"),
+            DeviceSemantics.resolveDeviceIds(
+                schema("id" to prop("device"), "alias" to prop("device")),
+                args("id" to "living-room", "alias" to "the lounge"),
+                memory
+            )
+        )
+    }
+
+    @Test
+    fun `DS10-unresolvable alias keeps its literal spelling`() = runBlocking<Unit> {
+        // Best-effort: the run must not fail because Memory cannot resolve a
+        // name — the literal is still a stable key (pre-canonicalization
+        // behaviour).
+        val memory = StubMemory(canonical = emptyMap())
+        assertEquals(
+            listOf("living-room"),
+            DeviceSemantics.resolveDeviceIds(
+                schema("id" to prop("device")),
+                args("id" to "living-room"),
+                memory
+            )
+        )
+    }
+
+    @Test
+    fun `DS11-a throwing resolver degrades to the literal rather than failing the run`() = runBlocking<Unit> {
+        val memory = StubMemory(resolverThrows = true)
+        assertEquals(
+            listOf("living-room"),
+            DeviceSemantics.resolveDeviceIds(
+                schema("id" to prop("device")),
+                args("id" to "living-room"),
+                memory
+            )
+        )
+    }
+
+    @Test
+    fun `DS12-a host whose memory getter throws falls back to the literal`() = runBlocking<Unit> {
+        // Regression pin: ExecutorTest.StubHostServices throws from the memory
+        // *getter*, and the original eager `hostServices.memory` access inside
+        // deviceSemanticIds failed EVERY workflow step — including commands
+        // with no device-semantic args at all (caught by
+        // AuditFailClosedWiringTest). The fallback must cover the getter too.
+        val executor = Executor(
+            registryWithDeviceCommand(),
+            ExecutorTest.StubHostServices(),
+            SecurityConfig.permissive()
+        )
+        assertEquals(
+            listOf("living-room"),
+            executor.deviceSemanticIds("home.light.set", args("id" to "living-room"))
         )
     }
 }

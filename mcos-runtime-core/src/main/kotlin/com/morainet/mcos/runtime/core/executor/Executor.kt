@@ -204,10 +204,23 @@ class Executor(
      * Consumed by [com.morainet.mcos.runtime.core.workflow.WorkflowEngine]
      * to build a step's §8.5 device-mutex set alongside the step's literal
      * `requiresDevices` declaration.
+     *
+     * Values are canonicalized through Memory (`resolveRef`, 03 §8.5) so two
+     * spellings of one device share a mutex key; see
+     * [DeviceSemantics.resolveDeviceIds] for the best-effort fallback rule.
      */
-    fun deviceSemanticIds(commandId: String, args: JsonObject): List<String> {
+    suspend fun deviceSemanticIds(commandId: String, args: JsonObject): List<String> {
         val entry = (registry.resolve(commandId) as? ResolveResult.Found)?.entry ?: return emptyList()
-        return DeviceSemantics.deviceIds(entry.descriptor.inputSchema, args)
+        val schema = entry.descriptor.inputSchema
+        val literal = DeviceSemantics.deviceIds(schema, args)
+        if (literal.isEmpty()) return literal
+        // Memory canonicalization is best-effort (03 §8.5): most commands have
+        // no device-semantic args at all, and a host or test stub without a
+        // working MemoryFacade must not fail the run — the literal spellings
+        // are exactly the pre-canonicalization behaviour.
+        val memory = try { hostServices.memory } catch (_: Exception) { null }
+            ?: return literal
+        return DeviceSemantics.resolveDeviceIds(schema, args, memory)
     }
 
     // ─── Internal dispatch ──────────────────────────────────────────────
