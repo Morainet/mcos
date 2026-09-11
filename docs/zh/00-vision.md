@@ -221,7 +221,8 @@ mcos/
 │   ├── mcos-plugin-files     # Files / media plugin                         ← P1
 │   ├── mcos-plugin-iot       # Home Assistant / Tuya / Matter bridges       ← P2
 │   └── mcos-plugin-mcp       # MCP client adapter                           ← P2 spike / P3 production
-├── mcos-server           # Sync, marketplace, config (Spring Boot or Go)    ← P3
+├── mcos-server           # Self-hosted sync + enterprise-policy endpoint (JDK HTTP)  ← P3
+├── mcos-index-server     # Marketplace index + publisher review pipeline (JDK HTTP)  ← P3
 └── docs                  # This architecture & RFC set (exists today)
 ```
 
