@@ -59,6 +59,12 @@ class ServerLifecycleTest {
 
             // Management surface refuses an anonymous caller.
             assertEquals(401, get("http://127.0.0.1:$port/v1/admin/registry").statusCode())
+
+            // Liveness probe: unauthenticated, side-effect-free — orchestrators
+            // and reverse proxies gate on it (12-index-server.md §8.1).
+            val health = get("http://127.0.0.1:$port/v1/health")
+            assertEquals(200, health.statusCode())
+            assertTrue(health.body().contains("\"ok\""), health.body())
         } finally {
             server.stop()
         }

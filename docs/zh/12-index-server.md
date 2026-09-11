@@ -218,6 +218,21 @@ sh gradlew :mcos-index-server:installDist
 
 TLS 在反向代理（Caddy/nginx）终结；Bearer token 保护 API，TLS 保护 token 传输。
 
+### 8.1.1 容器（Docker）
+
+从仓库根目录构建，经 compose 栈运行：
+
+```bash
+MCOS_INDEX_ADMIN_TOKEN=ops-secret docker compose up --build -d
+curl -fsS http://localhost:8877/v1/health     # {"status":"ok","service":"mcos-index-server"}
+```
+
+- 镜像为纯 JVM（`gradle:8.10-jdk17` 构建阶段 → `eclipse-temurin:17-jre`），以非 root 用户运行，容器**内**绑定 `0.0.0.0`——TLS 仍由前置反向代理终结（§8.1）。
+- `GET /v1/health` 是免鉴权、无副作用的存活探针；容器 `HEALTHCHECK` 以它为门，编排器亦然。
+- 注册表数据持久化于 `mcos-index-data` 命名卷（§8.5：备份 = 停服 + 打卷）。
+- 缺 token 的配置在 compose 变量展开时即失败——`MCOS_INDEX_ADMIN_TOKEN:?`——而非陷入崩溃重启循环。
+- 在小内存构建机（约 2 GB）上，Gradle 堆被设上限、Kotlin 编译器进程内运行；内存充裕的机器上构建只是更快。
+
 ### 8.2 启动与发布者入驻
 
 1. 运营以 `--keys-dir` 启动服务端，目录内放市场/运营 Ed25519 **公钥**（即客户端 `TrustAnchors`

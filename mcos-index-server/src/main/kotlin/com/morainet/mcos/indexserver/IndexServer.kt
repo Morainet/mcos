@@ -74,6 +74,12 @@ class IndexServer(
     // ── Router ───────────────────────────────────────────────────────────────
 
     private fun registerRoutes() {
+        // Liveness probe — unauthenticated and side-effect-free: reverse
+        // proxies and orchestrators gate on this before routing traffic
+        // (12-index-server.md §8.1).
+        router.get("/v1/health") { exchange, _ ->
+            sendJson(exchange, 200, """{"status":"ok","service":"mcos-index-server"}""")
+        }
         // Read side (public).
         router.get("/v1/plugins") { exchange, _ -> handleSearch(exchange) }
         router.get("/v1/plugins/by-command/{commandId}") { exchange, params -> handleByCommand(exchange, params["commandId"]!!) }
