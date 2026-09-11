@@ -427,7 +427,7 @@ data class UserFileGrant(
 
 `StaticUserFileGrantService` 是 `DirectorySandbox` 的 JVM 播种对应物 —— 测试预置"用户会选什么"，驱动的正是对 Android 宿主运行的同一份代码路径。
 
-> 🟡 **v0.x 差异（诚实记录）：** 上述字节 API 比最初的流式示意（`openInput`/`openOutput` → `InputFlow`/`OutputFlow`）更精简——这是本节自身记录的 drift（NetService/Clock 的同族 drift 已随 item 46 对齐关闭）；上述用户授予流程**仅在进程内实现** —— 隔离（独立进程）插件的 `userFiles` 保持 null，因为选择器需要主进程 UI、跨进程铸枚尚未有 wire op，因此它们上报 `UNAVAILABLE`（诚实的边界，而非假成功）；超出单次写入 1 MiB 上限的按插件配额尚未实现。
+> 🟡 **v0.x 差异（诚实记录）：** 上述字节 API 比最初的流式示意（`openInput`/`openOutput` → `InputFlow`/`OutputFlow`）更精简——这是本节自身记录的 drift（NetService/Clock 的同族 drift 已随 item 46 对齐关闭）；上述用户授予流程现**在两条边界上都可用**（item 61）：隔离插件经 wire 触达同一个 `UserFileGrantService`——选择器在主进程运行，token 由 facade 服务端铸入与进程内 Stage-4 门面**同一张** `UserGrantRegistry`——因此无论走哪条路径，授权都只能被选择它的那个插件兑换，且由单一权威裁决；未接该共享表（或无选择器）的宿主仍上报 `UNAVAILABLE`，绝不铸发自己无法校验的 token；超出单次写入 1 MiB 上限的按插件配额尚未实现。
 
 ### 6.2 `NetService` —— 策略感知的 HTTP
 

@@ -2,8 +2,10 @@ package com.morainet.mcos.android.host.isolation
 
 import com.morainet.mcos.runtime.core.error.McosErrorCode
 import com.morainet.mcos.runtime.core.executor.NamespacedSandbox
+import com.morainet.mcos.runtime.core.executor.PluginScopedUserFileGrants
 import com.morainet.mcos.runtime.core.executor.SecretResolvingNetService
 import com.morainet.mcos.runtime.core.executor.StampScopedNetService
+import com.morainet.mcos.runtime.core.executor.UserGrantRegistry
 import com.morainet.mcos.sdk.AuthStamp
 import com.morainet.mcos.sdk.HttpRequest
 import com.morainet.mcos.sdk.HttpResponse
@@ -13,6 +15,9 @@ import com.morainet.mcos.security.AuthStampSigner
 import com.morainet.mcos.sdk.HostServices
 import com.morainet.mcos.sdk.McosException
 import com.morainet.mcos.sdk.SandboxEntry
+import com.morainet.mcos.sdk.UserFileGrant
+import com.morainet.mcos.sdk.UserFileGrantService
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -54,6 +59,11 @@ import java.util.Base64
  * @param pluginId the plugin this connection was admitted to serve.
  * @param expectedUid the Linux UID the plugin process is expected to run
  *        under (same-app isolated process UID on Android).
+ * @param userGrantRegistry the runtime's user-file grant table (04 §6.1),
+ *        shared with the in-process Stage-4 facade so tokens minted by either
+ *        path are interchangeable and cross-plugin probes are rejected
+ *        against ONE table. Null ⇒ `userFiles.*` reports `UNAVAILABLE` (a
+ *        host wired without the registry keeps the honest degradation).
  * @param nowMs injectable clock (tests).
  */
 class IsolatedFacadeServer(
@@ -61,6 +71,7 @@ class IsolatedFacadeServer(
     private val signer: AuthStampSigner,
     private val pluginId: String,
     private val expectedUid: Int,
+    private val userGrantRegistry: UserGrantRegistry? = null,
     private val nowMs: () -> Long = System::currentTimeMillis,
 ) {
 
@@ -163,6 +174,46 @@ class IsolatedFacadeServer(
                 put("name", sandboxOrUnavailable().tempFile(args.str("prefix") ?: "mcos", args.str("suffix") ?: ".tmp"))
             }
 
+            // ── User-granted files (04 §6.1) ────────────────────────────
+            // The picker UI lives in THIS (main) process, which is exactly
+            // why the op is served here rather than in the plugin. The grant
+            // table is shared with the in-process Stage-4 facade, so a token
+            // is only ever redeemable by the plugin it was minted for.
+            IsolationOps.OP_USERFILES_PICK -> {
+                val mimeTypes = (args["mimeTypes"] as? JsonArray)
+                    ?.mapNotNull { it.jsonPrimitive.contentOrNull }
+                    ?.takeIf { it.isNotEmpty() }
+                    ?: listOf("*/*")
+                val granted = userFilesOrUnavailable().pickForRead(mimeTypes)
+                if (granted != null) {
+                    buildJsonObject { put("grant", encodeGrant(granted)) }
+                } else {
+                    JsonObject(emptyMap()) // user cancelled — not an error
+                }
+            }
+
+            IsolationOps.OP_USERFILES_STAT -> {
+                val granted = userFilesOrUnavailable().statGranted(args.str("ref") ?: "")
+                if (granted != null) {
+                    buildJsonObject { put("grant", encodeGrant(granted)) }
+                } else {
+                    JsonObject(emptyMap()) // unknown / revoked ref
+                }
+            }
+
+            IsolationOps.OP_USERFILES_READ -> {
+                val data = userFilesOrUnavailable().readGranted(args.str("ref") ?: "")
+                if (data != null) {
+                    buildJsonObject { put("dataB64", Base64.getEncoder().encodeToString(data)) }
+                } else {
+                    JsonObject(emptyMap())
+                }
+            }
+
+            IsolationOps.OP_USERFILES_RELEASE -> buildJsonObject {
+                put("released", userFilesOrUnavailable().releaseGranted(args.str("ref") ?: ""))
+            }
+
             IsolationOps.OP_CLOCK_NOW -> buildJsonObject { put("nowMs", host.clock.nowMs()) }
 
             IsolationOps.OP_MEMORY_GET -> {
@@ -258,6 +309,32 @@ class IsolatedFacadeServer(
         put("path", entry.path)
         put("isDir", entry.isDir)
         entry.size?.let { put("size", it) }
+    }
+
+    /**
+     * The plugin-scoped user-file facade (04 §6.1), or an honest
+     * `UNAVAILABLE`: a host without a picker — or one wired without the shared
+     * grant registry — must surface the absence rather than mint tokens it
+     * cannot validate. The [pluginId] comes from this server's constructor,
+     * never the wire, so a plugin cannot claim another's grants.
+     */
+    private fun userFilesOrUnavailable(): UserFileGrantService {
+        val delegate = host.userFiles ?: throw McosException(
+            code = McosErrorCode.UNAVAILABLE.name,
+            message = "Host provides no file picker (08 §8.3)",
+        )
+        val registry = userGrantRegistry ?: throw McosException(
+            code = McosErrorCode.UNAVAILABLE.name,
+            message = "user-file grants are not wired across the isolation boundary (04 §6.1)",
+        )
+        return PluginScopedUserFileGrants(delegate, pluginId, registry)
+    }
+
+    private fun encodeGrant(grant: UserFileGrant): JsonObject = buildJsonObject {
+        put("ref", grant.ref)
+        grant.name?.let { put("name", it) }
+        grant.mimeType?.let { put("mimeType", it) }
+        grant.sizeBytes?.let { put("sizeBytes", it) }
     }
 
     private fun JsonObject.str(key: String): String? =

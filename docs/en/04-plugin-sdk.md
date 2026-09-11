@@ -425,7 +425,7 @@ data class UserFileGrant(
 
 `StaticUserFileGrantService` is the JVM seeding analogue of `DirectorySandbox` — tests pre-populate what "the user" would pick and drive the exact code paths the Android host runs.
 
-> 🟡 **v0.x deltas (honest):** the byte API above is leaner than the original streaming sketch (`openInput`/`openOutput` → `InputFlow`/`OutputFlow` — a drift this section records for itself; the same-family NetService/Clock drift was closed by item 46); the user-grant flow above is implemented **in-process only** — isolated (separate-process) plugins keep `userFiles` null, because the picker needs main-process UI and cross-process token minting has no wire ops yet, so they surface `UNAVAILABLE` (an honest boundary, not a fake success); per-plugin storage quotas beyond the 1 MiB-per-write cap are not implemented.
+> 🟡 **v0.x deltas (honest):** the byte API above is leaner than the original streaming sketch (`openInput`/`openOutput` → `InputFlow`/`OutputFlow` — a drift this section records for itself; the same-family NetService/Clock drift was closed by item 46); the user-grant flow now works on **both boundaries** (item 61): isolated plugins reach the same `UserFileGrantService` over the wire, with the picker running in the main process and the token minted by the facade server into the *same* `UserGrantRegistry` the in-process Stage-4 facade uses — so a grant is redeemable only by the plugin it was picked for, on either path, judged by one authority; a host wired without that shared table (or without a picker) still surfaces `UNAVAILABLE` rather than minting tokens it cannot validate; per-plugin storage quotas beyond the 1 MiB-per-write cap are not implemented.
 
 ### 6.2 `NetService` — Policy-Aware HTTP
 

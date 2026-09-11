@@ -9,6 +9,7 @@ import android.os.IBinder
 import com.morainet.mcos.runtime.core.error.McosErrorCode
 import com.morainet.mcos.runtime.core.executor.IsolatedInvocation
 import com.morainet.mcos.runtime.core.executor.IsolationHost
+import com.morainet.mcos.runtime.core.executor.UserGrantRegistry
 import com.morainet.mcos.security.AuthStampSigner
 import com.morainet.mcos.sdk.CommandResult
 import com.morainet.mcos.sdk.HostServices
@@ -69,6 +70,15 @@ class BinderIsolationHost(
     private val signer: AuthStampSigner,
     private val artifactFor: (pluginId: String) -> File?,
     private val bindTimeoutMs: Long = 10_000,
+    /**
+     * The Executor's user-file grant table (04 §6.1), threaded through to
+     * every [IsolatedFacadeServer] this host binds. Sharing ONE table with the
+     * in-process Stage-4 facade is what makes a token minted in either path
+     * redeemable in the other, and keeps cross-plugin rejection anchored to a
+     * single authority. Null ⇒ the isolated `userFiles.*` ops report
+     * `UNAVAILABLE` (the honest degradation, not a fake success).
+     */
+    private val userGrantRegistry: UserGrantRegistry? = null,
 ) : IsolationHost {
 
     // Per-plugin bind serialization. A single global mutex here would let the
@@ -126,6 +136,9 @@ class BinderIsolationHost(
             // Same-app isolated process → same Linux UID (§8.2 check 1 pins
             // the admission to this app; foreign UIDs never match).
             expectedUid = context.applicationInfo.uid,
+            // Same table the in-process Stage-4 facade uses, so grants are
+            // one namespace across both boundaries (04 §6.1).
+            userGrantRegistry = userGrantRegistry,
         )
         val intent = Intent().setClass(context, IsolatedPluginProcessService::class.java).apply {
             putExtra(IsolatedPluginProcessService.EXTRA_PLUGIN_ID, pluginId)

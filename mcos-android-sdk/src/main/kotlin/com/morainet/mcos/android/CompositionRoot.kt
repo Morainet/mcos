@@ -6,6 +6,7 @@ import com.morainet.mcos.android.host.AndroidHostServices
 import com.morainet.mcos.android.host.AndroidMarketplaceHttpTransport
 import com.morainet.mcos.android.host.isolation.BinderIsolationHost
 import com.morainet.mcos.android.host.isolation.StagedArtifactResolver
+import com.morainet.mcos.runtime.core.executor.UserGrantRegistry
 import com.morainet.mcos.android.host.AndroidSecureStore
 import com.morainet.mcos.android.host.RuntimePermissionBridge
 import com.morainet.mcos.plugin.camera.CameraPlugin
@@ -353,6 +354,12 @@ object CompositionRoot {
         // while backgrounded / in Doze, not just while the poll driver runs.
         val wakeScheduler = AlarmManagerWakeScheduler(appContext)
 
+        // User-file grants (04 §6.1) live in ONE table shared by the
+        // in-process Stage-4 facade and the isolation facade: a token minted
+        // by `file.pick` in either path is redeemable in the other, and a
+        // cross-plugin probe is judged by a single authority rather than two.
+        val userGrantRegistry = UserGrantRegistry()
+
         // Plugin-process boundary (08 §8.1, item 44): opt-in only. The
         // staged-artifact resolver reads the tamper-evident install records
         // at bind time (once per plugin per process lifetime), so a plugin
@@ -369,6 +376,7 @@ object CompositionRoot {
                         pluginId = pluginId,
                     )
                 },
+                userGrantRegistry = userGrantRegistry,
             )
         } else {
             null
@@ -414,6 +422,9 @@ object CompositionRoot {
                     // non-BUILTIN plugins; the opt-in host (08 §8.1) routes
                     // them into the :mcos_plugin process instead.
                     isolationHost = isolationHost,
+                    // The same table the isolation facade got above, so
+                    // grants are one namespace across both boundaries.
+                    userGrantRegistry = userGrantRegistry,
                 )
             )
             .build()
