@@ -91,18 +91,24 @@ class Executor(
     private val debugMode: Boolean = false,
     private val isolationHost: IsolationHost? = null,
     private val invocationLimiter: InvocationLimiter? = null,
-) {
-
-    private val schemaValidator = SchemaValidator()
-
     /**
      * Executor-lifetime table of user-granted file tokens (04-plugin-sdk.md
-     * 6.1) — shared by every [PluginScopedUserFileGrants] facade this
+     * §6.1) — shared by every [PluginScopedUserFileGrants] facade this
      * Executor composes, so a grant minted by one command's `file.pick` is
      * redeemable by the plugin's later `file.read_granted` execution and by
      * nothing else.
+     *
+     * Injectable so a host that also runs isolated plugins can hand the *same*
+     * table to its isolation facade (08 §8.3): tokens minted in-process and
+     * tokens minted across the Binder boundary then live in one namespace,
+     * and a cross-plugin probe is rejected against one authority rather than
+     * two. Defaults to a private table — a host with no isolation, or one that
+     * deliberately omits the hand-off, keeps today's behaviour.
      */
-    private val userGrantRegistry = UserGrantRegistry()
+    private val userGrantRegistry: UserGrantRegistry = UserGrantRegistry(),
+) {
+
+    private val schemaValidator = SchemaValidator()
 
     /**
      * Plugin ids whose best-effort in-process fallback ([08-security.md §8.1])

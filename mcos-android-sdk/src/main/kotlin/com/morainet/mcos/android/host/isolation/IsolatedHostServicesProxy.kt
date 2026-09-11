@@ -23,6 +23,8 @@ import com.morainet.mcos.sdk.SandboxEntry
 import com.morainet.mcos.sdk.SandboxFileService
 import com.morainet.mcos.sdk.SecureStore
 import com.morainet.mcos.sdk.UiService
+import com.morainet.mcos.sdk.UserFileGrant
+import com.morainet.mcos.sdk.UserFileGrantService
 import kotlinx.coroutines.runBlocking
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.Json
@@ -32,6 +34,7 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
@@ -204,6 +207,34 @@ class IsolatedHostServicesProxy(
             ).stringOrNull("name") ?: unavailable("sandbox.tempFile")
     }
 
+    /**
+     * User-granted out-of-sandbox files (04 §6.1). The picker runs in the
+     * main process — an isolated plugin has no UI — so this proxy only
+     * forwards: the `ref` it hands the plugin is a token minted on the other
+     * side of the boundary, never the host's raw content URI.
+     */
+    override val userFiles: UserFileGrantService = object : UserFileGrantService {
+        override suspend fun pickForRead(mimeTypes: List<String>): UserFileGrant? =
+            call(
+                IsolationOps.OP_USERFILES_PICK,
+                buildJsonObject {
+                    put("mimeTypes", buildJsonArray { mimeTypes.forEach { add(JsonPrimitive(it)) } })
+                },
+            ).grantOrNull()
+
+        override suspend fun statGranted(ref: String): UserFileGrant? =
+            call(IsolationOps.OP_USERFILES_STAT, buildJsonObject { put("ref", ref) }).grantOrNull()
+
+        override suspend fun readGranted(ref: String): ByteArray? =
+            call(IsolationOps.OP_USERFILES_READ, buildJsonObject { put("ref", ref) })
+                .stringOrNull("dataB64")?.let { Base64.getDecoder().decode(it) }
+
+        override suspend fun releaseGranted(ref: String): Boolean =
+            call(IsolationOps.OP_USERFILES_RELEASE, buildJsonObject { put("ref", ref) })
+                .booleanOrNull("released")
+                ?: unavailable("userFiles.releaseGranted")
+    }
+
     override val clock: Clock = object : Clock {
         /**
          * The interface is blocking by contract (04 §6); the plugin runner
@@ -298,6 +329,22 @@ private fun JsonObject.stringOrNull(key: String): String? =
 
 private fun JsonObject.booleanOrNull(key: String): Boolean? =
     (this[key] as? JsonPrimitive)?.takeIf { it !is JsonNull }?.booleanOrNull
+
+/**
+ * Decode a `userFiles.*` reply's grant, or null when the reply carries none
+ * (user cancelled, unknown/revoked ref). A grant without a usable `ref` is
+ * malformed rather than empty — null here would read as "no such grant".
+ */
+private fun JsonObject.grantOrNull(): UserFileGrant? {
+    val grant = this["grant"] as? JsonObject ?: return null
+    val ref = grant.stringOrNull("ref")?.takeIf { it.isNotEmpty() } ?: return null
+    return UserFileGrant(
+        ref = ref,
+        name = grant.stringOrNull("name"),
+        mimeType = grant.stringOrNull("mimeType"),
+        sizeBytes = grant.longOrNullField("sizeBytes"),
+    )
+}
 
 private fun JsonObject.intOrNull(key: String): Int? =
     longOrNullField(key)?.toInt()

@@ -14,6 +14,7 @@ import com.morainet.mcos.sdk.SandboxEntry
 import com.morainet.mcos.sdk.SandboxFileService
 import com.morainet.mcos.sdk.SecureStore
 import com.morainet.mcos.sdk.UiService
+import com.morainet.mcos.sdk.UserFileGrantService
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -102,6 +103,8 @@ class FakeHostServices(
     override val secureStore: SecureStore = MapSecureStore(),
     override val sandbox: SandboxFileService? = FakeFlatSandbox(),
     override val memory: MemoryFacade = CannedMemory(),
+    /** Null by default: a host with no picker — the honest-degradation case. */
+    override val userFiles: UserFileGrantService? = null,
     private val now: () -> Long = { 1_700_000_000_000L },
 ) : HostServices {
     override val files: FileService = object : FileService {

@@ -57,6 +57,17 @@ object IsolationOps {
     const val OP_SANDBOX_LIST = "sandbox.list"
     const val OP_SANDBOX_TEMP = "sandbox.tempFile"
 
+    /**
+     * User-granted out-of-sandbox files (04 §6.1). The picker itself runs in
+     * the MAIN process — an isolated plugin has no UI — so the op is served by
+     * the main-process facade, which is exactly where the consent dialog and
+     * the token minting live.
+     */
+    const val OP_USERFILES_PICK = "userFiles.pickForRead"
+    const val OP_USERFILES_STAT = "userFiles.statGranted"
+    const val OP_USERFILES_READ = "userFiles.readGranted"
+    const val OP_USERFILES_RELEASE = "userFiles.releaseGranted"
+
     const val OP_CLOCK_NOW = "clock.now"
 
     const val OP_MEMORY_GET = "memory.get"

@@ -10,6 +10,18 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### 隔离边界的用户授予文件——选择器 wire op（04 §6.1，item 61）（2026-09-11）
+
+收掉 item 58 留下的诚实边界：隔离（独立进程）插件的 `userFiles` 曾恒为 null、命令上报 `UNAVAILABLE`，原因是"选择器需要主进程 UI、跨进程铸枚尚无 wire op"。现在两条边界走同一份契约。
+
+- **wire**（`IsolationWire`）：四个 op——`userFiles.pickForRead` / `statGranted` / `readGranted` / `releaseGranted`。
+- **铸发留在主进程**：选择器需要 UI，故该 op 由 `IsolatedFacadeServer` 服务；它把宿主委托包进与进程内 Stage-4 门面**同一个** `PluginScopedUserFileGrants`，且对着**同一张** `UserGrantRegistry`。共享表是安全属性而非优化：跨 Binder 铸出的 token 可在进程内兑换、反之亦然，外来 token 面对的是**一个**权威（而非两个可能漂移的）给出的硬 `PERMISSION_DENIED` / `grant_not_authorized` 拒绝。
+- **接线**：`Executor` 的 registry 改为可注入构造参数（默认私有表 → 既有一切构造点零改动、行为不变）；`BinderIsolationHost` 接受可选 registry 并透传给每个它绑定的 `IsolatedFacadeServer`；`CompositionRoot` 创建一张表同时交给两者。
+- **代理**（`IsolatedHostServicesProxy`）：`userFiles` 从"继承接口的 null 默认"变为真实实现；插件只见铸出的 token、绝不见宿主原始 `content://` URI；`ref` 缺失/为空的授权回复解码为"无授权"而非伪造。
+- **诚实降级保持**：无选择器的宿主、或未接共享表的宿主仍上报 `UNAVAILABLE`——铸发运行时无法校验的 token，恰是本项目拒绝的假成功。
+- **诚实边界**：隔离链仍只有 JVM 覆盖（真机 `BinderIsolationDeviceTest` 钉的是传输，不是这个 op 族）；Android 选择器路径与 item 58 一样仍待真机验证。
+- **测试 +4 JVM**：`IsolatedHostServicesProxyTest` 的「铸 token → 读」往返、release 语义、外来 token 硬拒绝、两条 UNAVAILABLE 路径。全量 `test` + Android 单测 + conformance（72/72）绿。
+
 ### 文档修正：服务端技术栈偏离——"Spring Boot or Go" 退役（2026-09-11）
 
 一次文档-实现偏离的修正。按 roadmap §1.1 原则 1，code 与 spec 偏离时通常算 code 的 bug——但这次是文档落后于实现，方向落在安全的那一侧。
