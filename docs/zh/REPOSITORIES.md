@@ -238,7 +238,7 @@ flowchart BT
 |---|---|
 | 路径 | `mcos-conformance/` |
 | 包名 | `com.morainet.mcos.conformance` |
-| 职责 | 插件作者提交 marketplace 前本地运行的套件，镜像市场 CI 门禁（09 §5.1）：`dsl`（02 §16 golden fixtures）、`manifest`（gates 1/2/3/7，经 `McosPackage.readPluginManifest`）、`trust`（gate 8 + 08 §6/§7）、`ir`（02 §7 不变量）、`market`（09 §5.1 gate 4/5/6/9/10/11，经共享评审引擎 `CiGateEngine`）——65 用例，报告 human / JSON / JUnit XML + baseline 漂移门禁。不是库、**不发布**——10 §6.4 的 "published as executable artifact" 义务由 `run` JavaExec 满足（`./gradlew :mcos-conformance:conformance`）。 |
+| 职责 | 插件作者提交 marketplace 前本地运行的套件，镜像市场 CI 门禁（09 §5.1）：`dsl`（02 §16 golden fixtures）、`manifest`（gates 1/2/3/7，经 `McosPackage.readPluginManifest`）、`trust`（gate 8 + 08 §6/§7）、`ir`（02 §7 不变量）、`market`（09 §5.1 gate 4/5/6/9/10/11，经共享评审引擎 `CiGateEngine`）、`kernel`（Kernel 1.0 门表面：错误码词汇表、retryable 集、逐码测试覆盖、`dslVersion` 拒绝、Executor 阶段顺序——10 §17.1）——72 用例，报告 human / JSON / JUnit XML + 入库 baseline 漂移门禁，在 CI 中运行。不是库、**不发布**——10 §6.4 的 "published as executable artifact" 义务由 `run` JavaExec 满足（`./gradlew :mcos-conformance:conformance`）。 |
 | 依赖 | `:mcos-sdk`、`:mcos-security`、`:mcos-runtime-core`、`:mcos-marketplace`；junit + kotlin-test（仅测试） |
 | 技术栈 | Kotlin/JVM · JDK 17 · JavaExec CLI |
 | 规范 | [10-roadmap.md](./10-roadmap.md) §6.4、[09-marketplace.md](./09-marketplace.md) §5.1 |

@@ -10,6 +10,17 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### 状态文档对账——定量陈述与代码现状对齐（2026-09-11）
+
+`11-implementation-status` 与 `REPOSITORIES` 里的"活"数字被后续工作推过时了。文档必须不说谎，故逐项核对修正：
+
+- **conformance 计数**：`5 suites · 65 cases` → **6 套件 · 72 用例**（补 `kernel` 7 用例），并补记"在 CI 中与入库 baseline 比对"这一事实（`11-implementation-status` 模块树 + Golden fixture 行、`REPOSITORIES` 参考卡；EN/ZH 各四处）。
+- **模块清单**：`plugins/` 漏了 `mcp`（交付插件 5 → **6**）；`Source code modules` 16 → **17**；`12 RFCs (00–11)` → **13 份（00–12）**（`12-index-server.md` 早已加入）。
+- **幽灵目录**：模块树列着 `doc/ # Early Chinese brainstorm notes`，而该目录**不存在**——删除。
+- **next-up 自身的过时项**：仍挂着"文档债——把 item 30-36 回灌到 ZH 树"，而 items 1–61 **早已双语完整**（编号 61/61 且逐条抽查对应）；同时澄清 "durable-schedule stack (items 33-35)" 指的是**这些 item 的真机验证**（代码早已落地）、"a key-rotation runbook" 指的是**演练 §8.4 手册**（手册已写、从未执行），并补记 index-server 部署工件已落地。
+- **未改**：`10-roadmap` §3.2 的 "All 12 RFCs (00–11)" 是 **P0 门槛的历史定义**（当时确实 12 份），不是现状陈述——按"流水记录不改写"保留。
+- EN/ZH 同步；parity 复核（`11-implementation-status` H2 7/7、围栏 2/2、items 61/61）。
+
 ### 隔离边界的用户授予文件——选择器 wire op（04 §6.1，item 61）（2026-09-11）
 
 收掉 item 58 留下的诚实边界：隔离（独立进程）插件的 `userFiles` 曾恒为 null、命令上报 `UNAVAILABLE`，原因是"选择器需要主进程 UI、跨进程铸枚尚无 wire op"。现在两条边界走同一份契约。

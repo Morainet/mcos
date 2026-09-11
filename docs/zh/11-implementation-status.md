@@ -24,8 +24,7 @@ MCOS 已交付 **P1 MVP 与全部 P2 退出标准**（[10 §5.6.1](./10-roadmap.
 
 ```text
 mcos/
-├── docs/                 # 12 RFCs (00–11) + fixtures + REPOSITORIES.md
-├── doc/                  # Early Chinese brainstorm notes
+├── docs/                 # 13 RFCs (00–12) + fixtures + REPOSITORIES.md
 ├── mcos-sdk/             # 插件契约（McosPlugin、CommandHandler、…）+ Memory/ResolveResult 类型
 ├── mcos-security/        # Publisher 密钥、ArtifactVerifier、PluginTrustGate、SecretResolver、CrashQuarantine、AuditLog（InMemory + FileAuditLog 持久化、可选 HMAC 导出签名）、EnterprisePolicy
 ├── mcos-runtime-core/    # Parser → IR、Registry、Executor、Permission、Workflow、EventBus、Memory、PluginLoader、McosPackage（.mcos 清单读取器）、core.api 管线类型
@@ -34,16 +33,16 @@ mcos/
 ├── mcos-marketplace/     # MarketplaceIndex、PluginInstaller、配方商店、SearchRanking
 ├── mcos-android-sdk/     # 无 UI Android 宿主 SDK（组合根、接收器、host services、动态加载）
 ├── mcos-android/         # 构建在 SDK 上的 Compose 演示壳（可替换 UI；包 …android.demo）
-├── mcos-conformance/     # 可执行一致性门禁（10 §6.4）：5 套件 · 65 用例，镜像 09 §5.1 市场 CI 门禁
+├── mcos-conformance/     # 可执行一致性门禁（10 §6.4）：6 套件 · 72 用例——09 §5.1 市场 CI 门禁加 Kernel 1.0 表面（10 §17.1）
 ├── mcos-server/          # 独立自托管同步端点（SyncBlobTransport REST 契约 + Bearer 认证，仅存不透明 blob）
 ├── mcos-index-server/    # P3 索引宿主（12-index-server §5/§8.1）：发现索引 + 发布者提交/评审流程，跑在共享评审引擎 CiGateEngine（09 §5.1 gate 2/4/5/6/9/10/11）上 + 运营方签名 blocklist + AV 扫描缝；零第三方运行时依赖
-├── plugins/              # hello、system、camera、files、iot（mcp 适配器与设备验证 fixture 也在此）
+├── plugins/              # hello、system、camera、files、mcp、iot（+ 设备验证 fixture，不发布）
 ├── README.md / README.zh-CN.md / CHANGELOG.md / CONTRIBUTING.md / LICENSE
 ```
 
-- **源代码模块：** ✅ 16 个（11 个代码模块——sdk、security、runtime-core、runtime、llm、marketplace、android-sdk、android、conformance、server、index-server——+ 5 个交付插件：hello、system、camera、files、iot），见 §2
+- **源代码模块：** ✅ 17 个（11 个代码模块——sdk、security、runtime-core、runtime、llm、marketplace、android-sdk、android、conformance、server、index-server——+ 6 个交付插件：hello、system、camera、files、mcp、iot），见 §2
 - **构建系统：** ✅ Gradle Kotlin DSL 多模块（JDK 17、Kotlin 2.0.21、AGP 8.7.3、minSdk 26）
-- **Golden fixture：** ✅ 8 个用例（[`docs/fixtures/`](../fixtures/) 下 5 正向 + 3 负向）——由 `DslParserTest` 与 `:mcos-conformance` 的 `dsl` 套件执行并通过；一致性门禁现为 **5 套件 · 65 用例全绿**（`dsl` 8 · `manifest` 14 · `trust` 20 · `ir` 6 · `market` 17——`market` 套件驱动共享评审引擎 `CiGateEngine`，2026-09-06；经 `./gradlew :mcos-conformance:conformance`）
+- **Golden fixture：** ✅ 8 个用例（[`docs/fixtures/`](../fixtures/) 下 5 正向 + 3 负向）——由 `DslParserTest` 与 `:mcos-conformance` 的 `dsl` 套件执行并通过；一致性门禁现为 **6 套件 · 72 用例**（`dsl` 8 · `manifest` 14 · `trust` 20 · `ir` 6 · `market` 17 · `kernel` 7——`market` 套件驱动共享评审引擎 `CiGateEngine`；`kernel` 套件钉住 Kernel 1.0 门表面，10 §17.1），在 CI 中与入库 baseline 比对，经 `./gradlew :mcos-conformance:conformance`
 
 ---
 
@@ -272,4 +271,4 @@ mcos/
 
 61. ✅ **跨隔离边界的用户授予文件——选择器 wire op（04 §6.1，收掉 item 58 的"跨进程铸枚尚未有 wire op"）**——item 58 仅把系统选择器流程做成进程内,隔离插件的 `userFiles` 保持 null、其命令上报 `UNAVAILABLE`。**Wire**（`IsolationWire`）：四个 op——`userFiles.pickForRead` / `statGranted` / `readGranted` / `releaseGranted`。**铸发留在主进程**:选择器需要 UI,故该 op 由 `IsolatedFacadeServer` 服务,它把宿主委托包进与进程内 Stage-4 门面**同一个** `PluginScopedUserFileGrants`——且承重的是,对着**同一张** `UserGrantRegistry`。共享表是安全属性而非优化:跨 Binder 铸出的 token 可在进程内兑换、反之亦然,外来 token 面对的是**一个**权威（而非两个可能漂移的）给出的硬 `PERMISSION_DENIED` / `grant_not_authorized` 拒绝。**接线**:`Executor` 的 registry 改为可注入参数（默认:私有表,故既有一切构造点零改动且行为不变）;`BinderIsolationHost` 接受可选 registry 并透传给每个它绑定的 `IsolatedFacadeServer`;`CompositionRoot` 创建一张表并同时交给两者。**诚实降级保持**:无选择器的宿主、或未接共享表的宿主仍上报 `UNAVAILABLE`——铸发运行时无法校验的 token,恰是本项目拒绝的假成功。**代理**（`IsolatedHostServicesProxy`）:`userFiles` 现在是真实实现,不再继承接口的 null 默认;插件只见到铸出的 token、绝不见宿主的原始 `content://` URI,且 `ref` 缺失/为空的授权回复解码为"无授权"而非伪造。测试 **+4 JVM**（`IsolatedHostServicesProxyTest`:经真实 loopback facade 的「铸 token→读」往返、release 丢弃 token 且二次 release 为 false、外来插件的 token 为硬拒绝、以及两条 `UNAVAILABLE` 路径——无选择器、无共享 registry）。**诚实边界**:隔离链仍只有 JVM 覆盖——真机 `BinderIsolationDeviceTest` 套件钉的是传输、不是这个 op 族——Android 选择器路径与 item 58 一样仍待真机验证。*(EN 已镜像。)*
 
-**下一步（建议）：** 持久调度栈（item 33-35）与 item-38 权限对话框的真机验证——Doze 下 exact-alarm 触发、进程被杀后的冷启动触发、开机重布防、location/WRITE_SETTINGS 提示流；市场运营侧——公共索引服务端部署与密钥轮换手册（运营方真实 Ed25519 锚已落入 `TrustAnchors`，由 `TrustAnchorsConsistencyTest` 指纹钉死——引导已完成）；宿主能力补全——选择器 wire op 已随 item 61 落地,隔离插件现与进程内插件触达同一个 `UserFileGrantService`;Android 选择器路径仍待真机验证。文档债——把 item 30-36 回灌到 ZH 树（EN 为权威）。**Kernel 1.0 稳定门**（[10 §17](./10-roadmap.md)，采纳自 issue #14）：**§17.1 五条标准已满足四条**——代码剩余项（item 59）、错误码覆盖、协议版本化、以及包含 Runtime Semantics 阶段顺序的逐表面一致性覆盖（item 60）；套件在 CI 中对入库 baseline 比对。唯一开放的标准是时间条件：黄金 fixtures 全绿一个完整发布周期——该周期完成，门即关闭。
+**下一步（建议）：** 持久调度栈（item 33-35——Doze 下 exact-alarm 触发、进程被杀后的冷启动触发、开机重布防）与 item-38 权限对话框（location/WRITE_SETTINGS 提示流）的**真机验证**；市场运营侧——在真实主机上运行公共索引服务端（容器 + `/v1/health` 工件已落地,部署本身是开放步骤）并演练 §8.4 密钥轮换手册（运营方真实 Ed25519 锚已落入 `TrustAnchors`,由 `TrustAnchorsConsistencyTest` 指纹钉死——引导已完成,但轮换路径从未执行过）；宿主能力补全——选择器 wire op 已随 item 61 落地,隔离插件现与进程内插件触达同一个 `UserFileGrantService`;Android 选择器路径仍待真机验证。**Kernel 1.0 稳定门**（[10 §17](./10-roadmap.md)，采纳自 issue #14）：**§17.1 五条标准已满足四条**——代码剩余项（item 59）、错误码覆盖、协议版本化、以及包含 Runtime Semantics 阶段顺序的逐表面一致性覆盖（item 60）；套件在 CI 中对入库 baseline 比对。唯一开放的标准是时间条件：黄金 fixtures 全绿一个完整发布周期——该周期完成，门即关闭。
