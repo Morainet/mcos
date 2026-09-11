@@ -474,12 +474,12 @@ function verifyArtifact(metadata: PackageMetadata, artifactBytes: ByteArray): Ve
 
 | Scenario | Action | Client effect |
 |----------|--------|---------------|
-| Routine rotation (publisher's choice) | Publisher generates new key, registers it with `rotatedFrom: oldKeyId`, signs next release with new key | Old key remains `ACTIVE` for a grace period (90 days) so already-installed plugins keep loading; new installs use the new key |
+| Routine rotation (publisher's choice) | Publisher generates new key, registers it with `rotatedFrom: oldKeyId` — the link is carried by the **new** key — then signs the next release with it | Old key remains `ACTIVE` until the publisher retires it; 90 days is the recommended overlap, not an enforced timer, and the rotation itself force-disables nothing |
 | Key suspected compromised | Publisher requests emergency revocation → marketplace sets old key `status: REVOKED`, pushes blocklist entry | Client receives blocklist push → re-verifies all plugins signed by the revoked key → force-disables those that cannot be re-verified with a new key ([§14.4](#144-force-disable-of-installed-revoked-plugins)) |
 | Publisher banned | Marketplace revokes all keys for the publisher, pushes blocklist for all their packages | All plugins by that publisher are force-disabled on next blocklist fetch |
 | Key expiry (if publisher set an expiry) | Marketplace sets `status: REVOKED` at expiry | Same as compromised — plugins need re-signing or are disabled |
 
-**Grace period rationale:** routine rotation must not break already-installed plugins. The 90-day overlap lets publishers re-sign existing versions with the new key and push updates before the old key is fully revoked.
+**Grace period rationale:** routine rotation must not break already-installed plugins. The recommended 90-day overlap lets publishers re-sign existing versions with the new key and push updates before the old key is fully revoked. The overlap is **advisory**: the marketplace runs no timer — the old key stays `ACTIVE` until the publisher calls the revocation endpoint, so a publisher that never retires it keeps it verifying indefinitely.
 
 ### 6.4 Transparency Log (V1+)
 

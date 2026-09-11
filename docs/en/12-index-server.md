@@ -289,24 +289,31 @@ to human review — the MVP never silently claims a clean scan it did not perfor
 
 Derived from 09 §6.3. Two scenarios:
 
-**Routine rotation (publisher-initiated).** Grace period keeps already-installed plugins
-loading on their cached key for up to the client's revocation TTL (7 days) — the rotation
-itself does not force-disable anything.
+**Routine rotation (publisher-initiated).** The grace period is the overlap *before* the
+publisher retires the old key: the rotation itself force-disables nothing, and the old key
+keeps verifying until the publisher's `DELETE`. There is no server-side clock and no client
+"revocation TTL" — the marketplace acts only on that explicit call, and clients learn of the
+retirement on their next refresh (the blocklist cache is 1h; `fetchRevokedKeys` is cached
+indefinitely and refreshed on demand, not on a timer).
 
 ```bash
 # 1. Publisher generates a new key pair (Ed25519, 32-byte seed → PKCS#8/X.509)
-# 2. Register the NEW key first (stays ACTIVE alongside the old one):
+# 2. Register the NEW key first, carrying the audit link to the key it
+#    replaces (both stay ACTIVE until step 4):
 curl -X POST https://market.example/v1/publishers/acme/keys \
   -H "Authorization: Bearer $PUB_TOKEN" \
   -d '{"keyId":"key_2026_09","publisherId":"acme",
+       "rotatedFrom":"key_2026_01",
        "publicKeyFingerprint":"<sha256 hex>","algorithm":"Ed25519",
        "publicKeyEncoded":"<base64 X.509>","createdAt":"2026-09-04T00:00:00Z"}'
 # 3. Sign the next release with the new key and submit.
-# 4. Once every shipped version of that publisher is re-signed (or 90 days pass),
-#    rotate the old key to REVOKED:
+# 4. Once every shipped version is re-signed (or the recommended 90-day overlap
+#    has passed), retire the old key — this DELETE is the only step the
+#    marketplace acts on; it runs no timer of its own:
 curl -X DELETE https://market.example/v1/publishers/acme/keys/key_2026_01 \
   -H "Authorization: Bearer $PUB_TOKEN"
-#    Old key now appears under GET /v1/keys/revoked with its rotatedFrom history.
+#    Old key now appears under GET /v1/keys/revoked as REVOKED. The audit link
+#    `rotatedFrom` lives on the NEW key (step 2), not on the retired one.
 ```
 
 **Emergency revoke (compromise or ban).** Operator-only; immediately visible to clients

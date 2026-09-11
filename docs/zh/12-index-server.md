@@ -252,22 +252,27 @@ stdin 收 artifact 路径，打印 `CLEAN`/`MALICIOUS`。无引擎且黑名单�
 
 源自 09 §6.3。两种场景：
 
-**常规轮换（发布者发起）。** 宽限期让已装插件在其客户端撤销 TTL（7 天）内继续用缓存的旧密钥加载——
-轮换本身不强制禁用任何东西。
+**常规轮换（发布者发起）。** 宽限期是**发布者退役旧密钥之前**的重叠期：轮换本身不强制禁用任何东西，
+旧密钥会一直可验签，直到发布者发出那条 `DELETE`。服务端没有时钟，客户端也不存在"撤销 TTL"——
+市场只响应那一次显式调用，客户端在下次刷新时得知退役（黑名单缓存 1h；`fetchRevokedKeys` 无限期缓存、
+按需刷新，不靠定时器）。
 
 ```bash
 # 1. 发布者生成新密钥对（Ed25519，PKCS#8/X.509）
-# 2. 先注册新密钥（与旧密钥并存 ACTIVE）：
+# 2. 先注册新密钥，带上指向它所替代的那把密钥的审计链接（两者在 step 4 前并存 ACTIVE）：
 curl -X POST https://market.example/v1/publishers/acme/keys \
   -H "Authorization: Bearer $PUB_TOKEN" \
   -d '{"keyId":"key_2026_09","publisherId":"acme",
+       "rotatedFrom":"key_2026_01",
        "publicKeyFingerprint":"<sha256 hex>","algorithm":"Ed25519",
        "publicKeyEncoded":"<base64 X.509>","createdAt":"2026-09-04T00:00:00Z"}'
 # 3. 用新密钥签下一个版本并提交。
-# 4. 全部已发布版本重签（或满 90 天）后，把旧密钥轮换为 REVOKED：
+# 4. 全部已发布版本重签（或建议的 90 天重叠期已过）后，退役旧密钥——
+#    这条 DELETE 是市场唯一会响应的步骤，它自己不跑任何定时器：
 curl -X DELETE https://market.example/v1/publishers/acme/keys/key_2026_01 \
   -H "Authorization: Bearer $PUB_TOKEN"
-#    旧密钥现在出现在 GET /v1/keys/revoked，带 rotatedFrom 历史。
+#    旧密钥现在以 REVOKED 出现在 GET /v1/keys/revoked。审计链接
+#    `rotatedFrom` 属于新密钥（step 2），不属于被退役的那把。
 ```
 
 **紧急撤销（泄密或封禁）。** 仅运营；客户端下次轮询黑名单/revoked-keys（1h TTL）立即可见，
