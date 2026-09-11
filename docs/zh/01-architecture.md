@@ -824,7 +824,7 @@ flowchart TB
     RT2[Local Runtime]
   end
 
-  subgraph Cloud["mcos-server"]
+  subgraph Cloud["Self-hosted roles"]
     API[API Gateway]
     Auth[Auth]
     Mkt[Marketplace]
@@ -844,12 +844,14 @@ flowchart TB
   API --> Tele
 ```
 
-建议的技术栈（V1 任选其一即可）：
+**技术栈（As-built）。** 自托管服务端角色——`mcos-server`（同步 + 企业策略通道）与 `mcos-index-server`（市场索引 + 发布者评审流水线）——是 Kotlin/JVM，直接使用 JDK 内置的 `com.sun.net.httpserver`，**零第三方运行时依赖**。这取代了此前"Spring Boot 或 Go"的表述；理由是可承重的，而非风格偏好：
 
-- **Kotlin / Spring Boot** —— 如果团队以 Android 为主，且希望共享 DTO
-- **Go** —— 如果市场 + 高 QPS 边缘 API 是主要场景
+- **一份评审引擎，一份实现。** 市场 CI 门禁（09 §5.1）落在 `CiGateEngine`（`mcos-marketplace`），由作者侧的 `mcos-conformance` 套件与索引服务端**共同执行**。"本地过 → CI 过"这一保证，只有在两者跑**同一份代码**时才是结构性的；换一种语言就会把它劈成两份需要手工同步的实现。
+- **一份验签实现。** 客户端与索引服务端共用 `ArtifactVerifier`（Ed25519 / RSA-PSS，含 OEM 特有的 `SHA256withRSA/PSS` 兜底）。两套必须逐位互操作的密码学实现，是项目拒绝购买的 bug 类别。
+- **信任根要保持小。** 索引服务端决定每个客户端可以安装什么代码、并分发吊销名单——重量级框架的传递依赖树，会把攻击面落在那个绝不能失守的进程上。
+- **技术栈不是契约。** 被冻结的是 REST 表面（12-index-server.md 加 JVM 互操作套件），不是实现。移植依然可能，但必须重新挣得上面两条保证。
 
-两者必须为市场和同步使用相同的 OpenAPI 契约。
+Go 分支的前提（"市场 + 高 QPS 边缘 API 是主要场景"）从未成立：这些是反向代理之后的低 QPS 服务，而市场是配套表面、不是主产品。
 
 ---
 

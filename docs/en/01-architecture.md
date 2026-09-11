@@ -832,7 +832,7 @@ flowchart TB
     RT2[Local Runtime]
   end
 
-  subgraph Cloud["mcos-server"]
+  subgraph Cloud["Self-hosted roles"]
     API[API Gateway]
     Auth[Auth]
     Mkt[Marketplace]
@@ -852,12 +852,34 @@ flowchart TB
   API --> Tele
 ```
 
-Suggested stack (either is acceptable for V1):
+**Stack (as built).** The self-hosted server roles — `mcos-server` (sync +
+enterprise-policy channel) and `mcos-index-server` (marketplace index +
+publisher review pipeline) — are Kotlin/JVM over the JDK's built-in
+`com.sun.net.httpserver`, with **zero third-party runtime dependencies**. This
+retires the earlier "Spring Boot or Go" suggestion; the reasons are
+load-bearing rather than stylistic:
 
-- **Kotlin / Spring Boot** — if team is Android-heavy and wants shared DTOs
-- **Go** — if marketplace + high QPS edge APIs are primary
+- **One review engine, one implementation.** The marketplace CI gates
+  (09 §5.1) live in `CiGateEngine` (`mcos-marketplace`) and are executed by
+  both the author-side `mcos-conformance` suite *and* the index server. The
+  "passes locally ⇒ passes CI" guarantee is structural only while both run
+  the *same* code; a second language would fork it into two implementations
+  kept in sync by hand.
+- **One signature-verification implementation.** Clients and the index server
+  share `ArtifactVerifier` (Ed25519 / RSA-PSS, including the OEM-specific
+  `SHA256withRSA/PSS` fallback). Two crypto implementations that must
+  interoperate bit-for-bit is a bug class this project declines to buy.
+- **A trust root stays small.** The index server decides what code every
+  client may install and distributes the revocation list — a heavyweight
+  framework's transitive dependency tree is attack surface on the one process
+  that must not be compromised.
+- **The stack is not the contract.** What is frozen is the REST surface
+  (12-index-server.md plus the JVM interop suite), not the implementation. A
+  port remains possible; it would have to re-earn the two guarantees above.
 
-Both must speak the same OpenAPI contracts for marketplace and sync.
+The Go branch's premise ("marketplace + high QPS edge APIs are primary") never
+held: these are low-QPS services behind a reverse proxy, and the marketplace
+is a supporting surface, not the primary product.
 
 ---
 
