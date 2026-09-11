@@ -10,6 +10,18 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### §8.4 轮换手册做成可执行——三处失实被演练揪出（12 §8.4, 09 §6.3, item 62）（2026-09-11）
+
+next-up 曾说轮换手册"已写、从未执行"。把它做成可执行测试后，暴露的是**手册的若干说法与代码不符**：
+
+- **(a) `rotatedFrom` 语义反了**：手册说退役的密钥"带它的 `rotatedFrom` 历史"出现在撤销列表；按 09 §6.3，审计链接由**新**密钥携带，退役密钥带的是它自己注册时的值（通常 null）。演练对两者都逐点断言，故错误读法无法漂回。
+- **(b) "客户端撤销 TTL（7 天）"不存在**：客户端 `fetchRevokedKeys` 缓存是 `Long.MAX_VALUE`（无限期、按需刷新——触发时机为"来自未知密钥的签名"与"完成一次轮换"），1h TTL 属于 **blocklist**（`PluginInstaller.applyBlocklist` 才是强制禁用路径）。
+- **(c) 手册 step 2 的 `curl` 漏了 `rotatedFrom`**，与 §6.3 及它自己 step 4 的注释矛盾。
+- **覆盖缺口**：`rotatedFrom` 在全仓库**零断言**——在 `PublisherKey` 声明、被隐式解析持久化、从未被钉住。新测试断言它经 `GET /v1/admin/registry`（唯一暴露密钥材料的端点）往返，并断言退役密钥**不**携带它。
+- **文档修正**：12 §8.4 宽限期段落 + step 2/4 改为描述实际行为（没有服务端时钟；发布者的 `DELETE` 是市场唯一响应的调用）；09 §6.3 明确 90 天重叠期是**建议、非强制**（已 grep 确认服务端无任何定时器）。
+- **诚实边界**：这是驱动**进程内**活服务器的 JVM 演练；运营在真实部署上跑通手册、以及紧急撤销路径在真实基础设施上，仍是开放项。
+- 测试 **+1**（`IndexTrustInteropTest` 新增手册演练；共享 `registerExtraKey` 助手加可选 `rotatedFrom` 参数）。EN/ZH 同步。
+
 ### 状态文档对账——定量陈述与代码现状对齐（2026-09-11）
 
 `11-implementation-status` 与 `REPOSITORIES` 里的"活"数字被后续工作推过时了。文档必须不说谎，故逐项核对修正：

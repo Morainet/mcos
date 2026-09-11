@@ -7,8 +7,12 @@ import com.morainet.mcos.marketplace.MarketplaceIndexException
 import com.morainet.mcos.security.KeyStatus
 import com.morainet.mcos.security.PublisherKey
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -117,6 +121,69 @@ class IndexTrustInteropTest {
                 signingKeyId = "key-2",
             )
             ok.response.ok().contains("\"state\":\"APPROVED\"")
+        }
+    }
+
+    /**
+     * Rehearsal of the 12 §8.4 routine-rotation runbook, step by step.
+     *
+     * The runbook is the operator-facing document; this is its executable
+     * form. Two claims it used to make are corrected here rather than
+     * silently dropped:
+     *
+     *  1. The `rotatedFrom` audit link lives on the **new** key (09 §6.3:
+     *     "registers it with `rotatedFrom: oldKeyId`") — the retired key does
+     *     not carry it. The field previously had zero coverage anywhere in the
+     *     repo, so nothing would have caught it going missing.
+     *  2. The grace period is **the overlap before the publisher retires the
+     *     old key** — there is no server-side clock and no client "revocation
+     *     TTL": a rotation force-disables nothing.
+     */
+    @Test
+    fun `the 8_4 rotation runbook round-trips rotatedFrom on the new key`() {
+        ServerFixture().use { s ->
+            val alpha = s.createPublisherSession("alpha")
+            val packageId = "com.example.alpha"
+
+            // §8.4 step 2: register the NEW key first, carrying the audit link.
+            val key2 = s.registerExtraKey(alpha, "key-2", rotatedFrom = "key-1")
+
+            // Both keys are registered at this point — that overlap IS the
+            // grace period, and the publisher decides when it ends.
+            val keys = s.get("/v1/admin/registry", s.adminToken).ok().json()
+                .getValue("publishers").jsonArray
+                .first { it.jsonObject.getValue("id").jsonPrimitive.content == "alpha" }
+                .jsonObject.getValue("keys").jsonArray
+                .map { it.jsonObject }
+            assertTrue(
+                keys.any { it.getValue("keyId").jsonPrimitive.content == "key-1" },
+                "the old key stays registered until the publisher retires it: $keys",
+            )
+            assertEquals(
+                "key-1",
+                keys.single { it.getValue("keyId").jsonPrimitive.content == "key-2" }
+                    .getValue("rotatedFrom").jsonPrimitive.content,
+                "the rotation link belongs to the NEW key",
+            )
+
+            // §8.4 step 3: the next release is signed with the new key.
+            s.submitPackage(
+                alpha,
+                pluginManifest(packageId, "1.0.0"),
+                signingKey = key2,
+                signingKeyId = "key-2",
+            ).response.ok().contains("\"state\":\"APPROVED\"")
+
+            // §8.4 step 4: the publisher retires the old key.
+            s.delete("/v1/publishers/alpha/keys/key-1", alpha.token).ok()
+
+            runBlocking {
+                val retired = s.client().refreshRevokedKeys().single { it.keyId == "key-1" }
+                assertEquals(KeyStatus.REVOKED, retired.status)
+                // The retired key does NOT carry the link — asserted so this
+                // can never quietly drift back into the runbook's old wording.
+                assertNull(retired.rotatedFrom, "the rotation link is on the new key, not the retired one")
+            }
         }
     }
 

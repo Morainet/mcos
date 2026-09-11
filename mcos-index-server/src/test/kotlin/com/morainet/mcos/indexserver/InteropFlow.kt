@@ -79,10 +79,17 @@ internal fun ServerFixture.createPublisherSession(publisherId: String, keyId: St
 }
 
 /** Registers a second key for [session]; returns the new keypair. */
-internal fun ServerFixture.registerExtraKey(session: PublisherSession, keyId: String): KeyPair {
+internal fun ServerFixture.registerExtraKey(
+    session: PublisherSession,
+    keyId: String,
+    /** 09 §6.3 rotation link: the keyId this one replaces, if any. */
+    rotatedFrom: String? = null,
+): KeyPair {
     val key = IndexTestKit.ed25519()
     val fingerprint = IndexTestKit.sha256Hex(key.public.encoded)
+    val link = rotatedFrom?.let { """"rotatedFrom":"$it",""" } ?: ""
     val keyJson = """{"keyId":"$keyId","publisherId":"${session.id}",""" +
+        """$link""" +
         """"publicKeyFingerprint":"$fingerprint","algorithm":"Ed25519",""" +
         """"publicKeyEncoded":"${IndexTestKit.publicKeyB64(key)}",""" +
         """"createdAt":"${IndexTestKit.nowIso()}"}"""
