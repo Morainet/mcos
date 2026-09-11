@@ -10,6 +10,15 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### 文档修正：服务端技术栈偏离——"Spring Boot or Go" 退役（2026-09-11）
+
+一次文档-实现偏离的修正。按 roadmap §1.1 原则 1，code 与 spec 偏离时通常算 code 的 bug——但这次是文档落后于实现，方向落在安全的那一侧。
+
+- **偏离事实**：`00-vision` 的模块图写着 `mcos-server # Sync, marketplace, config (Spring Boot or Go)`，`01-architecture` §12 写 "Suggested stack (either is acceptable for V1): Kotlin / Spring Boot | Go"。而两个服务端角色（`mcos-server`、`mcos-index-server`）实际落地为 **Kotlin/JVM + JDK 内置 `com.sun.net.httpserver` + 零第三方运行时依赖**——文档提到的两个分支**都未被采用**，且没有任何地方记录这个决策的依据。
+- **修正**：`00-vision` 模块图改为事实描述，并补上此前缺失的 `mcos-index-server`（模块图只列了 `mcos-server`，而 marketplace 早已拆为独立服务）；`01-architecture` §12 选型段重写为 as-built 描述 + 四条可承重的理由——**一份评审引擎**（`CiGateEngine` 由作者侧套件与服务端共同执行，"本地过 → CI 过"只在同语言下才是结构性保证）、**一份验签实现**（`ArtifactVerifier` 含 OEM 特有的 `SHA256withRSA/PSS` 兜底，两套密码学实现必须逐位互操作是拒绝购买的 bug 类别）、**信任根保持小**（框架传递依赖树会落在绝不能失守的进程上）、**技术栈不是契约**（被冻结的是 REST 表面）；并明确 Go 分支的前提（"市场 + 高 QPS 边缘 API 为主"）从未成立——这些是反向代理之后的低 QPS 服务，市场是配套表面而非主产品。§12 mermaid 的 `Cloud["mcos-server"]` 标签改为 `Cloud["Self-hosted roles"]`（原图把 marketplace 归在 mcos-server 名下，已不准确）。
+- **诚实边界**：OpenAPI 3.1 镜像仍未生成（12-index-server.md 的 Status 已说明延后到端点面稳定后），契约目前由 JVM 互操作套件承担——新文本按此表述，未声称存在 OpenAPI 文件。
+- EN/ZH 同步，parity 检查通过（H2 12/12 与 21/21，代码围栏 16/16 与 46/46，mermaid 0/0 与 6/6）。
+
 ### 错误码全覆盖 + kernel 一致性套件接入 CI——门验证标准收口（2026-09-10）
 
 10 §17.1 验证标准的四条达成（item 60）；门五条标准满足四条，唯一开放的是时间条件（黄金 fixtures 全绿一个完整发布周期）。
