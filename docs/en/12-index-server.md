@@ -251,6 +251,21 @@ sh gradlew :mcos-index-server:installDist
 TLS terminates at a reverse proxy (Caddy/nginx); the Bearer tokens protect the API and
 TLS protects tokens in transit.
 
+### 8.1.1 Container (Docker)
+
+Build from the repository root and run via the compose stack:
+
+```bash
+MCOS_INDEX_ADMIN_TOKEN=ops-secret docker compose up --build -d
+curl -fsS http://localhost:8877/v1/health     # {"status":"ok","service":"mcos-index-server"}
+```
+
+- The image is pure JVM (`gradle:8.10-jdk17` builder → `eclipse-temurin:17-jre`), runs as a non-root user, and binds `0.0.0.0` *inside* the container — TLS still terminates at the reverse proxy in front (§8.1).
+- `GET /v1/health` is the unauthenticated, side-effect-free liveness probe; the container `HEALTHCHECK` gates on it, and orchestrators can too.
+- Registry data persists in the `mcos-index-data` named volume (§8.5: backup = stop + tar the volume).
+- A token-less configuration fails at compose-variable expansion — `MCOS_INDEX_ADMIN_TOKEN:?` — not as a server crash loop.
+- On small build hosts (≈2 GB), the Gradle heap is capped and the Kotlin compiler runs in-process; on hosts with more memory the build simply runs faster.
+
 ### 8.2 Bootstrap & publisher onboarding
 
 1. Operator starts the server with `--keys-dir` containing the marketplace/operator

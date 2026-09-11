@@ -1,0 +1,9 @@
+# Keep the build context lean — Gradle configures every settings project, so
+# source trees must be present, but VCS state, worktree snapshots, build
+# outputs, and local registry data must not reach the daemon.
+.git
+.claude
+data
+**/build
+.kotlin
+.github

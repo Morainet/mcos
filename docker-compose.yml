@@ -1,0 +1,31 @@
+# 12-index-server.md §8.1 — production-shaped local deployment.
+#
+#   MCOS_INDEX_ADMIN_TOKEN=ops-secret docker compose up --build
+#
+# TLS terminates at a reverse proxy in FRONT of this service (§8.1) — the
+# Bearer tokens protect the API, the proxy protects the tokens in transit.
+# The registry persists in the named volume; backup = stop + tar the volume
+# (§8.5).
+services:
+  mcos-index-server:
+    build:
+      context: .
+      dockerfile: mcos-index-server/Dockerfile
+    image: mcos-index-server
+    ports:
+      - "8877:8877"
+    environment:
+      # The server refuses to start without an operator token (§8.1) — the
+      # :? expansion makes a missing token a compose-time failure instead of
+      # a crash loop.
+      MCOS_INDEX_ADMIN_TOKEN: "${MCOS_INDEX_ADMIN_TOKEN:?set MCOS_INDEX_ADMIN_TOKEN}"
+      # Optional gate-9 engine (§8.3): a command reading the artifact path on
+      # stdin and printing CLEAN/MALICIOUS. Unset ⇒ denylist-only + UNSCANNED
+      # submissions route to human review.
+      # MCOS_AV_SCANNER_CMD: "/usr/local/bin/av-scan"
+    volumes:
+      - mcos-index-data:/var/lib/mcos-index
+    restart: unless-stopped
+
+volumes:
+  mcos-index-data:

@@ -19,6 +19,16 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 - **诚实边界**：OpenAPI 3.1 镜像仍未生成（12-index-server.md 的 Status 已说明延后到端点面稳定后），契约目前由 JVM 互操作套件承担——新文本按此表述，未声称存在 OpenAPI 文件。
 - EN/ZH 同步，parity 检查通过（H2 12/12 与 21/21，代码围栏 16/16 与 46/46，mermaid 0/0 与 6/6）。
 
+### index-server 部署工件——健康端点 + 容器化（2026-09-10）
+
+公开部署（P3 闭环的最后一块）的运维前提补齐：此前 `mcos-index-server` 只有 §8.1 的裸进程手册，没有存活探针、没有容器化——反向代理与编排器无从接入。
+
+- **`GET /v1/health`**（`mcos-index-server`）：免鉴权、无副作用的存活探针，返回 `{"status":"ok","service":"mcos-index-server"}`。`ServerLifecycleTest` 补断言（真套接字 + 200 + body 形状）。
+- **`mcos-index-server/Dockerfile`**：两阶段构建（`gradle:8.10-jdk17` → `eclipse-temurin:17-jre`），非 root 用户，数据目录为挂载卷而非镜像内。容器内绑定 `0.0.0.0`（默认 loopback 是给反向代理用的——容器边界本身就是那个"前面"）；`HEALTHCHECK` 打 `/v1/health`。纯 JVM 模块，与 CI JVM shard 同理无需 Android SDK。
+- **`docker-compose.yml` + `.dockerignore`**：命名卷持久化注册表数据；`MCOS_INDEX_ADMIN_TOKEN:?` 让缺 token 的配置在 compose 展开期失败而非崩溃循环（服务端本就拒绝无 token 启动——这里把失败提前到最先能失败的时刻）。
+- **文档**：12-index-server.md 新增 §8.1.1 容器运行（EN/ZH 同步）。
+- **诚实边界**：镜像的完整构建验证**未完成**——本机 colima VM 仅 1.9 GB，首次构建 Gradle 被内核 OOM 杀掉；已在 Dockerfile 内限 Gradle 堆（`-Xmx1400m`）并让 Kotlin 编译器进程内运行（不再与独立 daemon 抢内存），但在内存充裕的机器上重新跑通 `docker compose up --build` 之前，此工件应视为"已写好、待真机构建验证"。Gradle 配置阶段需要完整仓库树（`.dockerignore` 只剔除 build/VCS/worktree 噪音）。
+
 ### 错误码全覆盖 + kernel 一致性套件接入 CI——门验证标准收口（2026-09-10）
 
 10 §17.1 验证标准的四条达成（item 60）；门五条标准满足四条，唯一开放的是时间条件（黄金 fixtures 全绿一个完整发布周期）。
