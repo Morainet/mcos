@@ -210,6 +210,17 @@ flowchart BT
 | 技术栈 | Kotlin/JVM · JDK 17 |
 | 规范 | [04-plugin-sdk.md](./04-plugin-sdk.md) §17 |
 
+### `plugins:mcos-plugin-intent` — Intent / 深链 / App Functions 桥
+
+| | |
+|---|---|
+| 路径 | `plugins/mcos-plugin-intent/` |
+| 包名 | `com.morainet.mcos.plugin.intent` |
+| 职责 | `intent.start` / `deeplink.open` / `appfn.invoke` 命令。通往其他 App 表面的桥：`intent.start` 执行 §12.6 的逐次 `extrasSchema` 强制要求（配 fail-closed 的 `ExtrasSchema` 校验器与已发布的 `WellKnownIntents` 允许清单），`deeplink.open` 以 `ACTION_VIEW` 打开深链，`appfn.invoke` 经 §12.5 命令 id 编码（`AppFunctionIds`）调用其他 App 包发布的 App Function。与 iot/mcp 一样是独立插件：宿主显式装配，不在 `android-sdk` 默认内置集内。 |
+| 依赖 | `api(project(":mcos-sdk"))`；serialization-json、coroutines-core |
+| 技术栈 | Kotlin/JVM · JDK 17 |
+| 规范 | [02-command-protocol.md](./02-command-protocol.md) §12.2/§12.3/§12.5/§12.6、[10-roadmap.md](./10-roadmap.md) §5.4 |
+
 ### `mcos-server` — 自托管同步端点
 
 | | |

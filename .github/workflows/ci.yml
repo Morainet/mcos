@@ -98,6 +98,7 @@ jobs:
               :plugins:mcos-plugin-camera:test
               :plugins:mcos-plugin-files:test
               :plugins:mcos-plugin-iot:test
+              :plugins:mcos-plugin-intent:test
               --parallel
     steps:
       - uses: actions/checkout@v4

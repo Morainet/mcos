@@ -159,7 +159,7 @@ dependencies {
 | 📱 [`mcos-android`](./mcos-android/README.md) | 基于 SDK 的 Compose 演示壳（可替换的参考 UI） | ✅ |
 | 🖧 [`mcos-server`](./mcos-server/README.md) | 自托管同步端点：`SyncBlobTransport` REST 契约 + 强制 Bearer token 认证，不透明 blob 存储 | ✅ |
 
-🔌 插件在 `plugins/` 下独立构建：`mcos-plugin-hello`、`mcos-plugin-system`、`mcos-plugin-camera`、`mcos-plugin-files`、`mcos-plugin-mcp`、`mcos-plugin-iot`（均带测试与 README）。
+🔌 插件在 `plugins/` 下独立构建：`mcos-plugin-hello`、`mcos-plugin-system`、`mcos-plugin-camera`、`mcos-plugin-files`、`mcos-plugin-mcp`、`mcos-plugin-iot`、`mcos-plugin-intent`（均带测试与 README）。
 
 > 另有内部测试夹具 [`:plugins:mcos-plugin-devicefixture`](./plugins/mcos-plugin-devicefixture/README.md)——**不发布、不进 android-sdk 默认集**：它仅为 `mcos-android-sdk` 的 `BinderIsolationDeviceTest` 服务，让 §8 的 Binder 内核边界有真正的真机端到端验证（item 50）。每次构建现 d8 转 dex，无宿主 App 应依赖之。
 

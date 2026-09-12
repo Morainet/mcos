@@ -10,6 +10,18 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### Intent / Deep Link / App Functions 插件切片——插件矩阵最后一个 ⬜ 落地（02 §12.2/§12.3/§12.5/§12.6, 10-roadmap §5.4, item 63）（2026-09-12）
+
+新增第 7 个交付插件 `plugins/mcos-plugin-intent`（包 `com.morainet.mcos.plugin.intent`，插件 id `mcos.plugin.intent`），把 10-roadmap §5.4 的 Intent / Deep Link 与 App Functions 两行从 ⬜ 推到交付：
+
+- **`intent.start`（02 §12.3/§12.6）**：`extras` **必须**由逐次声明的 `extrasSchema` 约束；缺 schema 且 action 不在允许清单内 → `SCHEMA_VIOLATION`，`details.path = /args/extras`、`details.reason = extras_schema_required`（与该节写明的 Stage-5 拒绝同码/同 reason）。校验器只支持可安全校验的子集，`oneOf`/`anyOf`/`$ref`/`pattern`/`format`/schema 值型 `additionalProperties`/元组 `items[]` 一律 **fail-closed**（`extras_schema_unsupported`），绝不半校验——与 MCP 转换器对不可映射工具的姿态一致（02 §12.4）。
+- **`WellKnownIntents`**：6 条系统 action 的预声明 schema（VIEW/MAIN/DIAL/SENDTO/WEB_SEARCH/SEND），全部 `additionalProperties: false`，把「模型臆造 extra key」从静默 misfire 变成可自纠的拒绝。
+- **`deeplink.open`**：`ACTION_VIEW` 深链；payload 走 URI，故 §12.6 的 extras 危险面不适用；无 scheme 的 URI 在触达宿主前即被拒（`deeplink_uri_invalid`）。
+- **`appfn.invoke`（02 §12.2/§12.5）**：经宿主 `AppFunctionService` 调用其他 App 包发布的函数；`AppFunctionIds` 实现 `sys.appfn.<encodedPackage>.<function>`。**演练发现规范一处失实**：§12.5 称反向查找「无歧义因为 1:1 字符替换」，但 `com.my_app` 与 `com.my.app` 编码同为 `com_my_app`——歧义在**编码**侧，故 `encode` 对含 `_` 的包名 fail-closed（此类包走 `appfn.invoke(package, function, args)` 参数形式），`decode` 按规范算法还原。
+- **SDK / 运行时**：`HostServices` 新增两个可选能力 `intents` / `appFunctions`（接口默认 null，宿主缺失即 `UNAVAILABLE`，延续「树中无假成功」）；`Executor.stage4Services` 补上两者委派（E31 陷阱：漏 override 会让所有已执行命令静默失去能力；E31 扩展 + 新增反向保证 E31b 守住）。
+- **诚实边界**：`appfn.invoke` 无法得知目标函数影响，声明 `write` 为下限；§12.6 的拒绝发生在处理器内而非 Executor Stage-5（extras schema 逐次声明，静态 `inputSchema` 表达不了）；Android 侧 `AndroidHostServices` 实现与隔离进程 wire op 为后续工作——在此之前 Android/隔离插件如实 `UNAVAILABLE`。
+- 测试 **+47**（插件 46：P1-P25 命令语义含 §12.6 拒绝路径与无假成功、ES1-ES16 校验器含 fail-closed 形状、AF1-AF5 编解码；运行时 +1：E31 扩展 + E31b）。包边界守卫新增 `com.morainet.mcos.plugin.intent` 规则。EN/ZH 同步。
+
 ### §8.4 轮换手册做成可执行——三处失实被演练揪出（12 §8.4, 09 §6.3, item 62）（2026-09-11）
 
 next-up 曾说轮换手册"已写、从未执行"。把它做成可执行测试后，暴露的是**手册的若干说法与代码不符**：

@@ -1104,7 +1104,7 @@ class HelloWorldHandler : CommandHandler {
 
 ## 17. Built-in Plugin Set (First Party)
 
-> ✅ **Implementation status:** the first four (hello / system / camera / files) are implemented in `plugins/` with conformance tests and are the marketplace's curated built-ins; the rest remain spec-only.
+> ✅ **Implementation status:** hello / system / camera / files ship in `plugins/` with conformance tests and are the marketplace's curated built-ins; `iot`, `mcp` and `intent` also ship, as **standalone** plugins a host wires explicitly (they are not in the `android-sdk` default built-in set).
 >
 > **This table is the single source of truth for the built-in command surface.** All other documents (roadmap, repositories, vision) reference this table rather than maintaining independent command lists. If a command appears elsewhere but not here, it is undocumented and should be added here or removed from the referencing document. The `mcos.plugin.system` plugin owns both the `sys.*` and `sys.device.*` namespaces (device queries are system-API wrappers, kept under the reserved `sys` root rather than a separate `device` root — `device` is not a reserved namespace, see [02 §4.3](./02-command-protocol.md)).
 
@@ -1114,6 +1114,7 @@ class HelloWorldHandler : CommandHandler {
 | `mcos.plugin.system` | `sys.notify`, `sys.share`, `sys.clipboard`, `sys.openUrl`, `sys.vibrate`, `sys.device.battery`, `sys.device.wifi`, `sys.device.screen`, `sys.device.volume`, `sys.device.location`, `sys.device.brightness`, `sys.event.emit` | P1 (+`sys.event.emit` P2) |
 | `mcos.plugin.camera` | `camera.capture`, `camera.scan` | P1 |
 | `mcos.plugin.files` | `file.list`, `file.search`, `photo.search`, `photo.compress`, `file.write`, `file.read`, `file.stat`, `file.delete` | P1 |
+| `mcos.plugin.intent` | `intent.start`, `deeplink.open`, `appfn.invoke` | P2 |
 | `mcos.plugin.iot` | `home.*`, `iot.*` | P2 |
 | `mcos.plugin.mcp` | dynamic `mcp.*` | P2 spike / P3 production |
 
