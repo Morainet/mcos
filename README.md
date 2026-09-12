@@ -144,7 +144,7 @@ A working multi-module Gradle project (every module has its own README):
 | 📱 [`mcos-android`](./mcos-android/README.md) | Compose demo shell built on the SDK (replaceable reference UI) | ✅ |
 | 🖧 [`mcos-server`](./mcos-server/README.md) | Self-hosted sync endpoint: `SyncBlobTransport` REST contract + mandatory Bearer-token auth, opaque blob store | ✅ |
 
-🔌 Plugins are independently buildable in `plugins/`: `mcos-plugin-hello`, `mcos-plugin-system`, `mcos-plugin-camera`, `mcos-plugin-files`, `mcos-plugin-mcp`, `mcos-plugin-iot` (each with tests and a README).
+🔌 Plugins are independently buildable in `plugins/`: `mcos-plugin-hello`, `mcos-plugin-system`, `mcos-plugin-camera`, `mcos-plugin-files`, `mcos-plugin-mcp`, `mcos-plugin-iot`, `mcos-plugin-intent` (each with tests and a README).
 
 > Plus an internal test fixture, [`:plugins:mcos-plugin-devicefixture`](./plugins/mcos-plugin-devicefixture/README.md) — **not published, not in the android-sdk default set**: it feeds `mcos-android-sdk`'s `BinderIsolationDeviceTest` so the §8 Binder-kernel boundary has a real on-device end-to-end test (item 50). Dexed on every build; no host app should depend on it.
 

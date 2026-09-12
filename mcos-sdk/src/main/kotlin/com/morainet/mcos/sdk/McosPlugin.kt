@@ -117,6 +117,25 @@ interface HostServices {
      * user-consent moment, and the plugin re-picks after a host restart.
      */
     val userFiles: UserFileGrantService? get() = null
+
+    /**
+     * Optional Intent / deep-link launcher (02-command-protocol.md 12.3,
+     * 12.6). Requests carry **typed** extras produced only after the plugin
+     * validated them against a caller-declared `extrasSchema`; the host never
+     * receives an untyped, model-invented bundle. Null on hosts without an
+     * intent platform (plain JVM); plugins must surface UNAVAILABLE rather
+     * than a fake success.
+     */
+    val intents: IntentService? get() = null
+
+    /**
+     * Optional App Functions bridge (02-command-protocol.md 12.2, 12.5) for
+     * invoking a function published by another app package. Null on hosts
+     * without an App Functions platform; plugins must surface UNAVAILABLE
+     * rather than a fake success, and an implementation must surface an error
+     * for an unknown package/function rather than a fabricated result.
+     */
+    val appFunctions: AppFunctionService? get() = null
 }
 
 /**
@@ -271,6 +290,83 @@ interface ClipboardService {
 /** Haptic feedback (vibration). */
 interface HapticsService {
     suspend fun vibrate(durationMs: Int)
+}
+
+/**
+ * Starts Intents on behalf of a plugin (02-command-protocol.md 12.3).
+ * Implementations translate [IntentRequest] into the platform's intent
+ * mechanism (Android `Intent`); extras ride typed (12.6), so a host never
+ * receives an untyped bundle the model assembled.
+ *
+ * The `extrasSchema` rule of 12.6 is enforced by the calling plugin
+ * **before** this method is reached — a host implementation may assume
+ * [IntentRequest.extras] was validated.
+ */
+interface IntentService {
+    /**
+     * Start [request].
+     *
+     * @return the launch outcome. [IntentResult.started] is false when no
+     *   component on the device can handle the intent — a legitimate state,
+     *   not an error (same honesty rule as a missing location fix).
+     */
+    suspend fun start(request: IntentRequest): IntentResult
+}
+
+/**
+ * One Intent launch request (02-command-protocol.md 12.3/12.6).
+ *
+ * @property action platform action string, e.g. `android.intent.action.SEND`.
+ * @property dataUri the intent's data URI (`intent.data`), when any.
+ * @property packageName explicit target package, when the caller pins one.
+ * @property categories intent categories, e.g.
+ *   `android.intent.category.DEFAULT`.
+ * @property extras typed extras — already validated against the caller's
+ *   `extrasSchema` (12.6), never a free-form model-invented map.
+ */
+data class IntentRequest(
+    val action: String,
+    val dataUri: String? = null,
+    val packageName: String? = null,
+    val categories: List<String> = emptyList(),
+    val extras: Map<String, JsonElement> = emptyMap(),
+)
+
+/** Outcome of [IntentService.start]. */
+data class IntentResult(
+    /** False when nothing on the device resolved the intent — honestly "not handled". */
+    val started: Boolean,
+    /** The component's package when the host can determine it. */
+    val resolvedPackage: String? = null,
+) {
+    companion object {
+        /** No component could handle the intent. */
+        val NOT_HANDLED = IntentResult(started = false)
+    }
+}
+
+/**
+ * Invokes an App Function published by another app package
+ * (02-command-protocol.md 12.2/12.5). Implementations receive the
+ * package/function pair already decoded from the command id (see the intent
+ * plugin's `AppFunctionIds`) and never re-parse the id themselves.
+ *
+ * **Honest boundary:** the function's argument contract belongs to the
+ * publishing app, so [args] is validated by that app (or by a runtime
+ * descriptor the publisher ships) — this bridge does not invent a schema it
+ * cannot know. An unknown package/function is an error, never a fabricated
+ * result.
+ */
+interface AppFunctionService {
+    /**
+     * @param packageName the publishing app's package name, e.g. `com.example.notes`.
+     * @param function the function name, e.g. `createNote`.
+     * @param args function arguments.
+     * @return the function's JSON result.
+     * @throws McosException when the package/function is unknown or the
+     *   invocation fails.
+     */
+    suspend fun invoke(packageName: String, function: String, args: JsonObject): JsonElement
 }
 
 interface FileService {

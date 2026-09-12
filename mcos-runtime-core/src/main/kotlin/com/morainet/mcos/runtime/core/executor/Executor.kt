@@ -661,6 +661,12 @@ class Executor(
             override val clipboard: ClipboardService? get() = original.clipboard
             override val haptics: HapticsService? get() = original.haptics
             override val events: EventPublisher? get() = original.events
+            // Intent / App Functions bridges are optional capabilities too —
+            // without these overrides the interface defaults (null) would make
+            // every executed intent.*/appfn.* command report UNAVAILABLE even
+            // on a host that provides them (guarded by E31).
+            override val intents: IntentService? get() = original.intents
+            override val appFunctions: AppFunctionService? get() = original.appFunctions
             // The sandbox view is per-plugin: every path the handler uses is
             // resolved inside the plugin's own namespace directory.
             override val sandbox: SandboxFileService? =

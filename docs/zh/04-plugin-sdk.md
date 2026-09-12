@@ -1106,7 +1106,7 @@ class HelloWorldHandler : CommandHandler {
 
 ## 17. 内置插件集（第一方）
 
-> ✅ **Implementation status:** 前四个插件（hello / system / camera / files）已在 `plugins/` 落地并带一致性测试，同时是 marketplace 的 curated 内置集；其余仍为 spec-only。
+> ✅ **Implementation status:** hello / system / camera / files 已在 `plugins/` 落地并带一致性测试，同时是 marketplace 的 curated 内置集；`iot`、`mcp`、`intent` 同样已落地，但属**独立**插件——由宿主显式装配（不在 `android-sdk` 默认内置集内）。
 >
 > **本表是内置命令表面的单一真相源。** 所有其他文档（路线图、仓库拓扑、愿景）引用本表，而非维护独立的命令清单。若某命令出现在其他文档但不在本表中，它是未记录的——应加入本表或从引用文档中移除。`mcos.plugin.system` 插件同时拥有 `sys.*` 和 `sys.device.*` 命名空间（设备查询是系统 API 封装，归入保留的 `sys` 根而非单独的 `device` 根——`device` 不是保留命名空间，见 [02 §4.3](./02-command-protocol.md)）。
 
@@ -1116,6 +1116,7 @@ class HelloWorldHandler : CommandHandler {
 | `mcos.plugin.system` | `sys.notify`, `sys.share`, `sys.clipboard`, `sys.openUrl`, `sys.vibrate`, `sys.device.battery`, `sys.device.wifi`, `sys.device.screen`, `sys.device.volume`, `sys.device.location`, `sys.device.brightness`, `sys.event.emit` | P1（+`sys.event.emit` P2） |
 | `mcos.plugin.camera` | `camera.capture`, `camera.scan` | P1 |
 | `mcos.plugin.files` | `file.list`, `file.search`, `photo.search`, `photo.compress`, `file.write`, `file.read`, `file.stat`, `file.delete` | P1 |
+| `mcos.plugin.intent` | `intent.start`, `deeplink.open`, `appfn.invoke` | P2 |
 | `mcos.plugin.iot` | `home.*`, `iot.*` | P2 |
 | `mcos.plugin.mcp` | 动态 `mcp.*` | P2 spike / P3 production |
 

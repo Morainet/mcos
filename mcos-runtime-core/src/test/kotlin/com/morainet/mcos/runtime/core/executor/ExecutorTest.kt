@@ -924,12 +924,16 @@ class ExecutorTest {
         var seenDeviceInfo: DeviceInfoService? = null
         var seenClipboard: ClipboardService? = null
         var seenHaptics: HapticsService? = null
+        var seenIntents: IntentService? = null
+        var seenAppFunctions: AppFunctionService? = null
         val plugin = createPlugin("test.caps31", "1.0.0", mapOf(
             "cmd.caps" to object : CommandHandler {
                 override suspend fun invoke(ctx: ExecutionContext): CommandResult {
                     seenDeviceInfo = ctx.services.deviceInfo
                     seenClipboard = ctx.services.clipboard
                     seenHaptics = ctx.services.haptics
+                    seenIntents = ctx.services.intents
+                    seenAppFunctions = ctx.services.appFunctions
                     return CommandResult.Ok(JsonPrimitive("ok"))
                 }
             }
@@ -941,6 +945,34 @@ class ExecutorTest {
         assertNotNull(seenDeviceInfo, "deviceInfo must survive the secret-resolving facade")
         assertNotNull(seenClipboard, "clipboard must survive the secret-resolving facade")
         assertNotNull(seenHaptics, "haptics must survive the secret-resolving facade")
+        assertNotNull(seenIntents, "intents must survive the secret-resolving facade")
+        assertNotNull(seenAppFunctions, "appFunctions must survive the secret-resolving facade")
+        Unit
+    }
+
+    @Test
+    fun `E31b-a host without the intent bridges surfaces null, not a fabricated capability`() = runBlocking {
+        // The other half of the E31 guarantee: delegation must not turn a
+        // missing host capability into a present one. StubHostServices leaves
+        // the defaults (null), so the executed command sees UNAVAILABLE-grade
+        // absence rather than a stub that fakes success.
+        var seenIntents: IntentService? = null
+        var seenAppFunctions: AppFunctionService? = null
+        val plugin = createPlugin("test.caps31b", "1.0.0", mapOf(
+            "cmd.caps" to object : CommandHandler {
+                override suspend fun invoke(ctx: ExecutionContext): CommandResult {
+                    seenIntents = ctx.services.intents
+                    seenAppFunctions = ctx.services.appFunctions
+                    return CommandResult.Ok(JsonPrimitive("ok"))
+                }
+            }
+        ))
+        registry.register(plugin)
+
+        val result = executor.execute("cmd.caps")
+        assertIs<CommandResult.Ok>(result)
+        assertNull(seenIntents, "a host without an intent platform must surface null")
+        assertNull(seenAppFunctions, "a host without App Functions must surface null")
         Unit
     }
 
@@ -1234,6 +1266,13 @@ class ExecutorTest {
         }
         override val haptics = object : HapticsService {
             override suspend fun vibrate(durationMs: Int) {}
+        }
+        override val intents = object : IntentService {
+            override suspend fun start(request: IntentRequest) = IntentResult(started = true)
+        }
+        override val appFunctions = object : AppFunctionService {
+            override suspend fun invoke(packageName: String, function: String, args: JsonObject) =
+                JsonPrimitive("$packageName.$function")
         }
     }
 

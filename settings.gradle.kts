@@ -37,6 +37,10 @@ include(":plugins:mcos-plugin-camera")
 include(":plugins:mcos-plugin-files")
 include(":plugins:mcos-plugin-mcp")
 include(":plugins:mcos-plugin-iot")
+// Intent / deep-link / App Functions bridge (10-roadmap §5.4, 02 §12).
+// Standalone like iot/mcp: a host wires IntentPlugin explicitly, so it is not
+// part of the android-sdk default built-in set.
+include(":plugins:mcos-plugin-intent")
 // Device-verification fixture (not published, not in the android-sdk runtime
 // set): BinderIsolationDeviceTest dexes its jar into a signed .mcos artifact.
 include(":plugins:mcos-plugin-devicefixture")
