@@ -1114,9 +1114,11 @@ class HelloWorldHandler : CommandHandler {
 | `mcos.plugin.system` | `sys.notify`, `sys.share`, `sys.clipboard`, `sys.openUrl`, `sys.vibrate`, `sys.device.battery`, `sys.device.wifi`, `sys.device.screen`, `sys.device.volume`, `sys.device.location`, `sys.device.brightness`, `sys.event.emit` | P1 (+`sys.event.emit` P2) |
 | `mcos.plugin.camera` | `camera.capture`, `camera.scan` | P1 |
 | `mcos.plugin.files` | `file.list`, `file.search`, `photo.search`, `photo.compress`, `file.write`, `file.read`, `file.stat`, `file.delete` | P1 |
-| `mcos.plugin.intent` | `intent.start`, `deeplink.open`, `appfn.invoke` | P2 |
+| `mcos.plugin.intent` | `deeplink.open`, `appfn.invoke` | P2 |
 | `mcos.plugin.iot` | `home.*`, `iot.*` | P2 |
 | `mcos.plugin.mcp` | dynamic `mcp.*` | P2 spike / P3 production |
+
+> **§12.3/§12.6 (Intent launching):** the Intent command is the `sys` plugin's `sys.intent.start` — §12.3 names it and §12.6 publishes the pre-declared extras allowlist "in the `sys` plugin" (`WellKnownIntents`, all `additionalProperties: false`). Every invoke must carry an `extrasSchema` unless its action is one of those published well-known intents, and the rejection uses §12.6's exact code/path/reason (`SCHEMA_VIOLATION`, `/args/extras`, `extras_schema_required`). 10-roadmap §5.4's name for the capability, `intent.start`, is an **alias** of `sys.intent.start` — one implementation of one protocol rule, not two.
 
 ---
 

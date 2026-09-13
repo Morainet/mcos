@@ -21,8 +21,6 @@ import kotlinx.datetime.Instant
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.add
-import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -36,8 +34,14 @@ import kotlin.test.assertTrue
 import kotlin.test.fail
 
 /**
- * Intent / Deep Link / App Functions bridge tests
- * (02-command-protocol.md §12.2/§12.3/§12.5/§12.6, 10-roadmap.md §5.4).
+ * Deep-link / App Functions bridge tests
+ * (02-command-protocol.md §12.2/§12.3/§12.5, 10-roadmap.md §5.4).
+ *
+ * **Note on the id gaps:** P4-P14 used to cover an `intent.start` command in
+ * this plugin. That command was removed — §12.3 represents Intents as
+ * `sys.intent.start` and §12.6 publishes the extras allowlist in the `sys`
+ * plugin — so its coverage now lives in `SystemPluginTest` and the tests keep
+ * their historical ids only for the cases that remain here.
  */
 class IntentPluginTest {
 
@@ -57,234 +61,33 @@ class IntentPluginTest {
         assertEquals("mcos.plugin.intent", plugin.manifest.id)
         assertEquals("Intent Plugin", plugin.manifest.name)
         assertEquals("1.0.0", plugin.manifest.version)
-        assertEquals(listOf("intent", "deeplink", "appfn"), plugin.manifest.namespaces)
+        assertEquals(listOf("deeplink", "appfn"), plugin.manifest.namespaces)
     }
 
     @Test
-    fun `P2-handlers expose the three bridge commands`() {
+    fun `P2-handlers expose the two bridge commands`() {
         assertEquals(
-            setOf("intent.start", "deeplink.open", "appfn.invoke"),
+            setOf("deeplink.open", "appfn.invoke"),
             plugin.handlers().keys,
         )
     }
 
     @Test
-    fun `P3-manifest declares every command for registry discovery`() {
+    fun `P3-manifest declares every command, and no Intent command`() {
         val commands = plugin.manifest.commands
         assertEquals(
-            listOf("intent.start", "deeplink.open", "appfn.invoke"),
+            listOf("deeplink.open", "appfn.invoke"),
             commands.map { it.id },
         )
         commands.forEach { entry ->
             assertTrue(entry.inputSchema.isNotEmpty(), "${entry.id} must declare an input schema")
         }
-        // intent.start must accept the per-invoke extras contract of §12.6.
-        val intentProps = commands.first { it.id == "intent.start" }
-            .inputSchema["properties"]!!.jsonObject
-        assertTrue(intentProps.containsKey("extras"), "intent.start must accept extras")
-        assertTrue(intentProps.containsKey("extrasSchema"), "intent.start must accept extrasSchema")
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // P4-P14: intent.start
-    // ═══════════════════════════════════════════════════════════════
-
-    @Test
-    fun `P4-well-known action needs no schema and reaches the host`() = runBlocking {
-        val services = RecordingIntentServices()
-        val result = invoke(
-            "intent.start",
-            buildJsonObject {
-                put("action", JsonPrimitive("android.intent.action.VIEW"))
-                put("dataUri", JsonPrimitive("https://example.com"))
-                put("package", JsonPrimitive("com.target.app"))
-            },
-            services,
+        // The Intent command is the `sys` plugin's (§12.3/§12.6); carrying a
+        // second copy here would mean two implementations of one protocol rule.
+        assertTrue(
+            commands.none { it.id == "intent.start" },
+            "the Intent command belongs to mcos.plugin.system (02 §12.3/§12.6)",
         )
-
-        val value = okValue(result)
-        assertEquals("started", value["status"]!!.jsonPrimitive.content)
-        assertEquals("com.target.app", value["resolvedPackage"]!!.jsonPrimitive.content)
-
-        val request = services.requests.single()
-        assertEquals("android.intent.action.VIEW", request.action)
-        assertEquals("https://example.com", request.dataUri)
-        assertEquals("com.target.app", request.packageName)
-        assertTrue(request.extras.isEmpty())
-    }
-
-    @Test
-    fun `P5-well-known SEND delivers declared typed extras unchanged`() = runBlocking {
-        val services = RecordingIntentServices()
-        invoke(
-            "intent.start",
-            buildJsonObject {
-                put("action", JsonPrimitive("android.intent.action.SEND"))
-                put(
-                    "extras",
-                    buildJsonObject {
-                        put("android.intent.extra.TEXT", JsonPrimitive("hello"))
-                        put("android.intent.extra.SUBJECT", JsonPrimitive("subj"))
-                    },
-                )
-            },
-            services,
-        )
-
-        val extras = services.requests.single().extras
-        assertEquals(JsonPrimitive("hello"), extras["android.intent.extra.TEXT"])
-        assertEquals(JsonPrimitive("subj"), extras["android.intent.extra.SUBJECT"])
-    }
-
-    @Test
-    fun `P6-invented extra key on a well-known action is rejected as SCHEMA_VIOLATION`() = runBlocking {
-        val ex = expectMcosException {
-            invoke(
-                "intent.start",
-                buildJsonObject {
-                    put("action", JsonPrimitive("android.intent.action.VIEW"))
-                    put("extras", buildJsonObject { put("made.up.KEY", JsonPrimitive("x")) })
-                },
-                RecordingIntentServices(),
-            )
-        }
-        assertEquals("SCHEMA_VIOLATION", ex.code)
-        assertEquals(ExtrasSchema.Reason.UNKNOWN_PROPERTY, reasonOf(ex))
-        assertEquals("/args/extras/made.up.KEY", pathOf(ex))
-    }
-
-    @Test
-    fun `P7-unknown action without extrasSchema is rejected with the spec path and reason`() = runBlocking {
-        val ex = expectMcosException {
-            invoke(
-                "intent.start",
-                buildJsonObject { put("action", JsonPrimitive("com.example.custom.ACTION")) },
-                RecordingIntentServices(),
-            )
-        }
-        assertEquals("SCHEMA_VIOLATION", ex.code)
-        // 02 §12.6 names exactly these two: path /args/extras, reason extras_schema_required.
-        assertEquals("/args/extras", pathOf(ex))
-        assertEquals(ExtrasSchema.Reason.SCHEMA_REQUIRED, reasonOf(ex))
-    }
-
-    @Test
-    fun `P8-a caller-declared extrasSchema validates and forwards typed extras`() = runBlocking {
-        val services = RecordingIntentServices()
-        invoke(
-            "intent.start",
-            buildJsonObject {
-                put("action", JsonPrimitive("com.example.custom.ACTION"))
-                put(
-                    "extrasSchema",
-                    buildJsonObject {
-                        put("type", JsonPrimitive("object"))
-                        put("properties", buildJsonObject {
-                            put("level", buildJsonObject {
-                                put("type", JsonPrimitive("integer"))
-                                put("minimum", JsonPrimitive(0))
-                            })
-                        })
-                        put("additionalProperties", JsonPrimitive(false))
-                    },
-                )
-                put("extras", buildJsonObject { put("level", JsonPrimitive(3)) })
-            },
-            services,
-        )
-
-        // The value must arrive typed — not stringified through a map of strings.
-        assertEquals(JsonPrimitive(3), services.requests.single().extras["level"])
-    }
-
-    @Test
-    fun `P9-unsupported extrasSchema keyword fails closed`() = runBlocking {
-        val ex = expectMcosException {
-            invoke(
-                "intent.start",
-                buildJsonObject {
-                    put("action", JsonPrimitive("com.example.custom.ACTION"))
-                    put("extrasSchema", buildJsonObject {
-                        put("type", JsonPrimitive("object"))
-                        put("oneOf", buildJsonArray { })
-                    })
-                },
-                RecordingIntentServices(),
-            )
-        }
-        assertEquals("SCHEMA_VIOLATION", ex.code)
-        assertEquals(ExtrasSchema.Reason.SCHEMA_UNSUPPORTED, reasonOf(ex))
-    }
-
-    @Test
-    fun `P10-a value that violates the declared schema is rejected`() = runBlocking {
-        val ex = expectMcosException {
-            invoke(
-                "intent.start",
-                buildJsonObject {
-                    put("action", JsonPrimitive("com.example.custom.ACTION"))
-                    put("extrasSchema", buildJsonObject {
-                        put("type", JsonPrimitive("object"))
-                        put("properties", buildJsonObject {
-                            put("n", buildJsonObject { put("type", JsonPrimitive("integer")) })
-                        })
-                    })
-                    put("extras", buildJsonObject { put("n", JsonPrimitive("five")) })
-                },
-                RecordingIntentServices(),
-            )
-        }
-        assertEquals(ExtrasSchema.Reason.TYPE_MISMATCH, reasonOf(ex))
-        assertEquals("/args/extras/n", pathOf(ex))
-    }
-
-    @Test
-    fun `P11-extras that are not an object are rejected`() = runBlocking {
-        val ex = expectMcosException {
-            invoke(
-                "intent.start",
-                buildJsonObject {
-                    put("action", JsonPrimitive("android.intent.action.VIEW"))
-                    put("extras", JsonPrimitive("nope"))
-                },
-                RecordingIntentServices(),
-            )
-        }
-        assertEquals(ExtrasSchema.Reason.NOT_AN_OBJECT, reasonOf(ex))
-    }
-
-    @Test
-    fun `P12-missing action is a schema violation`() = runBlocking {
-        val ex = expectMcosException {
-            invoke("intent.start", buildJsonObject { }, RecordingIntentServices())
-        }
-        assertEquals("SCHEMA_VIOLATION", ex.code)
-    }
-
-    @Test
-    fun `P13-a host without an intent platform reports UNAVAILABLE`() = runBlocking {
-        val ex = expectMcosException {
-            invoke(
-                "intent.start",
-                buildJsonObject { put("action", JsonPrimitive("android.intent.action.VIEW")) },
-                BareHostServices(),
-            )
-        }
-        assertEquals("UNAVAILABLE", ex.code)
-    }
-
-    @Test
-    fun `P14-an unresolvable intent is an honest not_handled, not an error`() = runBlocking {
-        val services = RecordingIntentServices(outcome = IntentResult.NOT_HANDLED)
-        val value = okValue(
-            invoke(
-                "intent.start",
-                buildJsonObject { put("action", JsonPrimitive("android.intent.action.VIEW")) },
-                services,
-            )
-        )
-        assertEquals("not_handled", value["status"]!!.jsonPrimitive.content)
-        assertNull(value["resolvedPackage"])
     }
 
     // ═══════════════════════════════════════════════════════════════

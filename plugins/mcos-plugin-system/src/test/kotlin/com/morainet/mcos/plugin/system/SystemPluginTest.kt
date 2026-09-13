@@ -760,6 +760,303 @@ class SystemPluginTest {
         assertEquals("SCHEMA_VIOLATION", blank.code)
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // S50-S63: sys.intent.start — 02 §12.6 schema-constrained extras
+    //
+    // The Intent command lives here rather than in the Intent / Deep Link
+    // plugin: §12.3 represents Intents as `sys.intent.start` and §12.6
+    // publishes the pre-declared extras allowlist "in the `sys` plugin".
+    // 10-roadmap §5.4's name for the capability resolves as the
+    // `intent.start` alias (S50) instead of a second implementation.
+    // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    fun `S50-manifest publishes the 12_6 contract and the intent_start alias`() {
+        val entry = plugin.manifest.commands.first { it.id == "sys.intent.start" }
+        assertEquals(listOf("intent.start"), entry.aliases)
+        val props = entry.inputSchema["properties"]!!.jsonObject
+        assertTrue(props.containsKey("extras"), "extras must be declared")
+        assertTrue(props.containsKey("extrasSchema"), "extrasSchema must be declared")
+        // The published allowlist §12.6 refers to lives in this plugin.
+        assertTrue(
+            WellKnownIntents.actions.contains("android.intent.action.SEND"),
+            "the sys plugin publishes the well-known intent schemas",
+        )
+    }
+
+    @Test
+    fun `S51-a well-known action needs no schema and reaches the intents capability`() = runBlocking {
+        val (capable, services) = capablePlugin()
+        val value = okValue(
+            capable.handlers()["sys.intent.start"]!!.invoke(
+                execCtx(
+                    "sys.intent.start",
+                    buildJsonObject {
+                        put("action", JsonPrimitive("android.intent.action.VIEW"))
+                        put("dataUri", JsonPrimitive("https://example.com"))
+                        put("package", JsonPrimitive("com.target.app"))
+                    },
+                )
+            )
+        )
+
+        assertEquals("started", value["status"]!!.jsonPrimitive.content)
+        assertEquals("com.target.app", value["resolvedPackage"]!!.jsonPrimitive.content)
+        val request = services.fakeIntents.requests.single()
+        assertEquals("android.intent.action.VIEW", request.action)
+        assertEquals("https://example.com", request.dataUri)
+        assertEquals("com.target.app", request.packageName)
+        assertTrue(request.extras.isEmpty())
+    }
+
+    @Test
+    fun `S52-well-known SEND delivers declared typed extras unchanged`() = runBlocking {
+        val (capable, services) = capablePlugin()
+        capable.handlers()["sys.intent.start"]!!.invoke(
+            execCtx(
+                "sys.intent.start",
+                buildJsonObject {
+                    put("action", JsonPrimitive("android.intent.action.SEND"))
+                    put(
+                        "extras",
+                        buildJsonObject {
+                            put("android.intent.extra.TEXT", JsonPrimitive("hello"))
+                            put("android.intent.extra.SUBJECT", JsonPrimitive("subj"))
+                        },
+                    )
+                },
+            )
+        )
+
+        val extras = services.fakeIntents.requests.single().extras
+        assertEquals(JsonPrimitive("hello"), extras["android.intent.extra.TEXT"])
+        assertEquals(JsonPrimitive("subj"), extras["android.intent.extra.SUBJECT"])
+    }
+
+    @Test
+    fun `S53-an invented extra key on a well-known action is rejected`() = runBlocking {
+        val (capable, services) = capablePlugin()
+        val ex = assertFailsWith<McosException> {
+            capable.handlers()["sys.intent.start"]!!.invoke(
+                execCtx(
+                    "sys.intent.start",
+                    buildJsonObject {
+                        put("action", JsonPrimitive("android.intent.action.VIEW"))
+                        put("extras", buildJsonObject { put("made.up.KEY", JsonPrimitive("x")) })
+                    },
+                )
+            )
+        }
+        assertEquals("SCHEMA_VIOLATION", ex.code)
+        assertEquals(ExtrasSchema.Reason.UNKNOWN_PROPERTY, reasonOf(ex))
+        assertEquals("/args/extras/made.up.KEY", pathOf(ex))
+        assertTrue(
+            services.fakeIntents.requests.isEmpty(),
+            "a rejected invoke must never reach the host — that is the §12.6 hazard",
+        )
+    }
+
+    @Test
+    fun `S54-an unknown action without extrasSchema is rejected with the spec path and reason`() = runBlocking {
+        val (capable, _) = capablePlugin()
+        val ex = assertFailsWith<McosException> {
+            capable.handlers()["sys.intent.start"]!!.invoke(
+                execCtx(
+                    "sys.intent.start",
+                    buildJsonObject { put("action", JsonPrimitive("com.example.custom.ACTION")) },
+                )
+            )
+        }
+        assertEquals("SCHEMA_VIOLATION", ex.code)
+        // 02 §12.6 names exactly these two.
+        assertEquals("/args/extras", pathOf(ex))
+        assertEquals(ExtrasSchema.Reason.SCHEMA_REQUIRED, reasonOf(ex))
+    }
+
+    @Test
+    fun `S55-a caller-declared extrasSchema validates and forwards typed extras`() = runBlocking {
+        val (capable, services) = capablePlugin()
+        capable.handlers()["sys.intent.start"]!!.invoke(
+            execCtx(
+                "sys.intent.start",
+                buildJsonObject {
+                    put("action", JsonPrimitive("com.example.custom.ACTION"))
+                    put(
+                        "extrasSchema",
+                        buildJsonObject {
+                            put("type", JsonPrimitive("object"))
+                            put("properties", buildJsonObject {
+                                put("level", buildJsonObject {
+                                    put("type", JsonPrimitive("integer"))
+                                    put("minimum", JsonPrimitive(0))
+                                })
+                            })
+                            put("additionalProperties", JsonPrimitive(false))
+                        },
+                    )
+                    put("extras", buildJsonObject { put("level", JsonPrimitive(3)) })
+                },
+            )
+        )
+
+        // The value must arrive typed — not stringified through a map of strings.
+        assertEquals(JsonPrimitive(3), services.fakeIntents.requests.single().extras["level"])
+    }
+
+    @Test
+    fun `S56-an unsupported extrasSchema keyword fails closed`() = runBlocking {
+        val (capable, _) = capablePlugin()
+        val ex = assertFailsWith<McosException> {
+            capable.handlers()["sys.intent.start"]!!.invoke(
+                execCtx(
+                    "sys.intent.start",
+                    buildJsonObject {
+                        put("action", JsonPrimitive("com.example.custom.ACTION"))
+                        put("extrasSchema", buildJsonObject {
+                            put("type", JsonPrimitive("object"))
+                            put("oneOf", JsonArray(emptyList()))
+                        })
+                    },
+                )
+            )
+        }
+        assertEquals("SCHEMA_VIOLATION", ex.code)
+        assertEquals(ExtrasSchema.Reason.SCHEMA_UNSUPPORTED, reasonOf(ex))
+    }
+
+    @Test
+    fun `S57-a value violating the declared schema is rejected at its path`() = runBlocking {
+        val (capable, _) = capablePlugin()
+        val ex = assertFailsWith<McosException> {
+            capable.handlers()["sys.intent.start"]!!.invoke(
+                execCtx(
+                    "sys.intent.start",
+                    buildJsonObject {
+                        put("action", JsonPrimitive("com.example.custom.ACTION"))
+                        put("extrasSchema", buildJsonObject {
+                            put("type", JsonPrimitive("object"))
+                            put("properties", buildJsonObject {
+                                put("n", buildJsonObject { put("type", JsonPrimitive("integer")) })
+                            })
+                        })
+                        put("extras", buildJsonObject { put("n", JsonPrimitive("five")) })
+                    },
+                )
+            )
+        }
+        assertEquals(ExtrasSchema.Reason.TYPE_MISMATCH, reasonOf(ex))
+        assertEquals("/args/extras/n", pathOf(ex))
+    }
+
+    @Test
+    fun `S58-extras that are not an object are rejected`() = runBlocking {
+        val (capable, _) = capablePlugin()
+        val ex = assertFailsWith<McosException> {
+            capable.handlers()["sys.intent.start"]!!.invoke(
+                execCtx(
+                    "sys.intent.start",
+                    buildJsonObject {
+                        put("action", JsonPrimitive("android.intent.action.VIEW"))
+                        put("extras", JsonPrimitive("nope"))
+                    },
+                )
+            )
+        }
+        assertEquals(ExtrasSchema.Reason.NOT_AN_OBJECT, reasonOf(ex))
+    }
+
+    @Test
+    fun `S59-a host without the intents capability keeps the legacy launch path`() = runBlocking {
+        // Regression guard: today's Android host provides `ui` but not
+        // `HostServices.intents`, so an extras-free invoke must keep working
+        // exactly as before (the ui.startActivityForResult seam) rather than
+        // turning into UNAVAILABLE.
+        val value = okValue(
+            plugin.handlers()["sys.intent.start"]!!.invoke(
+                execCtx(
+                    "sys.intent.start",
+                    buildJsonObject { put("action", JsonPrimitive("android.intent.action.VIEW")) },
+                )
+            )
+        )
+        assertEquals("started", value["status"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `S60-a host without the intents capability refuses extras instead of dropping them`() = runBlocking {
+        val ex = assertFailsWith<McosException> {
+            plugin.handlers()["sys.intent.start"]!!.invoke(
+                execCtx(
+                    "sys.intent.start",
+                    buildJsonObject {
+                        put("action", JsonPrimitive("android.intent.action.SEND"))
+                        put("extras", buildJsonObject { put("android.intent.extra.TEXT", JsonPrimitive("hi")) })
+                    },
+                )
+            )
+        }
+        assertEquals("UNAVAILABLE", ex.code)
+    }
+
+    @Test
+    fun `S61-a host without the intents capability refuses categories`() = runBlocking {
+        val ex = assertFailsWith<McosException> {
+            plugin.handlers()["sys.intent.start"]!!.invoke(
+                execCtx(
+                    "sys.intent.start",
+                    buildJsonObject {
+                        put("action", JsonPrimitive("android.intent.action.VIEW"))
+                        put("categories", buildJsonArray { add(JsonPrimitive("android.intent.category.DEFAULT")) })
+                    },
+                )
+            )
+        }
+        assertEquals("UNAVAILABLE", ex.code)
+    }
+
+    @Test
+    fun `S62-categories are forwarded to the intents capability`() = runBlocking {
+        val (capable, services) = capablePlugin()
+        capable.handlers()["sys.intent.start"]!!.invoke(
+            execCtx(
+                "sys.intent.start",
+                buildJsonObject {
+                    put("action", JsonPrimitive("android.intent.action.VIEW"))
+                    put("categories", buildJsonArray { add(JsonPrimitive("android.intent.category.DEFAULT")) })
+                },
+            )
+        )
+        assertEquals(
+            listOf("android.intent.category.DEFAULT"),
+            services.fakeIntents.requests.single().categories,
+        )
+    }
+
+    @Test
+    fun `S63-an unresolvable intent is an honest not_handled`() = runBlocking {
+        val (capable, services) = capablePlugin()
+        services.fakeIntents.outcome = IntentResult.NOT_HANDLED
+        val value = okValue(
+            capable.handlers()["sys.intent.start"]!!.invoke(
+                execCtx(
+                    "sys.intent.start",
+                    buildJsonObject { put("action", JsonPrimitive("android.intent.action.VIEW")) },
+                )
+            )
+        )
+        assertEquals("not_handled", value["status"]!!.jsonPrimitive.content)
+        assertNull(value["resolvedPackage"])
+    }
+
+    private fun okValue(result: CommandResult): JsonObject =
+        (result as CommandResult.Ok).value!!.jsonObject
+
+    private fun reasonOf(ex: McosException): String? =
+        ex.details["reason"]?.jsonPrimitive?.content
+
+    private fun pathOf(ex: McosException): String? =
+        ex.details["path"]?.jsonPrimitive?.content
+
     private fun execCtx(commandId: String, args: JsonObject): ExecutionContext {
         return ExecutionContext(
             runId = "test-run-1",
@@ -813,18 +1110,32 @@ open class StubSystemHostServices : HostServices {
 
 /**
  * [StubSystemHostServices] plus recording fakes for the device-info /
- * clipboard / haptics capabilities, for the success-path tests. The base
- * stub keeps them null — the UNAVAILABLE regression tests rely on that.
+ * clipboard / haptics / events / intent capabilities, for the success-path
+ * tests. The base stub keeps them null — the UNAVAILABLE regression tests
+ * (and the §12.6 legacy-seam tests S59-S61) rely on that.
  */
 class CapableSystemHostServices : StubSystemHostServices() {
     val fakeDeviceInfo = FakeDeviceInfoService()
     val fakeClipboard = FakeClipboardService()
     val fakeHaptics = FakeHapticsService()
     val fakeEvents = FakeEventPublisher()
+    val fakeIntents = FakeIntentService()
     override val deviceInfo: DeviceInfoService get() = fakeDeviceInfo
     override val clipboard: ClipboardService get() = fakeClipboard
     override val haptics: HapticsService get() = fakeHaptics
     override val events: EventPublisher get() = fakeEvents
+    override val intents: IntentService get() = fakeIntents
+}
+
+/** Records every Intent request; [outcome] is settable per test (S63). */
+class FakeIntentService : IntentService {
+    var outcome: IntentResult = IntentResult(started = true, resolvedPackage = "com.target.app")
+    val requests = CopyOnWriteArrayList<IntentRequest>()
+
+    override suspend fun start(request: IntentRequest): IntentResult {
+        requests.add(request)
+        return outcome
+    }
 }
 
 class FakeEventPublisher : EventPublisher {

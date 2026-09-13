@@ -183,7 +183,7 @@ Read bottom-up: `mcos-sdk` is the leaf contract layer; everything depends on it.
 |---|---|
 | Path | `plugins/mcos-plugin-system/` |
 | Package | `com.morainet.mcos.plugin.system` |
-| Role | `sys.notify` / `sys.share` / `sys.intent.start` commands. |
+| Role | `sys.notify` / `sys.share` / `sys.intent.start` (§12.3 Intent launching, carrying §12.6's schema-constrained extras and the published well-known-intent allowlist) commands. |
 | Depends on | `api(project(":mcos-sdk"))` |
 | Stack | Kotlin/JVM · JDK 17 |
 | Spec | [04-plugin-sdk.md](./04-plugin-sdk.md) §17 |
@@ -216,7 +216,7 @@ Read bottom-up: `mcos-sdk` is the leaf contract layer; everything depends on it.
 |---|---|
 | Path | `plugins/mcos-plugin-intent/` |
 | Package | `com.morainet.mcos.plugin.intent` |
-| Role | `intent.start` / `deeplink.open` / `appfn.invoke` commands. The bridge to other apps' surfaces: `intent.start` enforces §12.6's mandatory, per-invoke `extrasSchema` (with a fail-closed `ExtrasSchema` checker and the published `WellKnownIntents` allowlist), `deeplink.open` launches an `ACTION_VIEW` deep link, and `appfn.invoke` calls an App Function published by another package via the §12.5 command-id encoding (`AppFunctionIds`). Standalone like iot/mcp: a host wires it explicitly, so it is not in the `android-sdk` default built-in set. |
+| Role | `deeplink.open` / `appfn.invoke` commands — the bridge to other apps' surfaces. `deeplink.open` launches an `ACTION_VIEW` deep link, and `appfn.invoke` calls an App Function published by another package via the §12.5 command-id encoding (`AppFunctionIds`). The Intent command itself belongs to the `sys` plugin (`sys.intent.start`, §12.3/§12.6, with the published extras allowlist); 10-roadmap §5.4's `intent.start` resolves there as an **alias**, so this module holds no second copy of the §12.6 rule. Standalone like iot/mcp: a host wires it explicitly, so it is not in the `android-sdk` default built-in set. |
 | Depends on | `api(project(":mcos-sdk"))`; serialization-json, coroutines-core |
 | Stack | Kotlin/JVM · JDK 17 |
 | Spec | [02-command-protocol.md](./02-command-protocol.md) §12.2/§12.3/§12.5/§12.6, [10-roadmap.md](./10-roadmap.md) §5.4 |
