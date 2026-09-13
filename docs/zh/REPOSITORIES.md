@@ -183,7 +183,7 @@ flowchart BT
 |---|---|
 | 路径 | `plugins/mcos-plugin-system/` |
 | 包名 | `com.morainet.mcos.plugin.system` |
-| 职责 | `sys.notify` / `sys.share` / `sys.intent.start` 命令。 |
+| 职责 | `sys.notify` / `sys.share` / `sys.intent.start`（§12.3 的 Intent 启动，承载 §12.6 的 schema 约束 extras 与已发布的 well-known intent 允许清单）命令。 |
 | 依赖 | `api(project(":mcos-sdk"))` |
 | 技术栈 | Kotlin/JVM · JDK 17 |
 | 规范 | [04-plugin-sdk.md](./04-plugin-sdk.md) §17 |
@@ -216,7 +216,7 @@ flowchart BT
 |---|---|
 | 路径 | `plugins/mcos-plugin-intent/` |
 | 包名 | `com.morainet.mcos.plugin.intent` |
-| 职责 | `intent.start` / `deeplink.open` / `appfn.invoke` 命令。通往其他 App 表面的桥：`intent.start` 执行 §12.6 的逐次 `extrasSchema` 强制要求（配 fail-closed 的 `ExtrasSchema` 校验器与已发布的 `WellKnownIntents` 允许清单），`deeplink.open` 以 `ACTION_VIEW` 打开深链，`appfn.invoke` 经 §12.5 命令 id 编码（`AppFunctionIds`）调用其他 App 包发布的 App Function。与 iot/mcp 一样是独立插件：宿主显式装配，不在 `android-sdk` 默认内置集内。 |
+| 职责 | `deeplink.open` / `appfn.invoke` 命令——通往其他 App 表面的桥。`deeplink.open` 以 `ACTION_VIEW` 打开深链，`appfn.invoke` 经 §12.5 命令 id 编码（`AppFunctionIds`）调用其他 App 包发布的 App Function。Intent 命令本身归 `sys` 插件（`sys.intent.start`，§12.3/§12.6，含已发布的 extras 允许清单）；10-roadmap §5.4 的 `intent.start` 作为**别名**解析到那里，故本模块不携带第二份 §12.6 实现。与 iot/mcp 一样是独立插件：宿主显式装配，不在 `android-sdk` 默认内置集内。 |
 | 依赖 | `api(project(":mcos-sdk"))`；serialization-json、coroutines-core |
 | 技术栈 | Kotlin/JVM · JDK 17 |
 | 规范 | [02-command-protocol.md](./02-command-protocol.md) §12.2/§12.3/§12.5/§12.6、[10-roadmap.md](./10-roadmap.md) §5.4 |

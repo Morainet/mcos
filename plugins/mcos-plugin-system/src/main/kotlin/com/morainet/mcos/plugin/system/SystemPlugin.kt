@@ -114,11 +114,19 @@ class SystemPlugin : McosPlugin {
                 }
             ),
             CommandManifestEntry(
-                id = "sys.intent.start", version = "1.0.0",
+                id = "sys.intent.start", version = "1.1.0",
                 title = "Start Intent",
-                description = "Start a schematized Android Intent",
+                description = "Start an Intent with schema-constrained extras (02 §12.6)",
                 sideEffectClass = SideEffectClass.write,
-                examples = emptyList(),
+                // 10-roadmap §5.4 names this capability `intent.start`; the
+                // protocol RFC names the command (§12.3 `sys.intent.start`), so
+                // the roadmap name resolves here as an alias rather than as a
+                // second command with its own copy of the §12.6 rule.
+                aliases = listOf("intent.start"),
+                examples = listOf(
+                    """sys.intent.start(action="android.intent.action.VIEW", dataUri="https://example.com")""",
+                    """sys.intent.start(action="com.example.app.OPEN", extrasSchema={type:"object"}, extras={})""",
+                ),
                 inputSchema = buildJsonObject {
                     put("type", JsonPrimitive("object"))
                     put("required", buildJsonArray { add(JsonPrimitive("action")) })
@@ -126,12 +134,33 @@ class SystemPlugin : McosPlugin {
                         put("action", buildJsonObject {
                             put("type", JsonPrimitive("string"))
                             put("minLength", JsonPrimitive(1))
+                            put("description", JsonPrimitive("Platform action, e.g. android.intent.action.SEND"))
                         })
                         put("dataUri", buildJsonObject {
                             put("type", JsonPrimitive("string"))
+                            put("description", JsonPrimitive("The intent's data URI, when any"))
                         })
                         put("package", buildJsonObject {
                             put("type", JsonPrimitive("string"))
+                            put("description", JsonPrimitive("Explicit target package"))
+                        })
+                        put("categories", buildJsonObject {
+                            put("type", JsonPrimitive("array"))
+                            put("items", buildJsonObject { put("type", JsonPrimitive("string")) })
+                        })
+                        put("extras", buildJsonObject {
+                            put("type", JsonPrimitive("object"))
+                            put("description", JsonPrimitive("Typed extras; must be declared by extrasSchema (02 §12.6)"))
+                        })
+                        put("extrasSchema", buildJsonObject {
+                            put("type", JsonPrimitive("object"))
+                            put(
+                                "description",
+                                JsonPrimitive(
+                                    "Schema for 'extras'. Required unless action is a published " +
+                                        "well-known intent (02 §12.6)",
+                                ),
+                            )
                         })
                     })
                 }
@@ -398,16 +427,89 @@ class SystemPlugin : McosPlugin {
     inner class IntentStartHandler : CommandHandler {
         override suspend fun invoke(ctx: ExecutionContext): CommandResult {
             val args = ctx.args.jsonObject
-            val action = args["action"]?.jsonPrimitive?.content
+            val action = args["action"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
                 ?: throw McosException("SCHEMA_VIOLATION", "Missing required arg: action")
-            val dataUri = args["dataUri"]?.jsonPrimitive?.content
-            val pkg = args["package"]?.jsonPrimitive?.content
 
+            val extras = when (val raw = args["extras"]) {
+                null, JsonNull -> JsonObject(emptyMap())
+                is JsonObject -> raw
+                else -> throw schemaViolation(
+                    ExtrasSchema.ROOT_PATH,
+                    ExtrasSchema.Reason.NOT_AN_OBJECT,
+                    "'extras' must be an object",
+                )
+            }
+
+            // 02 §12.6 — the extras schema is mandatory per invoke unless the
+            // action is one of the published well-known intents; the rejection
+            // carries the spec's code/path/reason so a Planner can self-correct
+            // on the next turn. The governing schema is supplied per invoke, so
+            // it cannot live in the descriptor's static `inputSchema` — hence
+            // the check runs here rather than in the Executor's Stage-5 pass.
+            val declared = args["extrasSchema"]
+            val schema = when {
+                declared is JsonObject -> declared
+                declared != null && declared != JsonNull -> throw schemaViolation(
+                    ExtrasSchema.ROOT_PATH,
+                    ExtrasSchema.Reason.SCHEMA_UNSUPPORTED,
+                    "'extrasSchema' must be an object",
+                )
+                else -> WellKnownIntents.schemaFor(action) ?: throw schemaViolation(
+                    ExtrasSchema.ROOT_PATH,
+                    ExtrasSchema.Reason.SCHEMA_REQUIRED,
+                    "extrasSchema is required for action '$action' (02 §12.6)",
+                )
+            }
+
+            when (val validation = ExtrasSchema.validate(schema, extras)) {
+                is ExtrasSchema.Result.Valid -> Unit
+                is ExtrasSchema.Result.Invalid -> throw schemaViolation(
+                    validation.path,
+                    validation.reason,
+                    validation.message,
+                )
+            }
+
+            val dataUri = args["dataUri"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+            val pkg = args["package"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+            val categories = (args["categories"] as? JsonArray).orEmpty()
+                .mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.takeIf(String::isNotBlank) }
+
+            val s = services ?: throw McosException("UNAVAILABLE", "System services not available")
+
+            // Preferred path: a host that can carry the typed request.
+            s.intents?.let { intents ->
+                val outcome = intents.start(
+                    IntentRequest(
+                        action = action,
+                        dataUri = dataUri,
+                        packageName = pkg,
+                        categories = categories,
+                        extras = extras,
+                    )
+                )
+                return CommandResult.Ok(
+                    value = buildJsonObject {
+                        put("status", JsonPrimitive(if (outcome.started) "started" else "not_handled"))
+                        put("action", JsonPrimitive(action))
+                        outcome.resolvedPackage?.let { put("resolvedPackage", JsonPrimitive(it)) }
+                    }
+                )
+            }
+
+            // Legacy seam (`ui.startActivityForResult`) carries action / dataUri
+            // / package only. If the invoke needs more, say so — never drop the
+            // extras silently, which is exactly the §12.6 hazard.
+            if (extras.isNotEmpty() || categories.isNotEmpty()) {
+                throw McosException(
+                    "UNAVAILABLE",
+                    "This host cannot carry typed Intent extras or categories: it does not provide " +
+                        "HostServices.intents, and the legacy ui seam supports action/dataUri/package only",
+                )
+            }
             val intent = mutableMapOf("action" to action)
             if (dataUri != null) intent["uri"] = dataUri
             if (pkg != null) intent["package"] = pkg
-
-            val s = services ?: throw McosException("UNAVAILABLE", "System services not available")
             val result = s.ui.startActivityForResult(intent)
 
             return CommandResult.Ok(
@@ -486,6 +588,22 @@ class SystemPlugin : McosPlugin {
             ?: throw McosException("UNAVAILABLE", "Device info is not available on this host")
 
     private fun JsonPrimitive?.orJsonNull(): JsonElement = this ?: JsonNull
+
+    /**
+     * The §12.6 rejection shape: `SCHEMA_VIOLATION` carrying the spec's `path`
+     * (`/args/extras` or a value below it) plus a machine-readable `reason`
+     * (`extras_schema_required`, `extras_unknown_property`, …), so callers and
+     * the Planner receive exactly the contract the RFC names.
+     */
+    private fun schemaViolation(path: String, reason: String, message: String) = McosException(
+        code = "SCHEMA_VIOLATION",
+        message = message,
+        retryable = false,
+        details = buildJsonObject {
+            put("path", JsonPrimitive(path))
+            put("reason", JsonPrimitive(reason))
+        },
+    )
 
     inner class BatteryHandler : CommandHandler {
         override suspend fun invoke(ctx: ExecutionContext): CommandResult {

@@ -1116,9 +1116,11 @@ class HelloWorldHandler : CommandHandler {
 | `mcos.plugin.system` | `sys.notify`, `sys.share`, `sys.clipboard`, `sys.openUrl`, `sys.vibrate`, `sys.device.battery`, `sys.device.wifi`, `sys.device.screen`, `sys.device.volume`, `sys.device.location`, `sys.device.brightness`, `sys.event.emit` | P1（+`sys.event.emit` P2） |
 | `mcos.plugin.camera` | `camera.capture`, `camera.scan` | P1 |
 | `mcos.plugin.files` | `file.list`, `file.search`, `photo.search`, `photo.compress`, `file.write`, `file.read`, `file.stat`, `file.delete` | P1 |
-| `mcos.plugin.intent` | `intent.start`, `deeplink.open`, `appfn.invoke` | P2 |
+| `mcos.plugin.intent` | `deeplink.open`, `appfn.invoke` | P2 |
 | `mcos.plugin.iot` | `home.*`, `iot.*` | P2 |
 | `mcos.plugin.mcp` | 动态 `mcp.*` | P2 spike / P3 production |
+
+> **§12.3/§12.6（Intent 启动）：**Intent 命令归 `sys` 插件（`sys.intent.start`）——§12.3 如此命名，§12.6 要求预声明 extras 允许清单「在 `sys` 插件中发布」（`WellKnownIntents`，全部 `additionalProperties: false`）。除 action 属该允许清单外，每次 invoke 都必须携带 `extrasSchema`；拒绝使用 §12.6 逐字规定的 code/path/reason（`SCHEMA_VIOLATION`、`/args/extras`、`extras_schema_required`）。10-roadmap §5.4 对该能力的命名 `intent.start` 是 `sys.intent.start` 的**别名**——同一协议规则只有一处实现，不是两处。
 
 ---
 

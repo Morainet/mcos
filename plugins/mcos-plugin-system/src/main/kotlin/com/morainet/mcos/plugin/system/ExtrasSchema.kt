@@ -1,4 +1,4 @@
-package com.morainet.mcos.plugin.intent
+package com.morainet.mcos.plugin.system
 
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement

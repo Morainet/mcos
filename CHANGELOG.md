@@ -10,6 +10,17 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### §12.6 收敛——Intent 命令回归 `sys` 插件，`intent.start` 降为别名（02 §12.3/§12.6, item 64）（2026-09-13）
+
+上一轮（item 63）把 `intent.start` 放在新的 Intent / 深链插件里，并*记录*了两处规范偏差。本轮收掉它们：§12.3 把 Intent 表示为 `sys.intent.start`，§12.6 要求预声明 extras 允许清单「在 `sys` 插件中发布」——新插件无法满足该字面要求，而同一协议规则的第二份实现正是本仓库「单一真相源」纪律要防的漂移。
+
+- **迁移**：`ExtrasSchema`（fail-closed 校验器）、`WellKnownIntents`（6 条 action、均 `additionalProperties: false`）与 `ExtrasSchemaTest`（ES1-ES16）移入 `plugins/mcos-plugin-system`（`git mv`，保留历史）。
+- **`sys.intent.start`**（描述符 1.0.0 → 1.1.0）新增 `extras`/`extrasSchema`/`categories` 与 `aliases = ["intent.start"]`；处理器执行 §12.6 规则并给出逐字规范的拒绝（`SCHEMA_VIOLATION`、`path=/args/extras`、`reason=extras_schema_required`）。
+- **宿主缝无回归**：宿主提供 `HostServices.intents` 时整包 typed 请求（extras + categories）送达；未提供时（今天的 Android 宿主、纯 JVM）对仅 action/dataUri/package 的 invoke 保留历史 `ui.startActivityForResult` 路径，需要 extras/categories 时如实报 `UNAVAILABLE`——绝不静默丢弃。
+- **`mcos.plugin.intent`** 现在只拥有 `deeplink.open` 与 `appfn.invoke`（命名空间 `deeplink`、`appfn`）；其 `intent.start` 处理器、描述符与测试已移除。
+- **诚实边界**：§12.6 的拒绝仍在处理器内而非 Executor 的 Stage-5（治理 schema 逐次供给，静态 `inputSchema` 表达不了）；`intent.start` 别名可经注册表/DSL 解析，但不被 `allCommands()` 返回，故 Planner 目录列出规范 id `sys.intent.start`；Android 的 `HostServices.intents` 实现仍是后续工作，真机上 typed extras 因此保持 `UNAVAILABLE`。
+- 测试：system 51 → **81**（新增 S50-S63 覆盖 §12.6 拒绝路径、别名声明、typed extras 透传、历史缝回归与如实拒绝；ES1-ES16 迁入），intent 46 → **19**（P1-P3、P15-P25、AF1-AF5）；`PackageBoundariesTest`（跨模块搬迁后强制重跑）、`CommandRegistryTest` 别名用例与 SDK 契约测试全绿。EN/ZH 同步。
+
 ### Intent / Deep Link / App Functions 插件切片——插件矩阵最后一个 ⬜ 落地（02 §12.2/§12.3/§12.5/§12.6, 10-roadmap §5.4, item 63）（2026-09-12）
 
 新增第 7 个交付插件 `plugins/mcos-plugin-intent`（包 `com.morainet.mcos.plugin.intent`，插件 id `mcos.plugin.intent`），把 10-roadmap §5.4 的 Intent / Deep Link 与 App Functions 两行从 ⬜ 推到交付：

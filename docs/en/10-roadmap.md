@@ -428,6 +428,8 @@ gantt
 | IoT (Home Assistant / Tuya) | `home.light.*`, `home.ac.*`, `home.curtain.*` | [04 §7](./04-plugin-sdk.md) |
 | Connectivity recipes | `wifi.connect`, `vpn.connect` | [08 §12](./08-security.md) (egress) |
 
+> **As-built note (items 63-64):** the Intent command is the **`sys` plugin's** `sys.intent.start` (02 §12.3/§12.6, carrying the schema-constrained extras and the published well-known-intent allowlist); `intent.start` resolves to it as an **alias**. Deep links and App Functions are the `mcos.plugin.intent` commands (`deeplink.open`, `appfn.invoke`) — see [04 §17](./04-plugin-sdk.md) and [11 §5 item 64](./11-implementation-status.md).
+
 ### 5.5 Event Bus (initial)
 
 | Event | Trigger | Workflow use |

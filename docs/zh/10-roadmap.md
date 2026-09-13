@@ -430,6 +430,8 @@ gantt
 | IoT（Home Assistant / Tuya） | `home.light.*`、`home.ac.*`、`home.curtain.*` | [04 §7](./04-plugin-sdk.md) |
 | 连接性配方 | `wifi.connect`、`vpn.connect` | [08 §12](./08-security.md)（出站） |
 
+> **As-built 说明（item 63-64）：**Intent 命令归 **`sys` 插件**的 `sys.intent.start`（02 §12.3/§12.6，承载 schema 约束 extras 与已发布的 well-known intent 允许清单）；`intent.start` 作为**别名**解析到它。深链与 App Functions 是 `mcos.plugin.intent` 的命令（`deeplink.open`、`appfn.invoke`）——见 [04 §17](./04-plugin-sdk.md) 与 [11 §5 item 64](./11-implementation-status.md)。
+
 ### 5.5 事件总线（Event Bus，初始）
 
 | 事件 | 触发条件（trigger） | 工作流用途 |

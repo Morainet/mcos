@@ -1,4 +1,4 @@
-package com.morainet.mcos.plugin.intent
+package com.morainet.mcos.plugin.system
 
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -18,9 +18,12 @@ import kotlinx.serialization.json.put
  * small — it covers only actions MCOS can describe precisely; anything else
  * requires the caller to declare its own `extrasSchema`.
  *
- * The schemas are published by this bridge plugin rather than the `sys`
- * plugin because they are specifically the Intent-launch surface of the
- * Intent/Deep Link plugin (10-roadmap §5.4).
+ * These live in the `sys` plugin because §12.6 says so ("a small allowlist of
+ * system intents is published with pre-declared schemas in the `sys` plugin")
+ * — and because the Intent command itself belongs to this plugin (§12.3:
+ * "represented as `sys.intent.start`"). The Intent / Deep Link plugin
+ * (10-roadmap §5.4) no longer carries a duplicate Intent command; `intent.start`
+ * resolves to this plugin's command as an alias.
  */
 object WellKnownIntents {
 
