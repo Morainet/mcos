@@ -148,7 +148,9 @@ jobs:
           java-version: "17"
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        # v4.0.2+: the legacy 'tools' SDK package was removed from Google's
+        # repository — v3's default `sdkmanager tools` step fails every run.
+        uses: android-actions/setup-android@v4
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4

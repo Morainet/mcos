@@ -10,6 +10,10 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### ci 修复——`setup-android` v3 → v4：PR CI 因被下架的 `tools` 包全量变红（2026-09-24）
+
+`android-actions/setup-android@v3` 在 setup 阶段默认执行 `sdkmanager tools`，而 Google 已从 SDK 仓库移除遗留 `tools` 包（`Failed to find package 'tools'` → 退出码 1），自 9-17 起任何 PR 的 `Android build (assembleDebug)` job 都会在编译前失败——上一次全绿是 9-13，与 PR 内容无关。上游 v4.0.2 的 release note 即 "Fix for removed tools package"。`ci.yml` 升到 `@v4`（Node24、默认 cmdline-tools 20.0+，无输入参数变更）。
+
 ### 调度一致性用例——`kernel` 套件补齐 Runtime Semantics 的另一半（03 §8, 10 §17.0, item 65）（2026-09-24）
 
 10 §17.0 冻结面点名「调度通道与取消」（03 §8）属于 Runtime Semantics 契约，但一致性门的覆盖止步于 Executor 阶段顺序（item 60）——调度器此前只有 JVM 单测钉住，无门用例。本轮补上：新增 6 个 `kernel` 用例，经由公开的 `RunScheduler`/`DeviceMutexMap` 表面（Executor 与 WorkflowEngine 驱动的同一批对象）钉住 §8 可观察语义。
