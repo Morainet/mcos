@@ -1,6 +1,6 @@
 {
     "version": "0.1.0",
-    "capturedAt": "2026-09-10T12:14:22.794015Z",
+    "capturedAt": "2026-09-24T03:25:07.737357Z",
     "spec": "10 §6.4 / 09 §5.1",
     "cases": [
         {
@@ -361,6 +361,36 @@
         {
             "suite": "kernel",
             "case": "kernel-stage-valid-call-runs-once",
+            "status": "pass"
+        },
+        {
+            "suite": "kernel",
+            "case": "kernel-scheduler-global-cap",
+            "status": "pass"
+        },
+        {
+            "suite": "kernel",
+            "case": "kernel-scheduler-full-lane-backoff",
+            "status": "pass"
+        },
+        {
+            "suite": "kernel",
+            "case": "kernel-scheduler-expedited-cancellation-only",
+            "status": "pass"
+        },
+        {
+            "suite": "kernel",
+            "case": "kernel-scheduler-queued-cancel",
+            "status": "pass"
+        },
+        {
+            "suite": "kernel",
+            "case": "kernel-scheduler-device-mutex-serial",
+            "status": "pass"
+        },
+        {
+            "suite": "kernel",
+            "case": "kernel-scheduler-device-mutex-nested",
             "status": "pass"
         }
     ]
