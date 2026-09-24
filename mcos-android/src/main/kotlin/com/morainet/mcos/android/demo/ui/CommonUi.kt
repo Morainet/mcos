@@ -111,6 +111,11 @@ fun QuietField(
     mono: Boolean = false,
     minLinesHeight: Int? = null,
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
+    keyboardActions: androidx.compose.foundation.text.KeyboardActions =
+        androidx.compose.foundation.text.KeyboardActions.Default,
+    visualTransformation: androidx.compose.ui.text.input.VisualTransformation =
+        androidx.compose.ui.text.input.VisualTransformation.None,
+    trailing: @Composable (() -> Unit)? = null,
 ) {
     OutlinedTextField(
         value = value,
@@ -131,6 +136,9 @@ fun QuietField(
         },
         shape = RoundedCornerShape(McosRadius.md),
         keyboardOptions = keyboardOptions,
+        keyboardActions = keyboardActions,
+        visualTransformation = visualTransformation,
+        trailingIcon = trailing,
         colors = OutlinedTextFieldDefaults.colors(
             focusedBorderColor = Color.Transparent,
             unfocusedBorderColor = Color.Transparent,

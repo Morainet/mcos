@@ -23,7 +23,9 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Build
@@ -172,7 +174,13 @@ fun MCOSApp(deps: AppDeps) {
 
                         ShellPage.SKILLS -> SkillsPage(vm = vm, ui = ui)
                         ShellPage.MCP -> McpPage(vm = vm, ui = ui)
-                        ShellPage.TOOLS -> Column(Modifier.fillMaxSize()) {
+                        ShellPage.TOOLS -> Column(Modifier.fillMaxSize().verticalScroll(_root_ide_package_.androidx.compose.foundation.rememberScrollState())) {
+                            com.morainet.mcos.android.demo.ui.PageHeader(
+                                icon = Icons.Default.Terminal,
+                                tint = McosColor.warn,
+                                title = "Tools",
+                                description = "Run DSL directly, browse the marketplace, watch the raw console.",
+                            )
                             StatusBar(ui = ui, show = showCommands, onToggle = { showCommands = !showCommands })
                             MarketplaceCard(
                                 vm = marketVm,
@@ -183,10 +191,12 @@ fun MCOSApp(deps: AppDeps) {
                             )
                             DslInputCard(vm = vm, ui = ui)
                             Spacer(_root_ide_package_.androidx.compose.ui.Modifier.Companion.height(_root_ide_package_.com.morainet.mcos.android.demo.McosSpace.md))
+                            // Scrollable page → fixed console height (weight(1f) is
+                            // meaningless inside verticalScroll).
                             OutputLog(
                                 events = events,
                                 onClear = { vm.clearLog() },
-                                modifier = Modifier.fillMaxWidth().weight(1f),
+                                modifier = Modifier.fillMaxWidth().height(320.dp),
                             )
                         }
 

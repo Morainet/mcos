@@ -114,27 +114,19 @@ internal fun DslInputCard(
 ) {
     Card(
         Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-        shape = RoundedCornerShape(McosRadius.md),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        shape = RoundedCornerShape(McosRadius.lg),
     ) {
-        Column(Modifier.padding(McosSpace.lg)) {
-            OutlinedTextField(
+        Column(Modifier.padding(McosSpace.xl)) {
+            com.morainet.mcos.android.demo.ui.QuietField(
                 value = ui.dslText,
                 onValueChange = { vm.onDslTextChange(it) },
-                modifier = Modifier.fillMaxWidth().heightIn(min = 72.dp, max = 110.dp),
-                textStyle = MaterialTheme.typography.bodyMedium.copy(
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 13.sp,
-                ),
-                placeholder = { Text("Type DSL commands…", style = MaterialTheme.typography.bodySmall) },
-                shape = RoundedCornerShape(McosRadius.sm),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                placeholder = "hello.world(name=\"World\")\nsys.notify(title=\"Hi\", text=\"It works\")",
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = false,
+                mono = true,
+                minLinesHeight = 88,
                 keyboardActions = KeyboardActions(onDone = { vm.run() }),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = MaterialTheme.colorScheme.primary,
-                    unfocusedBorderColor = McosColor.border,
-                    cursorColor = MaterialTheme.colorScheme.primary,
-                ),
             )
             // Live preview line.
             ui.previewText?.let {
@@ -154,6 +146,7 @@ internal fun DslInputCard(
                 Button(
                     onClick = { vm.run() },
                     enabled = !ui.isExecuting && ui.dslText.isNotBlank(),
+                    shape = RoundedCornerShape(McosRadius.md),
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                 ) {
                     Icon(Icons.Default.PlayArrow, null, Modifier.size(18.dp))
