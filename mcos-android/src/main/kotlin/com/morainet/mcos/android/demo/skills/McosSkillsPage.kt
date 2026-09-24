@@ -1,27 +1,30 @@
 package com.morainet.mcos.android.demo.skills
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -35,6 +38,10 @@ import com.morainet.mcos.android.demo.McosSpace
 import com.morainet.mcos.android.demo.shell.McosUiState
 import com.morainet.mcos.android.demo.shell.McosViewModel
 import com.morainet.mcos.android.demo.shell.SkillUi
+import com.morainet.mcos.android.demo.ui.IconBadge
+import com.morainet.mcos.android.demo.ui.PageHeader
+import com.morainet.mcos.android.demo.ui.QuietField
+import com.morainet.mcos.android.demo.ui.SectionLabel
 
 /**
  * Skills page (技能页). Imports Claude-style skill packages — name/description/
@@ -50,78 +57,65 @@ internal fun SkillsPage(
     ui: McosUiState,
 ) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        Text(
-            "Skills · 技能包",
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.primary,
+        PageHeader(
+            icon = Icons.Default.Extension,
+            tint = MaterialTheme.colorScheme.primary,
+            title = "Skills",
+            description = "Prompt-level guidance for the planner — skills steer how goals are planned, they never add commands.",
         )
+
+        if (ui.skills.isEmpty()) {
+            EmptySkills()
+        } else {
+            SectionLabel("Imported")
+            ui.skills.forEach { skill ->
+                SkillCard(
+                    skill = skill,
+                    onToggle = { vm.setSkillEnabled(skill.id, it) },
+                    onRemove = { vm.removeSkill(skill.id) },
+                )
+                Spacer(Modifier.height(McosSpace.md))
+            }
+            Spacer(Modifier.height(McosSpace.xl))
+        }
+
+        SectionLabel("Import skill")
+        QuietField(
+            value = ui.skillImportText,
+            onValueChange = { vm.onSkillImportTextChange(it) },
+            placeholder = "---\nname: My Skill\ndescription: when to use it\n---\nInstructions…",
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = false,
+            mono = true,
+            minLinesHeight = 132,
+        )
+        Spacer(Modifier.height(McosSpace.md))
+        Button(
+            onClick = { vm.importSkill() },
+            enabled = ui.skillImportText.isNotBlank(),
+            shape = RoundedCornerShape(McosRadius.md),
+            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+        ) { Text("Import") }
+        Spacer(Modifier.height(McosSpace.xl))
+    }
+}
+
+@Composable
+private fun EmptySkills() {
+    Column(
+        Modifier.fillMaxWidth().padding(vertical = McosSpace.xxl),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        IconBadge(icon = Icons.Default.Extension, tint = McosColor.fgDim, size = 48, iconSize = 24)
+        Spacer(Modifier.height(McosSpace.lg))
+        Text("No skills yet", style = MaterialTheme.typography.titleMedium, color = McosColor.fgMuted)
         Spacer(Modifier.height(McosSpace.xs))
         Text(
-            "Import a SKILL.md or JSON skill. Enabled skills are added to the LLM prompt to guide " +
-                "how it plans — they never add new commands.",
-            style = MaterialTheme.typography.labelSmall,
-            color = McosColor.fgMuted,
+            "Paste a SKILL.md below to teach MCOS a new trick.",
+            style = MaterialTheme.typography.bodySmall,
+            color = McosColor.fgDim,
         )
-        Spacer(Modifier.height(McosSpace.md))
-
-        // ── Import form ──────────────────────────────────────────────────
-        Card(
-            Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-            shape = RoundedCornerShape(McosRadius.md),
-        ) {
-            Column(Modifier.padding(McosSpace.lg)) {
-                Text(
-                    "Import skill",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                Spacer(Modifier.height(McosSpace.sm))
-                OutlinedTextField(
-                    value = ui.skillImportText,
-                    onValueChange = { vm.onSkillImportTextChange(it) },
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 96.dp, max = 180.dp),
-                    textStyle = MaterialTheme.typography.bodySmall.copy(
-                        fontFamily = FontFamily.Monospace, fontSize = 12.sp,
-                    ),
-                    placeholder = {
-                        Text(
-                            "---\nname: My Skill\ndescription: when to use it\n---\nInstructions…",
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    },
-                    shape = RoundedCornerShape(McosRadius.sm),
-                    colors = fieldColorsSkills(),
-                )
-                Spacer(Modifier.height(McosSpace.sm))
-                Button(
-                    onClick = { vm.importSkill() },
-                    enabled = ui.skillImportText.isNotBlank(),
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                ) { Text("Import") }
-            }
-        }
-
-        Spacer(Modifier.height(McosSpace.md))
-
-        // ── Skill list ───────────────────────────────────────────────────
-        if (ui.skills.isEmpty()) {
-            Text(
-                "No skills imported yet.",
-                style = MaterialTheme.typography.labelSmall,
-                color = McosColor.fgDim,
-            )
-        }
-        ui.skills.forEach { skill ->
-            SkillCard(
-                skill = skill,
-                onToggle = { vm.setSkillEnabled(skill.id, it) },
-                onRemove = { vm.removeSkill(skill.id) },
-            )
-            Spacer(Modifier.height(McosSpace.md))
-        }
+        Spacer(Modifier.height(McosSpace.xl))
     }
 }
 
@@ -131,16 +125,22 @@ private fun SkillCard(
     onToggle: (Boolean) -> Unit,
     onRemove: () -> Unit,
 ) {
-    Card(
+    Surface(
         Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = if (skill.enabled) MaterialTheme.colorScheme.surfaceVariant
-            else MaterialTheme.colorScheme.surface,
-        ),
         shape = RoundedCornerShape(McosRadius.lg),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(
+            width = 1.dp,
+            color = if (skill.enabled) McosColor.border else McosColor.borderSoft,
+        ),
     ) {
-        Column(Modifier.padding(McosSpace.lg)) {
+        Column(Modifier.padding(McosSpace.xl)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                IconBadge(
+                    icon = Icons.Default.Extension,
+                    tint = if (skill.enabled) MaterialTheme.colorScheme.primary else McosColor.fgDim,
+                )
+                Spacer(Modifier.width(McosSpace.lg))
                 Column(Modifier.weight(1f)) {
                     Text(
                         skill.name,
@@ -153,33 +153,38 @@ private fun SkillCard(
                             skill.description,
                             style = MaterialTheme.typography.labelSmall,
                             color = McosColor.fgMuted,
+                            maxLines = 2,
                         )
                     }
                 }
                 Switch(checked = skill.enabled, onCheckedChange = onToggle)
-                TextButton(
-                    onClick = onRemove,
-                    contentPadding = PaddingValues(horizontal = McosSpace.sm),
-                ) {
-                    Text("REMOVE", style = MaterialTheme.typography.labelSmall, color = McosColor.danger)
+                IconButton(onClick = onRemove) {
+                    Icon(
+                        Icons.Default.DeleteOutline,
+                        contentDescription = "Remove ${skill.name}",
+                        tint = McosColor.fgDim,
+                        modifier = Modifier.size(20.dp),
+                    )
                 }
             }
             if (skill.instructions.isNotBlank()) {
-                Spacer(Modifier.height(McosSpace.sm))
-                Text(
-                    skill.instructions.take(240) + if (skill.instructions.length > 240) "…" else "",
-                    style = MaterialTheme.typography.bodySmall,
-                    fontFamily = FontFamily.Monospace,
-                    color = McosColor.fgDim,
-                )
+                Spacer(Modifier.height(McosSpace.md))
+                Surface(
+                    shape = RoundedCornerShape(McosRadius.md),
+                    color = McosColor.surfaceAlt,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        skill.instructions.take(240) + if (skill.instructions.length > 240) "…" else "",
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                        ),
+                        color = McosColor.fgMuted,
+                        modifier = Modifier.padding(horizontal = McosSpace.lg, vertical = McosSpace.md),
+                    )
+                }
             }
         }
     }
 }
-
-@Composable
-private fun fieldColorsSkills() = OutlinedTextFieldDefaults.colors(
-    focusedBorderColor = MaterialTheme.colorScheme.primary,
-    unfocusedBorderColor = McosColor.border,
-    cursorColor = MaterialTheme.colorScheme.primary,
-)
