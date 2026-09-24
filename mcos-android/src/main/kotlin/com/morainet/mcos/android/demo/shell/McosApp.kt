@@ -207,7 +207,6 @@ fun MCOSApp(deps: AppDeps) {
                         ShellPage.CHAT -> ChatPage(
                             vm = vm,
                             ui = ui,
-                            events = events,
                         )
 
                         ShellPage.SKILLS -> SkillsPage(vm = vm, ui = ui)
