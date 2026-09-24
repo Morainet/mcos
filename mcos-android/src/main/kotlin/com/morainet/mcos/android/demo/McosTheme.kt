@@ -26,10 +26,12 @@ import androidx.compose.ui.unit.sp
  * - [success] teal — success / healthy provider
  */
 object McosColor {
-    // Surfaces — soft violet-tinted light, cards float on a lavender wash.
-    val bg = Color(0xFFFAF5FF)
+    // Surfaces — neutral light (mainstream chat-app base): near-white page,
+    // white cards, one iOS-like system gray for wells. The violet lives in
+    // the accent, not the wash.
+    val bg = Color(0xFFF7F7FA)
     val surface = Color(0xFFFFFFFF)
-    val surfaceAlt = Color(0xFFF4F0FB)
+    val surfaceAlt = Color(0xFFF2F2F7)
     val console = Color(0xFF17141F)
     val consoleDim = Color(0xFF241F31)
 
@@ -41,8 +43,8 @@ object McosColor {
     val consoleWarn = Color(0xFFFBBF24)
     val consoleDanger = Color(0xFFF87171)
     val consoleSuccess = Color(0xFF2DD4BF)
-    val border = Color(0xFFDDD6FE)
-    val borderSoft = Color(0xFFECE8F9)
+    val border = Color(0xFFE5E5EA)
+    val borderSoft = Color(0xFFEFEFF4)
 
     // Text — deep indigo on light, never pure black.
     val fg = Color(0xFF1E1B4B)

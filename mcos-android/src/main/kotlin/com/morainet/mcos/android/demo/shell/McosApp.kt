@@ -6,6 +6,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
@@ -54,6 +56,8 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.morainet.mcos.android.AppDeps
 import com.morainet.mcos.android.demo.McosColor
+import com.morainet.mcos.android.demo.McosRadius
+import com.morainet.mcos.android.demo.McosSpace
 import com.morainet.mcos.android.demo.chat.ChatPage
 import com.morainet.mcos.android.demo.marketplace.MarketplaceCard
 import com.morainet.mcos.android.demo.marketplace.MarketplaceViewModel
@@ -149,28 +153,55 @@ fun MCOSApp(deps: AppDeps) {
                             // Brand monogram — gradient badge, no icon dependency needed.
                             Box(
                                 Modifier
-                                    .size(30.dp)
+                                    .size(28.dp)
                                     .background(
                                         Brush.linearGradient(
                                             listOf(McosColor.accent, McosColor.accentDeep)
                                         ),
-                                        RoundedCornerShape(10.dp),
+                                        RoundedCornerShape(9.dp),
                                     ),
                                 contentAlignment = Alignment.Center,
                             ) {
                                 Text(
                                     "M",
                                     color = McosColor.onAccent,
-                                    fontSize = 16.sp,
+                                    fontSize = 15.sp,
                                     fontWeight = FontWeight.Bold,
                                 )
                             }
                             Spacer(Modifier.size(10.dp))
-                            Text("MCOS", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                            Text("  ${page.title}", fontWeight = FontWeight.Normal, color = McosColor.fgMuted)
+                            Text("MCOS", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
+                            Text("  ${page.title}", fontWeight = FontWeight.Normal, color = McosColor.fgDim)
                         }
                     },
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
+                    actions = {
+                        // Agent mode (06 §11) lives here so the chat page stays clean.
+                        Row(
+                            Modifier
+                                .padding(end = McosSpace.md)
+                                .background(
+                                    if (ui.agentMode) McosColor.accentSoft else McosColor.surfaceAlt,
+                                    RoundedCornerShape(McosRadius.pill),
+                                )
+                                .clickable { vm.onAgentModeChange(!ui.agentMode) }
+                                .padding(horizontal = McosSpace.lg, vertical = McosSpace.sm),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                Icons.Default.AutoAwesome,
+                                contentDescription = "Agent mode",
+                                tint = if (ui.agentMode) MaterialTheme.colorScheme.primary else McosColor.fgDim,
+                                modifier = Modifier.size(16.dp),
+                            )
+                            Spacer(Modifier.size(6.dp))
+                            Text(
+                                "Agent",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (ui.agentMode) MaterialTheme.colorScheme.primary else McosColor.fgMuted,
+                            )
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)
                 )
             },
             bottomBar = {
