@@ -41,11 +41,17 @@ import java.util.concurrent.atomic.AtomicInteger
  *     registry precedes schema validation, which precedes handler dispatch;
  *     a reordered stage is a spec revision, never an optimization, and the
  *     cases below fail the moment the order changes.
+ *  4. **The scheduler's lanes & cancellation (03 §8, Runtime Semantics)** —
+ *     the global concurrency cap, full-lane `RATE_LIMITED` + exponential
+ *     backoff, the cancellation-only expedited lane, two-phase queued
+ *     cancellation, and the §8.5 device-mutex discipline (serialization +
+ *     no-nested-acquisition) are pinned by [schedulerSemanticsCases] — the
+ *     surface 10 §17.0 names that previously had no gate case.
  */
 class KernelConformanceSuite : ConformanceSuite {
     override val id = "kernel"
     override val title = "Kernel 1.0 stabilization-gate surfaces"
-    override val spec = "10 §17.1 + 02 §10.3/§14 + 01 §15.1 + 03 §9"
+    override val spec = "10 §17.1 + 02 §10.3/§14 + 01 §15.1 + 03 §8/§9"
 
     override fun cases(): List<ConformanceCase> = listOf(
         errorCodeVocabularyCase(),
@@ -55,7 +61,7 @@ class KernelConformanceSuite : ConformanceSuite {
         stageRegistryBeforeSchemaCase(),
         stageSchemaBeforeHandlerCase(),
         stageValidCallRunsOnceCase(),
-    )
+    ) + schedulerSemanticsCases()
 
     // ─── Error-code vocabulary (02 §10.3 + 01 §15.1) ─────────────────────
 

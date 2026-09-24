@@ -10,6 +10,23 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### ci 修复——`setup-android` v3 → v4：PR CI 因被下架的 `tools` 包全量变红（2026-09-24）
+
+`android-actions/setup-android@v3` 在 setup 阶段默认执行 `sdkmanager tools`，而 Google 已从 SDK 仓库移除遗留 `tools` 包（`Failed to find package 'tools'` → 退出码 1），自 9-17 起任何 PR 的 `Android build (assembleDebug)` job 都会在编译前失败——上一次全绿是 9-13，与 PR 内容无关。上游 v4.0.2 的 release note 即 "Fix for removed tools package"。`ci.yml` 升到 `@v4`（Node24、默认 cmdline-tools 20.0+，无输入参数变更）。
+
+### 调度一致性用例——`kernel` 套件补齐 Runtime Semantics 的另一半（03 §8, 10 §17.0, item 65）（2026-09-24）
+
+10 §17.0 冻结面点名「调度通道与取消」（03 §8）属于 Runtime Semantics 契约，但一致性门的覆盖止步于 Executor 阶段顺序（item 60）——调度器此前只有 JVM 单测钉住，无门用例。本轮补上：新增 6 个 `kernel` 用例，经由公开的 `RunScheduler`/`DeviceMutexMap` 表面（Executor 与 WorkflowEngine 驱动的同一批对象）钉住 §8 可观察语义。
+
+- **全局并发帽跨通道串行化**（§8.2/§8.4）：第三个执行体在空闲通道、有空闲 worker 的情况下被共享信号量拦住——证明拦它的是全局帽而非通道池。
+- **满通道退避**（§8.4）：`RATE_LIMITED` + 500 ms 初始提示、同一指纹重复拒绝逐次翻倍（500→1000→2000）、封顶 `maxRetryMs`。
+- **expedited 守卫**（§8.4）：非取消类工作进 `expedited` 被拒 `INTERNAL`、无退避提示。
+- **排队取消**（§8.3）：取消排队项丢弃其执行体（永不运行）并返回 `true`，由调用方发布终态 `RunCancelled` 事件；shutdown 不再重复上报已取消项。
+- **设备互斥**（§8.5）：同设备两 run 串行、完成零泄漏；同 `runId` 嵌套获取拒绝 `CONFLICT`/`device_locked`，携带完整 02 错误形状（`heldDevice`/`requestedDevice`/`runId`）。
+- **变异验证**：把 `SchedulerConfig.initialRetryMs` 500→400 使 `kernel-scheduler-full-lane-backoff` 变红（77/78）后还原——钉子对语义漂移会触发，不是恒绿装饰。
+- **确定性策略镜像 `RunSchedulerTest`**：门控执行体 + 调度器正确时逻辑上不可能完成的 `withTimeoutOrNull` 窗口；准入/退避用例不 `start()` 调度器以避开 worker 拾取竞态。
+- 一致性门 **6 套件 · 72 → 78 用例**（kernel 7 → 13），`baseline.json` 同一变更重捕获入库。文档：`11-implementation-status` item 65 + 计数、`10-roadmap` §17.1/§17.3（EN/ZH 同步）。
+
 ### §12.6 收敛——Intent 命令回归 `sys` 插件，`intent.start` 降为别名（02 §12.3/§12.6, item 64）（2026-09-13）
 
 上一轮（item 63）把 `intent.start` 放在新的 Intent / 深链插件里，并*记录*了两处规范偏差。本轮收掉它们：§12.3 把 Intent 表示为 `sys.intent.start`，§12.6 要求预声明 extras 允许清单「在 `sys` 插件中发布」——新插件无法满足该字面要求，而同一协议规则的第二份实现正是本仓库「单一真相源」纪律要防的漂移。
