@@ -7,13 +7,18 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.exclude
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -31,14 +36,9 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -145,34 +145,18 @@ fun MCOSApp(deps: AppDeps) {
     _root_ide_package_.com.morainet.mcos.android.demo.McosTheme {
         Scaffold(
             // Full-screen immersive, no top bar (mainstream chat shells go
-            // edge-to-edge under the status bar); the bottom bar consumes the
-            // system-bar + cutout insets, safeDrawing lifts page content
-            // above the IME (keyboard) and side cutouts.
-            contentWindowInsets = WindowInsets.safeDrawing,
-            bottomBar = {
-                NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                    ShellPage.entries.forEach { p ->
-                        NavigationBarItem(
-                            selected = page == p,
-                            onClick = { page = p },
-                            icon = { Icon(p.icon, contentDescription = p.title) },
-                            label = { Text(p.title) },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = MaterialTheme.colorScheme.onPrimary,
-                                indicatorColor = MaterialTheme.colorScheme.primary,
-                                selectedTextColor = MaterialTheme.colorScheme.primary,
-                                unselectedIconColor = _root_ide_package_.com.morainet.mcos.android.demo.McosColor.fgMuted,
-                                unselectedTextColor = _root_ide_package_.com.morainet.mcos.android.demo.McosColor.fgMuted,
-                            ),
-                        )
-                    }
-                }
-            },
+            // edge-to-edge under the status bar). IME is deliberately EXCLUDED
+            // from these insets — the page container applies imePadding() once;
+            // doing it in both places double-lifts the content and opens a gap
+            // between the composer and the keyboard.
+            contentWindowInsets = WindowInsets.safeDrawing.exclude(WindowInsets.ime),
+            bottomBar = { McosNavBar(page = page, onSelect = { page = it }) },
         ) { padding ->
             Crossfade(targetState = page, label = "shell-page") { current ->
                 Box(
                     Modifier
                         .fillMaxSize()
+                        .imePadding()
                         .padding(padding)
                         .padding(
                             horizontal = _root_ide_package_.com.morainet.mcos.android.demo.McosSpace.lg,
@@ -363,4 +347,68 @@ enum class ShellPage(val title: String, val icon: ImageVector) {
     MCP("MCP", Icons.Default.Hub),
     TOOLS("Tools", Icons.Default.Terminal),
     SETTINGS("Settings", Icons.Default.Settings),
+}
+
+/**
+ * Slim bottom navigation (mainstream app proportions): 64dp tall, hairline
+ * divider on top, pill highlight behind the selected icon, 10sp labels —
+ * replacing M3's chunky 80dp NavigationBar.
+ */
+@Composable
+private fun McosNavBar(page: ShellPage, onSelect: (ShellPage) -> Unit) {
+    androidx.compose.material3.Surface(
+        color = MaterialTheme.colorScheme.surface,
+        shadowElevation = 8.dp,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.navigationBarsPadding()) {
+            androidx.compose.material3.HorizontalDivider(
+                thickness = 0.5.dp,
+                color = McosColor.borderSoft,
+            )
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .height(62.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ShellPage.entries.forEach { p ->
+                    val selected = page == p
+                    Column(
+                        Modifier
+                            .weight(1f)
+                            .fillMaxSize()
+                            .clickable { onSelect(p) },
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                    ) {
+                        Box(
+                            Modifier
+                                .size(width = 44.dp, height = 28.dp)
+                                .background(
+                                    if (selected) McosColor.accentSoft else androidx.compose.ui.graphics.Color.Transparent,
+                                    RoundedCornerShape(McosRadius.pill),
+                                ),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                p.icon,
+                                contentDescription = p.title,
+                                tint = if (selected) MaterialTheme.colorScheme.primary else McosColor.fgDim,
+                                modifier = Modifier.size(21.dp),
+                            )
+                        }
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            p.title,
+                            fontSize = 10.sp,
+                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                            color = if (selected) MaterialTheme.colorScheme.primary else McosColor.fgDim,
+                        )
+                    }
+                }
+            }
+        }
+    }
 }
