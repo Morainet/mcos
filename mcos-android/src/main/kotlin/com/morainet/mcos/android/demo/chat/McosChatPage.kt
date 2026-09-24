@@ -24,7 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Battery6Bar
 import androidx.compose.material.icons.filled.Brightness6
@@ -91,6 +91,7 @@ internal fun ChatPage(
         Composer(
             ui = ui,
             onTextChange = { vm.onNlTextChange(it) },
+            onAgentModeChange = { vm.onAgentModeChange(it) },
             send = send,
         )
     }
@@ -364,26 +365,48 @@ private fun AgentStrip(onCancel: () -> Unit) {
     }
 }
 
-/** Pill composer: one rounded container, field + circular send inside it. */
+/**
+ * Composer: one soft-filled pill (no border, mainstream) holding the Agent
+ * toggle (left), the field, and the circular send (right, arrow-up).
+ */
 @Composable
 private fun Composer(
     ui: McosUiState,
     onTextChange: (String) -> Unit,
+    onAgentModeChange: (Boolean) -> Unit,
     send: () -> Unit,
 ) {
     val enabled = !ui.isExecuting && ui.nlText.isNotBlank() && ui.selectedVendor.usable
     Surface(
         shape = RoundedCornerShape(28.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = androidx.compose.foundation.BorderStroke(1.dp, McosColor.border),
+        color = McosColor.surfaceAlt,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = McosSpace.md, vertical = McosSpace.sm),
+            .padding(horizontal = McosSpace.lg, vertical = McosSpace.md),
     ) {
         Row(
-            Modifier.padding(start = 18.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+            Modifier.padding(horizontal = 6.dp, vertical = 6.dp),
             verticalAlignment = Alignment.Bottom,
         ) {
+            // Agent mode toggle (06 §11) lives in the composer — one tap from
+            // the text it applies to.
+            Box(
+                Modifier
+                    .size(44.dp)
+                    .background(
+                        if (ui.agentMode) McosColor.accentSoft else Color.Transparent,
+                        CircleShape,
+                    )
+                    .clickable { onAgentModeChange(!ui.agentMode) },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Default.AutoAwesome,
+                    contentDescription = "Agent mode",
+                    tint = if (ui.agentMode) MaterialTheme.colorScheme.primary else McosColor.fgDim,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
             OutlinedTextField(
                 value = ui.nlText,
                 onValueChange = onTextChange,
@@ -406,12 +429,11 @@ private fun Composer(
                 ),
                 maxLines = 4,
             )
-            Spacer(Modifier.width(McosSpace.md))
             Box(
                 Modifier
                     .size(44.dp)
                     .background(
-                        if (enabled) MaterialTheme.colorScheme.primary else McosColor.surfaceAlt,
+                        if (enabled) MaterialTheme.colorScheme.primary else McosColor.border,
                         CircleShape,
                     )
                     .clickable(enabled = enabled) { send() },
@@ -424,10 +446,10 @@ private fun Composer(
                     )
                 } else {
                     Icon(
-                        Icons.AutoMirrored.Filled.Send,
+                        Icons.Default.ArrowUpward,
                         contentDescription = if (ui.agentMode) "Run agent" else "Send",
-                        tint = if (enabled) McosColor.onAccent else McosColor.fgDim,
-                        modifier = Modifier.size(20.dp),
+                        tint = McosColor.onAccent,
+                        modifier = Modifier.size(22.dp),
                     )
                 }
             }

@@ -19,12 +19,14 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Extension
+import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -142,68 +144,11 @@ fun MCOSApp(deps: AppDeps) {
 
     _root_ide_package_.com.morainet.mcos.android.demo.McosTheme {
         Scaffold(
-            // Full-screen immersive: the top/bottom bars consume the system-bar
-            // + cutout insets themselves; safeDrawing here additionally lifts
-            // page content above the IME (keyboard) and side cutouts.
+            // Full-screen immersive, no top bar (mainstream chat shells go
+            // edge-to-edge under the status bar); the bottom bar consumes the
+            // system-bar + cutout insets, safeDrawing lifts page content
+            // above the IME (keyboard) and side cutouts.
             contentWindowInsets = WindowInsets.safeDrawing,
-            topBar = {
-                TopAppBar(
-                    title = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            // Brand monogram — gradient badge, no icon dependency needed.
-                            Box(
-                                Modifier
-                                    .size(28.dp)
-                                    .background(
-                                        Brush.linearGradient(
-                                            listOf(McosColor.accent, McosColor.accentDeep)
-                                        ),
-                                        RoundedCornerShape(9.dp),
-                                    ),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Text(
-                                    "M",
-                                    color = McosColor.onAccent,
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.Bold,
-                                )
-                            }
-                            Spacer(Modifier.size(10.dp))
-                            Text("MCOS", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
-                            Text("  ${page.title}", fontWeight = FontWeight.Normal, color = McosColor.fgDim)
-                        }
-                    },
-                    actions = {
-                        // Agent mode (06 §11) lives here so the chat page stays clean.
-                        Row(
-                            Modifier
-                                .padding(end = McosSpace.md)
-                                .background(
-                                    if (ui.agentMode) McosColor.accentSoft else McosColor.surfaceAlt,
-                                    RoundedCornerShape(McosRadius.pill),
-                                )
-                                .clickable { vm.onAgentModeChange(!ui.agentMode) }
-                                .padding(horizontal = McosSpace.lg, vertical = McosSpace.sm),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Icon(
-                                Icons.Default.AutoAwesome,
-                                contentDescription = "Agent mode",
-                                tint = if (ui.agentMode) MaterialTheme.colorScheme.primary else McosColor.fgDim,
-                                modifier = Modifier.size(16.dp),
-                            )
-                            Spacer(Modifier.size(6.dp))
-                            Text(
-                                "Agent",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = if (ui.agentMode) MaterialTheme.colorScheme.primary else McosColor.fgMuted,
-                            )
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)
-                )
-            },
             bottomBar = {
                 NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
                     ShellPage.entries.forEach { p ->
@@ -413,9 +358,9 @@ fun MCOSApp(deps: AppDeps) {
 
 /** The shell tabs (bottom navigation, ≤5 items). */
 enum class ShellPage(val title: String, val icon: ImageVector) {
-    CHAT("Chat", Icons.AutoMirrored.Filled.Send),
-    SKILLS("Skills", Icons.Default.Star),
-    MCP("MCP", Icons.Default.Share),
-    TOOLS("Tools", Icons.Default.Build),
+    CHAT("Chat", Icons.AutoMirrored.Filled.Chat),
+    SKILLS("Skills", Icons.Default.Extension),
+    MCP("MCP", Icons.Default.Hub),
+    TOOLS("Tools", Icons.Default.Terminal),
     SETTINGS("Settings", Icons.Default.Settings),
 }
