@@ -5,6 +5,7 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -350,63 +351,71 @@ enum class ShellPage(val title: String, val icon: ImageVector) {
 }
 
 /**
- * Slim bottom navigation (mainstream app proportions): 64dp tall, hairline
- * divider on top, pill highlight behind the selected icon, 10sp labels —
- * replacing M3's chunky 80dp NavigationBar.
+ * Slim bottom navigation (mainstream app proportions): 64dp tall, no divider —
+ * a soft shadow separates it from content. Selection feedback is a perfectly
+ * proportioned capsule (58×30, radius 15) whose fill and the icon/label colors
+ * cross-fade; there is deliberately no full-cell ripple — the animation is the
+ * feedback.
  */
 @Composable
 private fun McosNavBar(page: ShellPage, onSelect: (ShellPage) -> Unit) {
     androidx.compose.material3.Surface(
         color = MaterialTheme.colorScheme.surface,
-        shadowElevation = 8.dp,
+        shadowElevation = 12.dp,
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Column(Modifier.navigationBarsPadding()) {
-            androidx.compose.material3.HorizontalDivider(
-                thickness = 0.5.dp,
-                color = McosColor.borderSoft,
-            )
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .height(62.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                ShellPage.entries.forEach { p ->
-                    val selected = page == p
-                    Column(
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(64.dp)
+                .navigationBarsPadding(),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+        ) {
+            ShellPage.entries.forEach { p ->
+                val selected = page == p
+                val tint by androidx.compose.animation.animateColorAsState(
+                    targetValue = if (selected) MaterialTheme.colorScheme.primary else McosColor.fgMuted,
+                    animationSpec = tween(durationMillis = 180),
+                    label = "nav-tint",
+                )
+                val capsule by androidx.compose.animation.animateColorAsState(
+                    targetValue = if (selected) McosColor.accentSoft else androidx.compose.ui.graphics.Color.Transparent,
+                    animationSpec = tween(durationMillis = 180),
+                    label = "nav-capsule",
+                )
+                val interaction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+                Column(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxSize()
+                        .clickable(
+                            interactionSource = interaction,
+                            indication = null,
+                        ) { onSelect(p) },
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    Box(
                         Modifier
-                            .weight(1f)
-                            .fillMaxSize()
-                            .clickable { onSelect(p) },
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center,
+                            .size(width = 58.dp, height = 30.dp)
+                            .background(capsule, RoundedCornerShape(15.dp)),
+                        contentAlignment = Alignment.Center,
                     ) {
-                        Box(
-                            Modifier
-                                .size(width = 44.dp, height = 28.dp)
-                                .background(
-                                    if (selected) McosColor.accentSoft else androidx.compose.ui.graphics.Color.Transparent,
-                                    RoundedCornerShape(McosRadius.pill),
-                                ),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                p.icon,
-                                contentDescription = p.title,
-                                tint = if (selected) MaterialTheme.colorScheme.primary else McosColor.fgDim,
-                                modifier = Modifier.size(21.dp),
-                            )
-                        }
-                        Spacer(Modifier.height(2.dp))
-                        Text(
-                            p.title,
-                            fontSize = 10.sp,
-                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                            color = if (selected) MaterialTheme.colorScheme.primary else McosColor.fgDim,
+                        Icon(
+                            p.icon,
+                            contentDescription = p.title,
+                            tint = tint,
+                            modifier = Modifier.size(22.dp),
                         )
                     }
+                    Spacer(Modifier.height(3.dp))
+                    Text(
+                        p.title,
+                        fontSize = 10.sp,
+                        letterSpacing = 0.3.sp,
+                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                        color = tint,
+                    )
                 }
             }
         }
