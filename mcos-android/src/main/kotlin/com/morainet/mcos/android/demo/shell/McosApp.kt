@@ -5,6 +5,7 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -14,6 +15,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Build
@@ -42,11 +45,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.foundation.layout.Row
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.morainet.mcos.android.AppDeps
+import com.morainet.mcos.android.demo.McosColor
 import com.morainet.mcos.android.demo.chat.ChatPage
 import com.morainet.mcos.android.demo.marketplace.MarketplaceCard
 import com.morainet.mcos.android.demo.marketplace.MarketplaceViewModel
@@ -139,8 +146,28 @@ fun MCOSApp(deps: AppDeps) {
                 TopAppBar(
                     title = {
                         Row(verticalAlignment = Alignment.CenterVertically) {
+                            // Brand monogram — gradient badge, no icon dependency needed.
+                            Box(
+                                Modifier
+                                    .size(30.dp)
+                                    .background(
+                                        Brush.linearGradient(
+                                            listOf(McosColor.accent, McosColor.accentDeep)
+                                        ),
+                                        RoundedCornerShape(10.dp),
+                                    ),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    "M",
+                                    color = McosColor.onAccent,
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
+                            Spacer(Modifier.size(10.dp))
                             Text("MCOS", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                            Text("  ${page.title}", fontWeight = FontWeight.Normal)
+                            Text("  ${page.title}", fontWeight = FontWeight.Normal, color = McosColor.fgMuted)
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
