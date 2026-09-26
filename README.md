@@ -2,6 +2,7 @@
 
 <img src="docs/images/logo.jpeg" width="500" alt="MCOS logo"/>
 
+
 # MCOS — Mobile Command OS
 
 **Make every cooperative capability on the phone a command that AI can call — safely.**
