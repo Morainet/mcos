@@ -97,15 +97,23 @@ class McosAgent(
     }
 
     override fun resumeSuspended(sessionId: String): Flow<AgentTurnResult> = flow {
-        // Consume the pending suspension; a session with none never suspended
-        // (or was already resumed) — decline rather than start a phantom turn.
-        val goal = sessions.takeSuspended(sessionId)
+        // Keep the durable checkpoint until the resumed turn reaches a
+        // terminal state. A crash or collector cancellation can then retry.
+        val goal = sessions.claimSuspended(sessionId)
         if (goal == null) {
             emit(AgentTurnResult.Declined("no_suspended_turn"))
             return@flow
         }
-        // Re-enter the same loop over the retained goal + folded observations.
-        driveTurn(sessionId, goal)
+        var outcome: AgentTurnResult? = null
+        try {
+            // Re-enter the same loop over the retained goal + observations.
+            outcome = driveTurn(sessionId, goal)
+        } finally {
+            sessions.finishSuspendedResume(
+                sessionId,
+                completed = outcome != null && outcome !is AgentTurnResult.Suspended,
+            )
+        }
     }
 
     /**
@@ -117,7 +125,7 @@ class McosAgent(
     private suspend fun kotlinx.coroutines.flow.FlowCollector<AgentTurnResult>.driveTurn(
         sessionId: String,
         userMessage: String,
-    ) {
+    ): AgentTurnResult {
         sessions.setActiveJob(sessionId, currentCoroutineContext().job)
         try {
             // Per-turn budgets (§11.2): reset on every runTurn, consumed
@@ -249,7 +257,9 @@ class McosAgent(
             }
 
             // null ⇒ wall-clock cap exceeded; the loop never truncates silently.
-            emit(terminal ?: AgentTurnResult.Refuse("QUOTA", "agent_cap_exceeded"))
+            val outcome = terminal ?: AgentTurnResult.Refuse("QUOTA", "agent_cap_exceeded")
+            emit(outcome)
+            return outcome
         } finally {
             sessions.setActiveJob(sessionId, null)
         }

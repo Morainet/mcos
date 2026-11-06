@@ -583,6 +583,89 @@ class AgentLoopTest {
         assertFalse(saved.containsKey("s19"), "consuming the suspension clears the durable snapshot")
     }
 
+    @Test
+    fun `A19b-a claimed resume keeps its checkpoint until completion`() {
+        val saved = mutableMapOf<String, AgentSessionStore.Snapshot>()
+        val persistence = object : AgentSessionStore.Persistence {
+            override fun save(snapshot: AgentSessionStore.Snapshot) { saved[snapshot.sessionId] = snapshot }
+            override fun delete(sessionId: String) { saved.remove(sessionId) }
+            override fun loadAll(): List<AgentSessionStore.Snapshot> = saved.values.toList()
+        }
+        val first = AgentSessionStore(persistence)
+        first.begin("s19b", "finish the upload")
+        first.markSuspended("s19b")
+        assertEquals("finish the upload", first.claimSuspended("s19b"))
+        assertNull(first.claimSuspended("s19b"), "a second worker cannot claim the same resume")
+        first.recordProbe("s19b", "upload.status → pending")
+        assertEquals(listOf("upload.status → pending"), saved.getValue("s19b").observationLog)
+
+        // Simulate process death before the resume reaches a terminal result.
+        val recovered = AgentSessionStore(persistence)
+        assertEquals(listOf("s19b"), recovered.restore())
+        assertEquals("upload.status → pending", recovered.observations("s19b"))
+        assertEquals("finish the upload", recovered.claimSuspended("s19b"))
+        recovered.finishSuspendedResume("s19b", completed = true)
+        assertFalse(saved.containsKey("s19b"), "a completed resume consumes the checkpoint")
+        assertNull(recovered.claimSuspended("s19b"))
+    }
+
+    @Test
+    fun `A19c-cancelled resume remains recoverable after restart`() = runBlocking {
+        val saved = mutableMapOf<String, AgentSessionStore.Snapshot>()
+        val persistence = object : AgentSessionStore.Persistence {
+            override fun save(snapshot: AgentSessionStore.Snapshot) { saved[snapshot.sessionId] = snapshot }
+            override fun delete(sessionId: String) { saved.remove(sessionId) }
+            override fun loadAll(): List<AgentSessionStore.Snapshot> = saved.values.toList()
+        }
+        val store = AgentSessionStore(persistence)
+        store.begin("s19c", "notify when ready")
+        store.markSuspended("s19c")
+        val slow = FakeConstrainedProvider(
+            listOf("""{"type":"invoke","command":"photo.enhance","args":{}}"""),
+            delayMs = 60_000,
+        )
+        val agent = McosAgent(LlmPlanner(slow, registry), FakeRuntimeGateway(), registry, sessions = store)
+        val job = launch { agent.resumeSuspended("s19c").toList() }
+        awaitTrue { slow.capturedMessages.isNotEmpty() }
+        job.cancel()
+        job.join()
+        assertTrue(saved.containsKey("s19c"), "cancellation must not acknowledge the checkpoint")
+
+        val recovered = AgentSessionStore(persistence)
+        assertEquals(listOf("s19c"), recovered.restore())
+        val fast = FakeConstrainedProvider(
+            listOf("""{"type":"invoke","command":"photo.enhance","args":{}}"""),
+        )
+        val retry = McosAgent(LlmPlanner(fast, registry), FakeRuntimeGateway(), registry, sessions = recovered)
+        assertTrue(retry.resumeSuspended("s19c").toList().single() is AgentTurnResult.PlanReady)
+        assertFalse(saved.containsKey("s19c"), "the successful retry consumes the checkpoint")
+    }
+
+    @Test
+    fun `A19d-a resumed turn may suspend again without losing its checkpoint`() = runBlocking {
+        val saved = mutableMapOf<String, AgentSessionStore.Snapshot>()
+        val persistence = object : AgentSessionStore.Persistence {
+            override fun save(snapshot: AgentSessionStore.Snapshot) { saved[snapshot.sessionId] = snapshot }
+            override fun delete(sessionId: String) { saved.remove(sessionId) }
+            override fun loadAll(): List<AgentSessionStore.Snapshot> = saved.values.toList()
+        }
+        val store = AgentSessionStore(persistence)
+        store.begin("s19d", "wait for completion")
+        store.markSuspended("s19d")
+        val provider = FakeConstrainedProvider(
+            listOf(
+                """{"type":"defer","reason":"still pending","delay_seconds":60}""",
+                """{"type":"invoke","command":"photo.enhance","args":{}}""",
+            ),
+        )
+        val agent = McosAgent(LlmPlanner(provider, registry), FakeRuntimeGateway(), registry, sessions = store)
+
+        assertTrue(agent.resumeSuspended("s19d").toList().single() is AgentTurnResult.Suspended)
+        assertTrue(saved.containsKey("s19d"), "the second suspension remains durable")
+        assertTrue(agent.resumeSuspended("s19d").toList().single() is AgentTurnResult.PlanReady)
+        assertFalse(saved.containsKey("s19d"), "the next terminal plan consumes it")
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // A20/A21: parallel plans compile to a fan-out workflow (06 §11.5)
     // ═══════════════════════════════════════════════════════════════

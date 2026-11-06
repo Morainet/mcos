@@ -8,17 +8,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
-/**
- * Process-lifetime handle to the live [McosRuntime] so a broadcast receiver can
- * reach it (durable schedule hosting, 10 §6). [CompositionRoot] sets it when it
- * builds the app's dependency graph.
- *
- * 🟡 Part-2 boundary: this is only populated once the app has built its deps
- * (MainActivity.onCreate). A schedule alarm that starts the process *cold* (app
- * previously killed) finds it null and no-ops; full cold-start firing needs an
- * Application-scoped headless runtime + boot re-arm, which remain follow-ups
- * (needs on-device testing).
- */
+/** Process-lifetime runtime handle for hosts that do not expose [McosHostApp]. */
 object McosRuntimeHolder {
     @Volatile
     var runtime: McosRuntime? = null
@@ -31,12 +21,16 @@ object McosRuntimeHolder {
  */
 class ScheduleAlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        val runtime = McosRuntimeHolder.runtime ?: return
+        val deps = (context.applicationContext as? McosHostApp)?.mcosDeps
+        val runtime = deps?.runtime ?: McosRuntimeHolder.runtime ?: return
         // driveScheduleTick suspends (it may launch a run); keep the process
         // alive across it with goAsync's PendingResult.
         val pending = goAsync()
         CoroutineScope(Dispatchers.Default).launch {
             try {
+                // Application.onCreate starts rehydration asynchronously. A
+                // cold-start alarm must wait for it before checking what is due.
+                if (deps != null) RuntimeBootstrap.ensureRehydrated(deps).await()
                 runtime.driveScheduleTick()
             } finally {
                 pending.finish()

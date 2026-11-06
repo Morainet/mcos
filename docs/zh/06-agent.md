@@ -730,6 +730,8 @@ sealed class AgentTurnResult {
 
 **`resume`（按实际实现）：** 确认步骤是一次独立调用。`resume(approved = true)` 将暂存 IR 以 `Payload.IrJson`（审计标记 `CHAT`）提交给运行时并发射 `Done`，运行失败则发射 `Refuse(EXECUTION_FAILED / EXECUTION_TIMEOUT)`；`resume(approved = false)` 发射 `Declined("user_declined")` 且不触碰运行时。暂存计划的消费是一次性的——第二次 `resume` 得到 `Declined("no_pending_plan")`。
 
+**挂起恢复的崩溃保护（按实际实现）：** `resumeSuspended` 领取挂起任务时阻止并发重复恢复，但保留加密快照；恢复期间的只读探查会更新快照。只有发出非 `Suspended` 终态后才删除快照。取消、进程退出或再次挂起都保留可恢复状态；崩溃后的只读探查可能重跑，写入与网络步骤不会从这条路径自动执行。
+
 **读前缀算法（按实际实现）：** 解析后 `sideEffectClass` 为 `read` 的前导连续步骤；无法解析的命令终止前缀（视作非读——绝不自动运行）。若一次重规划原样重提刚被探查过的计划，即为**收敛**：循环停止并暂存该计划（纯读目标在此以 `needsConfirmation = false` 终止）。若重规划引入回合内此前计划都不曾出现的 `destructive`/`network` 命令，则强制 `Clarify` —— 即 §14.1 检测规则应用于循环自身的重规划。
 
 **生命周期事件（按实际实现）：** 在系统 EventBus（[03 §11](./03-runtime.md)）上发布 `agent.plan_ready` / `agent.probe` / `agent.replan` / `agent.declined` / `agent.executed` 信封（dot.case 命名，`source = "agent"`）。

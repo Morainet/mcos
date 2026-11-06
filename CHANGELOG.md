@@ -10,6 +10,18 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### Agent 挂起恢复检查点——借鉴 LangGraph 的可恢复执行（2026-11-06）
+
+- `AgentSessionStore` 将挂起恢复改成领取与完成两阶段：领取时保留加密快照并阻止并发领取，恢复期间的探查更新快照；只有发出非挂起终态后才删除快照。取消或进程退出可从快照重试，再次挂起则保留新的快照。
+- 增加进程重建和恢复途中取消的回归测试。沿用既有 `SecureStore` 持久化缝与内核的只读探查边界，不引入新的 Agent 框架依赖。
+
+### Android 真机验证与定时任务冷启动竞态（2026-11-06）
+
+- 在 Android 10（API 29）真机上，`sys.device.location()` 弹出系统定位授权框；拒绝后命令与运行均失败。`sys.device.brightness(level=128)` 先经 MCOS 确认，再打开系统“修改系统设置”页面；未授权返回后明确失败，系统 app-op 未改变。
+- 修正 `ScheduleAlarmReceiver` 的冷启动顺序：等待 `RuntimeBootstrap` 恢复已安装工作流与已武装计划后，再执行到期 tick。此前 Application 异步启动恢复，Receiver 可能在恢复完成前看到空调度表。
+- 修复 Binder 真机测试夹具：每个用例开始前清理上一用例的插件进程，避免损坏包测试留下的失败端点被后续用例复用；PID 标记改读正则捕获组。修复后 TYH612M（API 29）上的 `connectedDebugAndroidTest` **6/6 通过**。
+- 设备上当前没有已武装计划任务，Doze 触发、进程死亡后触发及开机重布防仍需携带测试配方的真机端到端验证；本轮不将其标为通过。
+
 ### ci 修复——`setup-android` v3 → v4：PR CI 因被下架的 `tools` 包全量变红（2026-09-24）
 
 `android-actions/setup-android@v3` 在 setup 阶段默认执行 `sdkmanager tools`，而 Google 已从 SDK 仓库移除遗留 `tools` 包（`Failed to find package 'tools'` → 退出码 1），自 9-17 起任何 PR 的 `Android build (assembleDebug)` job 都会在编译前失败——上一次全绿是 9-13，与 PR 内容无关。上游 v4.0.2 的 release note 即 "Fix for removed tools package"。`ci.yml` 升到 `@v4`（Node24、默认 cmdline-tools 20.0+，无输入参数变更）。

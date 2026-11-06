@@ -108,10 +108,14 @@ class BinderIsolationDeviceTest {
 
     @Before
     fun setUp() = runBlocking {
-        // Fresh production harness per test: each method re-runs the full
-        // install chain, so kill/truncate side-effects from one method can
-        // never leak into another (re-install of the same version idempotently
-        // re-downloads and re-stages).
+        // Android may keep the bound service alive after the previous test's
+        // host graph shuts down. In particular, BD6's failed-load endpoint
+        // would otherwise be reused after its staged artifact is restored.
+        pluginProcessPid()?.let { pid ->
+            android.os.Process.killProcess(pid)
+            withTimeout(BIND_TIMEOUT_MS) { awaitPidGone(pid) }
+        }
+        // Re-install the fixture into a fresh host graph for this test.
         deps = CompositionRoot.create(
             context,
             builtIns = emptyList(),
@@ -189,7 +193,7 @@ class BinderIsolationDeviceTest {
 
         assertTrue("park run succeeds", events.any { it is RuntimeEvent.RunSucceeded })
         assertTrue("marker written on disk: ${markerFile.path}", markerFile.exists())
-        val markerPid = MARKER_PID.find(markerFile.readText())?.value?.toIntOrNull()
+        val markerPid = MARKER_PID.find(markerFile.readText())?.groupValues?.get(1)?.toIntOrNull()
         assertNotNull("marker carries the handler's pid", markerPid)
         assertEquals("marker pid is the plugin process pid", pluginProcessPid(), markerPid)
         assertTrue(
@@ -506,7 +510,7 @@ class BinderIsolationDeviceTest {
     private suspend fun awaitMarkerPid(): Int? {
         while (true) {
             val pid = markerFile.takeIf { it.exists() }
-                ?.let { MARKER_PID.find(it.readText())?.value?.toIntOrNull() }
+                ?.let { MARKER_PID.find(it.readText())?.groupValues?.get(1)?.toIntOrNull() }
             if (pid != null) return pid
             delay(POLL_INTERVAL_MS)
         }
