@@ -83,6 +83,9 @@ class AgentSessionStore(
         @Volatile
         internal var suspended: Boolean = false
 
+        /** A resume owns this suspension until it reaches a terminal state. */
+        internal var resuming: Boolean = false
+
         @Volatile
         internal var activeJob: Job? = null
     }
@@ -109,6 +112,9 @@ class AgentSessionStore(
         session.observationLog += observation
         while (session.observationLog.size > MAX_OBSERVATIONS) {
             session.observationLog.removeAt(0)
+        }
+        if (session.resuming) {
+            persistence.save(Snapshot(sessionId, session.goal, session.observationLog.toList()))
         }
         Unit
     }
@@ -157,17 +163,27 @@ class AgentSessionStore(
         )
     }
 
-    /**
-     * Consume a pending suspension: returns the retained goal and clears the
-     * suspended flag + durable snapshot, or `null` if the session was not
-     * suspended. Idempotent — a second call returns `null`.
-     */
-    fun takeSuspended(sessionId: String): String? = synchronized(lock) {
+    /** Claim a suspension without deleting its crash-recovery checkpoint. */
+    fun claimSuspended(sessionId: String): String? = synchronized(lock) {
         val session = sessions[sessionId] ?: return null
-        if (!session.suspended) return null
-        session.suspended = false
-        persistence.delete(sessionId)
+        if (!session.suspended || session.resuming) return null
+        session.resuming = true
         session.goal
+    }
+
+    /**
+     * Complete a claimed resume. A new suspension or an interrupted collector
+     * keeps the checkpoint; any other terminal result consumes it one-shot.
+     */
+    fun finishSuspendedResume(sessionId: String, completed: Boolean) = synchronized(lock) {
+        val session = sessions[sessionId] ?: return
+        if (!session.resuming) return
+        session.resuming = false
+        if (completed) {
+            session.suspended = false
+            persistence.delete(sessionId)
+        }
+        Unit
     }
 
     /**
