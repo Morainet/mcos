@@ -1,12 +1,12 @@
 package com.morainet.mcos.runtime.api
 
+import com.morainet.mcos.runtime.api.RuntimePlan as Plan
 import com.morainet.mcos.runtime.core.api.AGENT_PROBE_AUDIT_SOURCE
 import com.morainet.mcos.runtime.core.api.ConfirmationDecision
 import com.morainet.mcos.runtime.core.api.ExecuteHandle
 import com.morainet.mcos.runtime.core.api.ExecuteRequest
 import com.morainet.mcos.runtime.core.api.ExecutionStatus
 import com.morainet.mcos.runtime.core.api.Payload
-import com.morainet.mcos.runtime.core.api.PreviewCommand
 import com.morainet.mcos.runtime.core.api.PreviewResult
 import com.morainet.mcos.runtime.core.api.RuntimeEvent
 import com.morainet.mcos.runtime.core.api.RuntimeGateway
@@ -18,8 +18,6 @@ import com.morainet.mcos.runtime.core.events.EventEnvelope
 import com.morainet.mcos.runtime.core.events.TypedEventBus
 import com.morainet.mcos.runtime.core.executor.Command
 import com.morainet.mcos.runtime.core.executor.Executor
-import com.morainet.mcos.runtime.core.ir.ExecutionIr
-import com.morainet.mcos.runtime.core.ir.ParseResult
 import com.morainet.mcos.marketplace.PluginInstaller
 import com.morainet.mcos.runtime.core.memory.EpisodicMemory
 import com.morainet.mcos.runtime.core.memory.EpisodicOutcome
@@ -66,7 +64,6 @@ import com.morainet.mcos.runtime.core.workflow.TriggerArmResult
 import com.morainet.mcos.runtime.core.executor.IsolationHost
 import com.morainet.mcos.runtime.core.workflow.WakeScheduler
 import com.morainet.mcos.runtime.core.workflow.WorkflowEngine
-import com.morainet.mcos.runtime.core.workflow.WorkflowJson
 import com.morainet.mcos.runtime.core.workflow.WorkflowOutcome
 import com.morainet.mcos.runtime.core.workflow.WorkflowResult
 import com.morainet.mcos.runtime.core.workflow.WorkflowStep
@@ -81,10 +78,8 @@ import com.morainet.mcos.sdk.MemoryFacade
 // into TriggerCoordinator; the facade only references TriggerArmResult now.
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.Flow
-import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import java.util.UUID
 
@@ -151,6 +146,7 @@ class McosRuntime internal constructor(
     private val scheduler: RunScheduler,
     private val runtimeConfigInputs: RuntimeConfigInputs,
 ) : RuntimeGateway {
+    private val requestCompiler = RuntimeRequestCompiler(parser, registry, workflowStore)
     private val summarizer = RunSummarizer(episodicMemory)
 
     // ─── Triggers (05-workflow.md §9.2 event / §9.3 schedule) ───────────
@@ -211,39 +207,6 @@ class McosRuntime internal constructor(
     // cleanly (P0-C2) — the role the old RunManager played, minus the
     // unbounded-concurrency blind spot.
 
-    /**
-     * Internal plan produced by payload parsing.
-     *
-     * Commands are executed linearly through the executor; workflows are
-     * delegated to [WorkflowEngine] which adds control flow on top.
-     */
-    private sealed interface Plan {
-        data class Commands(val commands: List<Command>) : Plan
-        data class Workflow(val step: WorkflowStep) : Plan
-
-        /** Payload could not be parsed into an executable plan. */
-        data class ParseFailed(
-            val code: String,
-            val message: String,
-            val line: Int = 1,
-            val column: Int = 1,
-            val token: String? = null,
-            val expected: List<String>? = null,
-        ) : Plan {
-            /** Human-readable error with location details, e.g. "Invalid payload: syntax at line 2, column 5: ..." */
-            fun toErrorMessage(): String {
-                val loc = if (line > 1 || column > 1) " at line $line, column $column" else ""
-                return "Invalid payload: $code$loc: $message"
-            }
-        }
-
-        fun isEmpty(): Boolean = when (this) {
-            is Commands -> commands.isEmpty()
-            is Workflow -> false
-            is ParseFailed -> false
-        }
-    }
-
     // ─── Public API (matching 03-runtime.md 4) ─────────────────────────
 
     /**
@@ -257,7 +220,7 @@ class McosRuntime internal constructor(
         val timestamp = System.currentTimeMillis()
 
         // Parse payload into an execution plan
-        val plan = parsePayload(request.payload)
+        val plan = requestCompiler.parse(request.payload)
         if (plan.isEmpty()) {
             val error = when (val p = request.payload) {
                 is Payload.WorkflowRef -> "Workflow not found: ${p.workflowId}"
@@ -370,58 +333,7 @@ class McosRuntime internal constructor(
      * Preview an execution request without running it. Returns parsed
      * commands and any warnings.
      */
-    suspend fun preview(request: ExecuteRequest): PreviewResult {
-        return when (val plan = parsePayload(request.payload)) {
-            is Plan.ParseFailed -> PreviewResult(
-                commandCount = 0,
-                commands = emptyList(),
-                warnings = listOf(plan.toErrorMessage()),
-            )
-            is Plan.Commands -> {
-                val warnings = mutableListOf<String>()
-
-                val previewCommands = plan.commands.map { cmd ->
-                    val resolved = registry.resolve(cmd.id)
-                    val sideEffectClass = when (resolved) {
-                        is RegistryResolveResult.Found -> resolved.entry.descriptor.sideEffectClass.name
-                        else -> "unknown"
-                    }
-                    if (resolved !is RegistryResolveResult.Found) {
-                        warnings.add("Unknown command: ${cmd.id}")
-                    }
-                    PreviewCommand(
-                        id = cmd.id,
-                        // DSL args may be JsonNull (e.g. `meta=null`); keep them as
-                        // the literal string "null" instead of crashing on .content.
-                        args = cmd.args.mapValues { (_, v) ->
-                            v.jsonPrimitive.takeUnless { it is JsonNull }?.content ?: "null"
-                        },
-                        sideEffectClass = sideEffectClass,
-                    )
-                }
-
-                PreviewResult(
-                    commandCount = previewCommands.size,
-                    commands = previewCommands,
-                    warnings = warnings,
-                )
-            }
-            is Plan.Workflow -> {
-                val count = countCommands(plan.step)
-                PreviewResult(
-                    commandCount = count,
-                    commands = listOf(
-                        PreviewCommand(
-                            id = "workflow",
-                            args = mapOf("estimatedCommands" to count.toString()),
-                            sideEffectClass = "workflow",
-                        )
-                    ),
-                    warnings = if (count == 0) listOf("Workflow contains no commands") else emptyList(),
-                )
-            }
-        }
-    }
+    suspend fun preview(request: ExecuteRequest): PreviewResult = requestCompiler.preview(request.payload)
 
     /**
      * Cancel a run by its runId (03-runtime.md §8.3). A run cancelled while
@@ -758,52 +670,6 @@ class McosRuntime internal constructor(
 
     // ─── Internal helpers ────────────────────────────────────────────────
 
-    private fun parsePayload(payload: Payload): Plan {
-        return when (payload) {
-            is Payload.DslText -> {
-                val result = parser.parse(payload.text)
-                when (result) {
-                    is ParseResult.Ok -> planFromIr(result.ir)
-                    is ParseResult.Err -> Plan.ParseFailed(
-                        code = result.code,
-                        message = result.message,
-                        line = result.line,
-                        column = result.column,
-                        token = result.token,
-                        expected = result.expected,
-                    )
-                }
-            }
-            is Payload.IrJson -> {
-                val ir = DslParser.fromJsonElement(payload.json)
-                if (ir != null) {
-                    planFromIr(ir)
-                } else {
-                    Plan.ParseFailed(code = "invalid_ir", message = "IR JSON is not a valid execution IR")
-                }
-            }
-            is Payload.WorkflowRef -> {
-                val step = workflowStore.get(payload.workflowId)
-                if (step != null) Plan.Workflow(step) else Plan.Commands(emptyList())
-            }
-        }
-    }
-
-    private fun planFromIr(ir: ExecutionIr): Plan {
-        return when (ir) {
-            is ExecutionIr.Invoke -> Plan.Commands(listOf(Command(ir.invoke.id, ir.invoke.args)))
-            is ExecutionIr.Sequence -> Plan.Commands(ir.sequence.steps.map { Command(it.id, it.args) })
-            is ExecutionIr.Workflow -> {
-                val step = WorkflowJson.fromJson(ir.body)
-                if (step != null) {
-                    Plan.Workflow(step)
-                } else {
-                    Plan.ParseFailed(code = "invalid_workflow", message = "Workflow IR body is not a valid workflow definition")
-                }
-            }
-        }
-    }
-
     /**
      * Run a flat list of commands through the executor, publishing events.
      */
@@ -1031,22 +897,6 @@ class McosRuntime internal constructor(
      */
     private fun collectCommandArgs(step: WorkflowStep): List<JsonObject> =
         flatMapCommands(step) { it.args }
-
-    /**
-     * Estimate how many commands a workflow may execute (upper bound for
-     * loops/retries based on their configured limits).
-     */
-    private fun countCommands(step: WorkflowStep): Int {
-        return when (step) {
-            is WorkflowStep.Command -> 1
-            is WorkflowStep.Sequential -> step.steps.sumOf { countCommands(it) }
-            is WorkflowStep.Parallel -> step.steps.sumOf { countCommands(it) }
-            is WorkflowStep.If -> countCommands(step.thenStep) + (step.elseStep?.let { countCommands(it) } ?: 0)
-            is WorkflowStep.Loop -> countCommands(step.body) * step.maxIterations
-            is WorkflowStep.Retry -> countCommands(step.step) * (step.maxRetries + 1)
-            is WorkflowStep.Try -> countCommands(step.step) + step.compensation.sumOf { countCommands(it) }
-        }
-    }
 
     // ─── Builder ─────────────────────────────────────────────────────────
 

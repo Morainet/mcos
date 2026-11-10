@@ -4,7 +4,7 @@
 
 # MCOS — 移动命令操作系统
 
-**让手机上的每一个合作能力，都变成 AI 可以安全调用的命令。**
+**Android 应用可嵌入的安全命令运行时。**
 
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.morainet/mcos-bom.svg?label=Maven%20Central)](https://central.sonatype.com/artifact/io.github.morainet/mcos-bom/overview)
 [![CI](https://img.shields.io/github/actions/workflow/status/Morainet/mcos/ci.yml.svg?branch=main&label=CI)](https://github.com/Morainet/mcos/actions/workflows/ci.yml)
@@ -19,7 +19,9 @@
 
 [快速开始](#快速开始) · [运行原理](#运行原理) · [模块组成](#模块组成) · [文档导航](#文档导航) · [反馈问题](https://github.com/Morainet/mcos/issues) · [English](./README.md)
 
-*开源的**移动命令总线**——一句话类比：手机端的 Kubernetes + MCP + Claude Code Runtime。护城河是开放的命令协议本身，而不是某个模型或厂商。*
+*Android 应用可嵌入的安全命令运行时；自带演示 App，验证自然语言或预设任务能够可靠调用手机能力。*
+
+[近期架构与开发边界](./docs/zh/13-architecture-convergence.md)
 
 </div>
 

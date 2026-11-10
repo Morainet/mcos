@@ -10,6 +10,11 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### Architecture convergence — embedded Android runtime (2026-11-10)
+
+- Establish the near-term host SDK scope and document current module coupling separately from the planned refactoring sequence (EN/ZH).
+- Extract internal `RuntimeRequestCompiler` from `McosRuntime`: DSL/IR/workflow parsing and previews share one component; the facade retains run execution coordination. Public entry points and existing command semantics are preserved.
+
 ### Agent 挂起恢复检查点——借鉴 LangGraph 的可恢复执行（2026-11-06）
 
 - `AgentSessionStore` 将挂起恢复改成领取与完成两阶段：领取时保留加密快照并阻止并发领取，恢复期间的探查更新快照；只有发出非挂起终态后才删除快照。取消或进程退出可从快照重试，再次挂起则保留新的快照。

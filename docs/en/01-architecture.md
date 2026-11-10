@@ -1,5 +1,8 @@
 # MCOS System Architecture
 
+> **Current architecture entry:** [Architecture convergence](./13-architecture-convergence.md) — host SDK scope, current dependencies, and refactoring sequence.
+
+
 > **Status:** Draft
 > **Version:** 0.1.0
 > **Last Updated:** 2026-08-06

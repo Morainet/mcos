@@ -4,7 +4,7 @@
 
 # MCOS — Mobile Command OS
 
-**Make every cooperative capability on the phone a command that AI can call — safely.**
+**A secure command runtime embedded in Android applications.**
 
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.morainet/mcos-bom.svg?label=Maven%20Central)](https://central.sonatype.com/artifact/io.github.morainet/mcos-bom/overview)
 [![CI](https://img.shields.io/github/actions/workflow/status/Morainet/mcos/ci.yml.svg?branch=main&label=CI)](https://github.com/Morainet/mcos/actions/workflows/ci.yml)
@@ -19,7 +19,9 @@
 
 [Quick Start](#quick-start) · [How It Works](#how-it-works) · [What's Inside](#whats-inside) · [Documentation](#documentation) · [Report a Bug](https://github.com/Morainet/mcos/issues) · [中文文档](./README.zh-CN.md)
 
-*An open **mobile command bus** — think the phone's Kubernetes + MCP + Claude Code Runtime. The moat is the open Command Protocol, not any single model or vendor.*
+*A secure command runtime embedded in Android applications, with a demo app demonstrating reliable phone capabilities through natural language or preset tasks.*
+
+[Current architecture and development boundaries](./docs/en/13-architecture-convergence.md)
 
 </div>
 

@@ -1,5 +1,8 @@
 # MCOS Documentation
 
+> **Current architecture entry:** [Architecture convergence](./13-architecture-convergence.md) — host SDK scope, current dependencies, and refactoring sequence.
+
+
 Official design documentation for **Mobile Command OS (MCOS)** — architecture, RFCs, and roadmap intended for an open-source GitHub repository.
 
 > One-liner: **Make every capability on the phone a command that AI can call — safely.**
