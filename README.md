@@ -2,6 +2,7 @@
 
 <img src="docs/images/logo.jpeg" width="500" alt="MCOS logo"/>
 
+
 # MCOS — Mobile Command OS
 
 **A secure command runtime embedded in Android applications.**

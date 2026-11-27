@@ -119,11 +119,19 @@ data class McosUiState(
     val skills: List<SkillUi> = emptyList(),
     /** Skill import paste buffer (SKILL.md or JSON). */
     val skillImportText: String = "",
+    /** Typed conversation transcript — the chat page's primary view (presentation only). */
+    val transcript: List<ChatMessage> = emptyList(),
 ) {
     /** The currently selected vendor's editable settings. */
     val selectedVendor: LlmVendorUi
         get() = vendors.firstOrNull { it.vendor.id == selectedVendorId } ?: vendors.first()
 }
+
+/** Speaker of one transcript entry — drives bubble styling in the chat view. */
+enum class ChatRole { USER, AGENT, SYSTEM }
+
+/** One conversation entry; [id] is monotonic per VM instance (stable lazy keys). */
+data class ChatMessage(val id: Long, val role: ChatRole, val text: String)
 
 /**
  * Editable UI state for one LLM vendor: the [vendor] preset plus the user's
@@ -321,6 +329,19 @@ class McosViewModel : ViewModel() {
             if (next.size > MAX_LOG_LINES) next.takeLast(MAX_LOG_LINES) else next
         }
     }
+
+    /**
+     * Append one typed entry to the conversation transcript (chat-page view).
+     * Presentation-only: everything logged via [log] still reaches the Tools
+     * console unchanged.
+     */
+    private fun say(role: ChatRole, text: String) {
+        _uiState.update { st ->
+            st.copy(transcript = (st.transcript + ChatMessage(nextMsgId++, role, text)).takeLast(MAX_LOG_LINES))
+        }
+    }
+
+    private var nextMsgId = 0L
 
     // ── input handlers ─────────────────────────────────────────────────
 
@@ -698,6 +719,7 @@ class McosViewModel : ViewModel() {
 
     fun clearLog() {
         _events.value = emptyList()
+        _uiState.update { it.copy(transcript = emptyList()) }
     }
 
     // ── plugin loading (idempotent) ─────────────────────────────────────
@@ -833,10 +855,13 @@ class McosViewModel : ViewModel() {
 
         val config = selectedLlmConfig()
         if (config == null) {
-            log("[WARN] Set an LLM API key in Settings first.")
+            val hint = "Set an LLM API key in Settings first."
+            log("[WARN] $hint")
+            say(ChatRole.SYSTEM, hint)
             _uiState.update { it.copy(isExecuting = false) }
             return
         }
+        say(ChatRole.USER, s.nlText.trim())
 
         viewModelScope.launch {
             try {
@@ -869,6 +894,21 @@ class McosViewModel : ViewModel() {
                 } else {
                     log("[ERROR] Planning failed: ${result.plan.error?.message}")
                 }
+                say(
+                    ChatRole.AGENT,
+                    buildString {
+                        if (result.plan.isSuccess && result.plan.rawDsl.isNotBlank()) {
+                            append("Plan — ${result.plan.commands.size} command(s)\n")
+                            append(result.plan.rawDsl.trim())
+                            append("\n\n")
+                        }
+                        append(if (result.success) "✓ " else "⚠ ")
+                        append(result.summary)
+                        if (result.plan.isSuccess && result.plan.rawDsl.isNotBlank()) {
+                            append("\n(DSL pre-filled — open Tools and press Run to execute)")
+                        }
+                    },
+                )
 
                 // Outcome + execution events
                 log(if (result.success) "[${now()}] ✓ ${result.summary}" else "[WARN] ${result.summary}")
@@ -880,6 +920,7 @@ class McosViewModel : ViewModel() {
                 }
             } catch (e: Exception) {
                 log("[ERROR] ${e.javaClass.simpleName}: ${e.message}")
+                say(ChatRole.SYSTEM, "${e.javaClass.simpleName}: ${e.message}")
             } finally {
                 _uiState.update { it.copy(isExecuting = false) }
             }
@@ -925,10 +966,13 @@ class McosViewModel : ViewModel() {
 
         val config = selectedLlmConfig()
         if (config == null && agentBridgeOverride == null) {
-            log("[WARN] Set an LLM API key in Settings first.")
+            val hint = "Set an LLM API key in Settings first."
+            log("[WARN] $hint")
+            say(ChatRole.SYSTEM, hint)
             _uiState.update { it.copy(isExecuting = false, agentWorking = false) }
             return
         }
+        say(ChatRole.USER, s.nlText.trim())
 
         viewModelScope.launch {
             try {
@@ -1023,13 +1067,27 @@ class McosViewModel : ViewModel() {
                 _uiState.update { it.copy(pendingAgentPlan = preview) }
                 log("[${now()}] ${result.headline}")
                 log(preview)
+                say(ChatRole.AGENT, "Staged plan — approve to execute:\n$preview")
             }
-            is AgentTurnResult.Clarify -> log("[${now()}] ? ${result.headline}")
-            is AgentTurnResult.Refuse -> log("[ERROR] ${result.headline}")
-            is AgentTurnResult.Declined -> log("[${now()}] ✗ ${result.headline}")
-            is AgentTurnResult.Done -> log("[${now()}] ✓ ${result.headline}")
+            is AgentTurnResult.Clarify -> {
+                log("[${now()}] ? ${result.headline}")
+                say(ChatRole.AGENT, result.headline)
+            }
+            is AgentTurnResult.Refuse -> {
+                log("[ERROR] ${result.headline}")
+                say(ChatRole.SYSTEM, result.headline)
+            }
+            is AgentTurnResult.Declined -> {
+                log("[${now()}] ✗ ${result.headline}")
+                say(ChatRole.SYSTEM, "✗ ${result.headline}")
+            }
+            is AgentTurnResult.Done -> {
+                log("[${now()}] ✓ ${result.headline}")
+                say(ChatRole.AGENT, "✓ ${result.headline}")
+            }
             is AgentTurnResult.Suspended -> {
                 log("[${now()}] ⏸ ${result.headline}")
+                say(ChatRole.SYSTEM, "⏸ ${result.headline}")
                 scheduleAgentResume(result.resumeAtEpochMs)
             }
         }

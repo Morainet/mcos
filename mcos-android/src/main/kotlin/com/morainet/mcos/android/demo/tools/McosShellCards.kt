@@ -114,27 +114,19 @@ internal fun DslInputCard(
 ) {
     Card(
         Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-        shape = RoundedCornerShape(McosRadius.md),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        shape = RoundedCornerShape(McosRadius.lg),
     ) {
-        Column(Modifier.padding(McosSpace.lg)) {
-            OutlinedTextField(
+        Column(Modifier.padding(McosSpace.xl)) {
+            com.morainet.mcos.android.demo.ui.QuietField(
                 value = ui.dslText,
                 onValueChange = { vm.onDslTextChange(it) },
-                modifier = Modifier.fillMaxWidth().heightIn(min = 72.dp, max = 110.dp),
-                textStyle = MaterialTheme.typography.bodyMedium.copy(
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 13.sp,
-                ),
-                placeholder = { Text("Type DSL commands…", style = MaterialTheme.typography.bodySmall) },
-                shape = RoundedCornerShape(McosRadius.sm),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                placeholder = "hello.world(name=\"World\")\nsys.notify(title=\"Hi\", text=\"It works\")",
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = false,
+                mono = true,
+                minLinesHeight = 88,
                 keyboardActions = KeyboardActions(onDone = { vm.run() }),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = MaterialTheme.colorScheme.primary,
-                    unfocusedBorderColor = McosColor.border,
-                    cursorColor = MaterialTheme.colorScheme.primary,
-                ),
             )
             // Live preview line.
             ui.previewText?.let {
@@ -154,6 +146,7 @@ internal fun DslInputCard(
                 Button(
                     onClick = { vm.run() },
                     enabled = !ui.isExecuting && ui.dslText.isNotBlank(),
+                    shape = RoundedCornerShape(McosRadius.md),
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                 ) {
                     Icon(Icons.Default.PlayArrow, null, Modifier.size(18.dp))
@@ -192,6 +185,12 @@ internal fun OutputLog(
             )
             Spacer(Modifier.width(McosSpace.sm))
             Text("Output", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary)
+            Spacer(Modifier.width(McosSpace.md))
+            Text(
+                "${events.size} events",
+                style = MaterialTheme.typography.labelSmall,
+                color = McosColor.fgDim,
+            )
             Spacer(Modifier.weight(1f))
             TextButton(onClick = onClear, contentPadding = PaddingValues(horizontal = McosSpace.md)) {
                 Text("CLEAR", style = MaterialTheme.typography.labelSmall)
@@ -200,13 +199,13 @@ internal fun OutputLog(
         Card(
             Modifier.fillMaxWidth().weight(1f),
             colors = CardDefaults.cardColors(containerColor = McosColor.console),
-            shape = RoundedCornerShape(McosRadius.md),
+            shape = RoundedCornerShape(McosRadius.lg),
         ) {
             val scrollState = rememberScrollState()
             LaunchedEffect(events.size) {
                 if (events.isNotEmpty()) scrollState.animateScrollTo(scrollState.maxValue)
             }
-            Box(Modifier.verticalScroll(scrollState).padding(McosSpace.lg)) {
+            Box(Modifier.verticalScroll(scrollState).padding(McosSpace.xl)) {
                 if (events.isEmpty()) {
                     EmptyLogHint()
                 } else {
@@ -216,10 +215,10 @@ internal fun OutputLog(
                                 e,
                                 style = MaterialTheme.typography.bodySmall,
                                 fontFamily = FontFamily.Monospace,
-                                lineHeight = 18.sp,
+                                lineHeight = 19.sp,
                                 color = eventLineColor(e),
                             )
-                            if (i < events.size - 1) Spacer(Modifier.height(1.dp))
+                            if (i < events.size - 1) Spacer(Modifier.height(2.dp))
                         }
                     }
                 }
@@ -233,16 +232,16 @@ private fun EmptyLogHint() {
     Column {
         Text(
             "Ready.",
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.bodyMedium,
             fontFamily = FontFamily.Monospace,
-            color = McosColor.fg.copy(alpha = 0.35f),
+            color = McosColor.consoleFg,
         )
         Spacer(Modifier.height(McosSpace.md))
         Text(
             "Try these examples:",
             style = MaterialTheme.typography.bodySmall,
             fontFamily = FontFamily.Monospace,
-            color = McosColor.fg.copy(alpha = 0.25f),
+            color = McosColor.consoleFgDim,
         )
         listOf(
             "  hello.world(name=\"World\")",
@@ -254,7 +253,7 @@ private fun EmptyLogHint() {
                 example,
                 style = MaterialTheme.typography.bodySmall,
                 fontFamily = FontFamily.Monospace,
-                color = McosColor.fg.copy(alpha = 0.2f),
+                color = McosColor.consoleFgDim,
             )
         }
     }
@@ -262,10 +261,10 @@ private fun EmptyLogHint() {
 
 /** Semantic coloring for a console line based on its status marker. */
 private fun eventLineColor(e: String): Color = when {
-    e.contains("ERROR") || e.startsWith("✗") -> McosColor.danger
-    e.contains("WARN") || e.startsWith("⚠") -> McosColor.warn
-    e.contains("└ OK") || e.startsWith("✓") -> McosColor.success
-    e.startsWith("▶") || e.startsWith("■") -> McosColor.info
-    e.contains("Done") -> McosColor.warn
-    else -> McosColor.fgMuted
+    e.contains("ERROR") || e.startsWith("✗") -> McosColor.consoleDanger
+    e.contains("WARN") || e.startsWith("⚠") -> McosColor.consoleWarn
+    e.contains("└ OK") || e.startsWith("✓") -> McosColor.consoleSuccess
+    e.startsWith("▶") || e.startsWith("■") -> McosColor.consoleInfo
+    e.contains("Done") -> McosColor.consoleWarn
+    else -> McosColor.consoleFg
 }

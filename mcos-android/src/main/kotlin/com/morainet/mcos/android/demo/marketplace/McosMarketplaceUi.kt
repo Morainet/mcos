@@ -94,10 +94,10 @@ internal fun MarketplaceCard(
             var recipeMode by remember { mutableStateOf(false) }
             Card(
                 Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                shape = RoundedCornerShape(McosRadius.md),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                shape = RoundedCornerShape(McosRadius.lg),
             ) {
-                Column(Modifier.padding(McosSpace.lg)) {
+                Column(Modifier.padding(McosSpace.xl)) {
                     // Plugins ↔ Recipes mode toggle.
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         listOf(false to "Plugins", true to "Recipes").forEach { (mode, label) ->
@@ -110,54 +110,37 @@ internal fun MarketplaceCard(
                                     label,
                                     style = MaterialTheme.typography.labelMedium,
                                     fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (selected) MaterialTheme.colorScheme.tertiary else McosColor.fgDim,
+                                    color = if (selected) MaterialTheme.colorScheme.primary else McosColor.fgDim,
                                 )
                             }
                         }
                     }
-                    OutlinedTextField(
+                    com.morainet.mcos.android.demo.ui.QuietField(
                         value = ui.baseUrl,
                         onValueChange = { vm.onBaseUrlChange(it) },
+                        placeholder = "Marketplace index URL · https://index.example.com",
                         modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        textStyle = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
-                        placeholder = { Text("Marketplace index URL, e.g. https://index.example.com") },
-                        shape = RoundedCornerShape(McosRadius.sm),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = MaterialTheme.colorScheme.tertiary,
-                            unfocusedBorderColor = McosColor.border,
-                            cursorColor = MaterialTheme.colorScheme.tertiary,
-                        ),
+                        mono = true,
                     )
-                    Spacer(Modifier.height(McosSpace.sm))
+                    Spacer(Modifier.height(McosSpace.md))
                     Row(
                         Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(McosSpace.md),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        OutlinedTextField(
+                        com.morainet.mcos.android.demo.ui.QuietField(
                             value = ui.query,
                             onValueChange = { vm.onQueryChange(it) },
+                            placeholder = if (recipeMode) "Search recipes…" else "Search plugins…",
                             modifier = Modifier.weight(1f),
-                            singleLine = true,
-                            textStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
-                            placeholder = { Text(if (recipeMode) "Search recipes…" else "Search plugins…") },
-                            shape = RoundedCornerShape(McosRadius.sm),
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                            keyboardActions = KeyboardActions(
-                                onSearch = { if (recipeMode) vm.searchRecipes() else vm.search() }
-                            ),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = MaterialTheme.colorScheme.tertiary,
-                                unfocusedBorderColor = McosColor.border,
-                                cursorColor = MaterialTheme.colorScheme.tertiary,
-                            ),
                         )
                         Button(
                             onClick = { if (recipeMode) vm.searchRecipes() else vm.search() },
                             enabled = !ui.searching && ui.baseUrl.isNotBlank(),
+                            shape = RoundedCornerShape(McosRadius.md),
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.tertiary
+                                containerColor = MaterialTheme.colorScheme.primary
                             ),
                         ) {
                             if (ui.searching) {

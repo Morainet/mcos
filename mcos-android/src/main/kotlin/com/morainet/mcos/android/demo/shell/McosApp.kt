@@ -5,33 +5,43 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.exclude
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Extension
+import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -42,11 +52,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.foundation.layout.Row
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.morainet.mcos.android.AppDeps
+import com.morainet.mcos.android.demo.McosColor
+import com.morainet.mcos.android.demo.McosRadius
+import com.morainet.mcos.android.demo.McosSpace
 import com.morainet.mcos.android.demo.chat.ChatPage
 import com.morainet.mcos.android.demo.marketplace.MarketplaceCard
 import com.morainet.mcos.android.demo.marketplace.MarketplaceViewModel
@@ -131,45 +147,19 @@ fun MCOSApp(deps: AppDeps) {
 
     _root_ide_package_.com.morainet.mcos.android.demo.McosTheme {
         Scaffold(
-            // Full-screen immersive: the top/bottom bars consume the system-bar
-            // + cutout insets themselves; safeDrawing here additionally lifts
-            // page content above the IME (keyboard) and side cutouts.
-            contentWindowInsets = WindowInsets.safeDrawing,
-            topBar = {
-                TopAppBar(
-                    title = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("MCOS", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                            Text("  ${page.title}", fontWeight = FontWeight.Normal)
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
-                )
-            },
-            bottomBar = {
-                NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                    ShellPage.entries.forEach { p ->
-                        NavigationBarItem(
-                            selected = page == p,
-                            onClick = { page = p },
-                            icon = { Icon(p.icon, contentDescription = p.title) },
-                            label = { Text(p.title) },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = MaterialTheme.colorScheme.onPrimary,
-                                indicatorColor = MaterialTheme.colorScheme.primary,
-                                selectedTextColor = MaterialTheme.colorScheme.primary,
-                                unselectedIconColor = _root_ide_package_.com.morainet.mcos.android.demo.McosColor.fgMuted,
-                                unselectedTextColor = _root_ide_package_.com.morainet.mcos.android.demo.McosColor.fgMuted,
-                            ),
-                        )
-                    }
-                }
-            },
+            // Full-screen immersive, no top bar (mainstream chat shells go
+            // edge-to-edge under the status bar). IME is deliberately EXCLUDED
+            // from these insets — the page container applies imePadding() once;
+            // doing it in both places double-lifts the content and opens a gap
+            // between the composer and the keyboard.
+            contentWindowInsets = WindowInsets.safeDrawing.exclude(WindowInsets.ime),
+            bottomBar = { McosNavBar(page = page, onSelect = { page = it }) },
         ) { padding ->
             Crossfade(targetState = page, label = "shell-page") { current ->
                 Box(
                     Modifier
                         .fillMaxSize()
+                        .imePadding()
                         .padding(padding)
                         .padding(
                             horizontal = _root_ide_package_.com.morainet.mcos.android.demo.McosSpace.lg,
@@ -180,12 +170,17 @@ fun MCOSApp(deps: AppDeps) {
                         ShellPage.CHAT -> ChatPage(
                             vm = vm,
                             ui = ui,
-                            events = events,
                         )
 
                         ShellPage.SKILLS -> SkillsPage(vm = vm, ui = ui)
                         ShellPage.MCP -> McpPage(vm = vm, ui = ui)
-                        ShellPage.TOOLS -> Column(Modifier.fillMaxSize()) {
+                        ShellPage.TOOLS -> Column(Modifier.fillMaxSize().verticalScroll(_root_ide_package_.androidx.compose.foundation.rememberScrollState())) {
+                            com.morainet.mcos.android.demo.ui.PageHeader(
+                                icon = Icons.Default.Terminal,
+                                tint = McosColor.warn,
+                                title = "Tools",
+                                description = "Run DSL directly, browse the marketplace, watch the raw console.",
+                            )
                             StatusBar(ui = ui, show = showCommands, onToggle = { showCommands = !showCommands })
                             MarketplaceCard(
                                 vm = marketVm,
@@ -196,10 +191,12 @@ fun MCOSApp(deps: AppDeps) {
                             )
                             DslInputCard(vm = vm, ui = ui)
                             Spacer(_root_ide_package_.androidx.compose.ui.Modifier.Companion.height(_root_ide_package_.com.morainet.mcos.android.demo.McosSpace.md))
+                            // Scrollable page → fixed console height (weight(1f) is
+                            // meaningless inside verticalScroll).
                             OutputLog(
                                 events = events,
                                 onClear = { vm.clearLog() },
-                                modifier = Modifier.fillMaxWidth().weight(1f),
+                                modifier = Modifier.fillMaxWidth().height(320.dp),
                             )
                         }
 
@@ -356,9 +353,81 @@ fun MCOSApp(deps: AppDeps) {
 
 /** The shell tabs (bottom navigation, ≤5 items). */
 enum class ShellPage(val title: String, val icon: ImageVector) {
-    CHAT("Chat", Icons.AutoMirrored.Filled.Send),
-    SKILLS("Skills", Icons.Default.Star),
-    MCP("MCP", Icons.Default.Share),
-    TOOLS("Tools", Icons.Default.Build),
+    CHAT("Chat", Icons.AutoMirrored.Filled.Chat),
+    SKILLS("Skills", Icons.Default.Extension),
+    MCP("MCP", Icons.Default.Hub),
+    TOOLS("Tools", Icons.Default.Terminal),
     SETTINGS("Settings", Icons.Default.Settings),
+}
+
+/**
+ * Slim bottom navigation (mainstream app proportions): 64dp tall, no divider —
+ * a soft shadow separates it from content. Selection feedback is a perfectly
+ * proportioned capsule (58×30, radius 15) whose fill and the icon/label colors
+ * cross-fade; there is deliberately no full-cell ripple — the animation is the
+ * feedback.
+ */
+@Composable
+private fun McosNavBar(page: ShellPage, onSelect: (ShellPage) -> Unit) {
+    androidx.compose.material3.Surface(
+        color = MaterialTheme.colorScheme.surface,
+        shadowElevation = 12.dp,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(64.dp)
+                .navigationBarsPadding(),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+        ) {
+            ShellPage.entries.forEach { p ->
+                val selected = page == p
+                val tint by androidx.compose.animation.animateColorAsState(
+                    targetValue = if (selected) MaterialTheme.colorScheme.primary else McosColor.fgMuted,
+                    animationSpec = tween(durationMillis = 180),
+                    label = "nav-tint",
+                )
+                val capsule by androidx.compose.animation.animateColorAsState(
+                    targetValue = if (selected) McosColor.accentSoft else androidx.compose.ui.graphics.Color.Transparent,
+                    animationSpec = tween(durationMillis = 180),
+                    label = "nav-capsule",
+                )
+                val interaction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+                Column(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxSize()
+                        .clickable(
+                            interactionSource = interaction,
+                            indication = null,
+                        ) { onSelect(p) },
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    Box(
+                        Modifier
+                            .size(width = 58.dp, height = 30.dp)
+                            .background(capsule, RoundedCornerShape(15.dp)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            p.icon,
+                            contentDescription = p.title,
+                            tint = tint,
+                            modifier = Modifier.size(22.dp),
+                        )
+                    }
+                    Spacer(Modifier.height(3.dp))
+                    Text(
+                        p.title,
+                        fontSize = 10.sp,
+                        letterSpacing = 0.3.sp,
+                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                        color = tint,
+                    )
+                }
+            }
+        }
+    }
 }
