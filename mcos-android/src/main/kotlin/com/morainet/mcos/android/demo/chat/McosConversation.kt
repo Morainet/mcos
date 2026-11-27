@@ -62,6 +62,7 @@ internal fun TaskConversation(
     inlineProgress: String?,
     canRestoreRequest: Boolean,
     onRestoreRequest: (Long) -> Unit,
+    imageStore: ChatImageStore,
     modifier: Modifier,
 ) {
     val latest = messages.last()
@@ -102,7 +103,7 @@ internal fun TaskConversation(
                         if (index == 0 && canRestoreRequest && message.retryOfUserMessageId != null) {
                             { onRestoreRequest(message.id) }
                         } else null
-                    TaskMessage(message, showAgentLabel = previous?.role != ChatRole.AGENT, onEditRetry = editRetry)
+                    TaskMessage(message, previous?.role != ChatRole.AGENT, editRetry, imageStore)
                 }
             }
         }
@@ -135,7 +136,12 @@ internal fun TaskProgress(message: String, spinning: Boolean = true) {
 }
 
 @Composable
-private fun TaskMessage(message: ChatMessage, showAgentLabel: Boolean, onEditRetry: (() -> Unit)?) {
+private fun TaskMessage(
+    message: ChatMessage,
+    showAgentLabel: Boolean,
+    onEditRetry: (() -> Unit)?,
+    imageStore: ChatImageStore,
+) {
     when (message.role) {
         ChatRole.USER -> Box(
             Modifier.fillMaxWidth().padding(start = 40.dp),
@@ -150,12 +156,17 @@ private fun TaskMessage(message: ChatMessage, showAgentLabel: Boolean, onEditRet
                 ),
                 color = MaterialTheme.colorScheme.surfaceVariant,
             ) {
-                SelectionContainer {
-                    Text(
-                        message.text,
-                        modifier = Modifier.padding(horizontal = McosSpace.xl, vertical = McosSpace.lg),
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
+                Column(horizontalAlignment = Alignment.End) {
+                    message.imageId?.let { id ->
+                        ChatImagePreview(id, imageStore, Modifier.padding(McosSpace.md).size(188.dp, 144.dp))
+                    }
+                    SelectionContainer {
+                        Text(
+                            message.text,
+                            modifier = Modifier.padding(horizontal = McosSpace.xl, vertical = McosSpace.lg),
+                            style = MaterialTheme.typography.bodyLarge,
+                        )
+                    }
                 }
             }
         }

@@ -1,6 +1,12 @@
 package com.morainet.mcos.android.demo.chat
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -21,26 +27,32 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedIconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
@@ -55,23 +67,32 @@ import com.morainet.mcos.android.demo.R
 import com.morainet.mcos.android.demo.shell.AgentProgress
 import com.morainet.mcos.android.demo.shell.McosUiState
 import com.morainet.mcos.android.demo.shell.McosViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @Composable
 internal fun AgentPage(
     vm: McosViewModel,
     ui: McosUiState,
     canSwitch: Boolean,
+    imageStore: ChatImageStore,
     onOpenMenu: () -> Unit,
     onConnectModel: () -> Unit,
 ) {
     val canStart = canSwitch && ui.taskResumeAtMs == null
-    val canRun = canStart && ui.nlText.isNotBlank()
+    val canRun = canStart && (ui.nlText.isNotBlank() || ui.draftImageId != null)
     val inlineProgress = when (ui.agentProgress) {
         AgentProgress.WAITING_FOR_MODEL, AgentProgress.SLOW_MODEL_RESPONSE ->
             ui.agentProgress.label.takeIf { ui.transcript.isNotEmpty() }
         else -> null
     }
     var quickTasksOpen by rememberSaveable { mutableStateOf(false) }
+    var imagePickerTaskId by rememberSaveable { mutableStateOf<String?>(null) }
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        val taskId = imagePickerTaskId
+        imagePickerTaskId = null
+        if (uri != null && taskId != null) vm.prepareChatImage(taskId) { imageStore.import(uri) }
+    }
     val focus = LocalFocusManager.current
     val submit: () -> Unit = {
         if (canRun) {
@@ -86,7 +107,8 @@ internal fun AgentPage(
         Column(Modifier.widthIn(max = 680.dp).fillMaxSize()) {
             if (!compact || !keyboardVisible) {
                 ChatHeader(
-                    canCreate = canSwitch && (ui.transcript.isNotEmpty() || ui.nlText.isNotBlank()),
+                    canCreate = canSwitch &&
+                        (ui.transcript.isNotEmpty() || ui.nlText.isNotBlank() || ui.draftImageId != null),
                     onOpenMenu = {
                         focus.clearFocus()
                         onOpenMenu()
@@ -116,8 +138,9 @@ internal fun AgentPage(
                         messages = ui.transcript + listOfNotNull(ui.streamingReply),
                         outcome = ui.lastAgentOutcome,
                         inlineProgress = inlineProgress,
-                        canRestoreRequest = canStart && ui.nlText.isEmpty(),
+                        canRestoreRequest = canStart && ui.nlText.isEmpty() && ui.draftImageId == null,
                         onRestoreRequest = vm::restoreRequestForEditing,
+                        imageStore = imageStore,
                         modifier = feed,
                     )
                 }
@@ -136,6 +159,26 @@ internal fun AgentPage(
                 canRun = canRun,
                 running = ui.agentWorking,
                 maxLines = if (compact) 2 else 5,
+                attachment = {
+                    ui.draftImageId?.let { id ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            ChatImagePreview(id, imageStore, Modifier.size(72.dp))
+                            IconButton(onClick = vm::removeChatImage, enabled = canSwitch) {
+                                Icon(Icons.Default.Close, contentDescription = "Remove image")
+                            }
+                        }
+                    }
+                    val status = if (ui.preparingImage) "Preparing image…" else ui.imageError
+                    if (status != null) {
+                        Text(
+                            status,
+                            modifier = Modifier.padding(McosSpace.sm),
+                            color = if (ui.imageError == null) MaterialTheme.colorScheme.onSurfaceVariant
+                            else MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                },
                 onOpenQuickTasks = {
                     focus.clearFocus()
                     quickTasksOpen = true
@@ -149,12 +192,45 @@ internal fun AgentPage(
     if (quickTasksOpen) {
         QuickTasksSheet(
             canRunSample = canStart,
+            canAttachImage = canStart,
             onDismiss = { quickTasksOpen = false },
+            onAttachImage = {
+                quickTasksOpen = false
+                imagePickerTaskId = ui.activeTaskId
+                imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+            },
             onRunSample = {
                 quickTasksOpen = false
                 vm.runInspectionTask()
             },
         )
+    }
+}
+
+@Composable
+internal fun ChatImagePreview(imageId: String, imageStore: ChatImageStore, modifier: Modifier = Modifier) {
+    var bitmap by remember(imageId, imageStore) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(imageId, imageStore) {
+        bitmap = withContext(Dispatchers.IO) {
+            imageStore.read(imageId)?.let { bytes ->
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = 2 })
+            }
+        }
+    }
+    Surface(modifier = modifier, shape = RoundedCornerShape(McosRadius.md)) {
+        val preview = bitmap
+        if (preview == null) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("Image", style = MaterialTheme.typography.labelMedium)
+            }
+        } else {
+            Image(
+                bitmap = preview.asImageBitmap(),
+                contentDescription = "Attached image",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Fit,
+            )
+        }
     }
 }
 
@@ -213,6 +289,7 @@ private fun TaskComposer(
     canRun: Boolean,
     running: Boolean,
     maxLines: Int,
+    attachment: @Composable () -> Unit,
     onOpenQuickTasks: () -> Unit,
     onTextChange: (String) -> Unit,
     onRun: () -> Unit,
@@ -226,6 +303,7 @@ private fun TaskComposer(
         color = palette.surfaceContainer,
     ) {
         Column(Modifier.padding(McosSpace.md)) {
+            attachment()
             BasicTextField(
                 value = text,
                 onValueChange = onTextChange,

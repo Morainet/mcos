@@ -36,6 +36,7 @@ import com.morainet.mcos.llm.LlmErrorCode
 import com.morainet.mcos.llm.LlmPlanner
 import com.morainet.mcos.llm.LlmProbePolicy
 import com.morainet.mcos.llm.LlmProviderRegistry
+import com.morainet.mcos.llm.LlmResponse
 import com.morainet.mcos.llm.McosAgent
 import com.morainet.mcos.llm.OpenAiLlmProvider
 import com.morainet.mcos.llm.PromptInjectionDetector
@@ -145,6 +146,9 @@ data class McosUiState(
     val taskSearchMatches: List<TaskHistoryEntry>? = null,
     val taskHistoryError: String? = null,
     val taskResumeAtMs: Long? = null,
+    val draftImageId: String? = null,
+    val preparingImage: Boolean = false,
+    val imageError: String? = null,
 ) {
     val agentWorking: Boolean get() = agentProgress != null
 
@@ -177,6 +181,7 @@ data class ChatMessage(
     val text: String,
     val useAsContext: Boolean = role == ChatRole.USER,
     val retryOfUserMessageId: Long? = null,
+    val imageId: String? = null,
 )
 
 data class TaskHistoryEntry(val id: String, val title: String, val subtitle: String)
@@ -265,6 +270,7 @@ class McosViewModel : ViewModel() {
     private var persistedKeyLoaded = false
     private var taskWorkspace = TaskWorkspace()
     private val taskSnapshots = MutableStateFlow<TaskWorkspace?>(null)
+    private var readChatImage: suspend (String) -> ByteArray? = { null }
 
     /**
      * Imported skill packages (prompt-level augmentation). Rebuilt on [attach]
@@ -300,8 +306,11 @@ class McosViewModel : ViewModel() {
     private fun now() = timeFormat.format(Date())
 
     /** Bind the activity-scoped dependencies; call from every onCreate. */
-    fun attach(deps: AppDeps) {
+    fun attach(deps: AppDeps) = attach(deps) { null }
+
+    internal fun attach(deps: AppDeps, readChatImage: suspend (String) -> ByteArray?) {
         this.deps = deps
+        this.readChatImage = readChatImage
         mcpController = McpServerController(
             secureStore = deps.secureStore,
             runtime = deps.runtime,
@@ -420,8 +429,9 @@ class McosViewModel : ViewModel() {
         text: String,
         useAsContext: Boolean = role == ChatRole.USER,
         retryOfUserMessageId: Long? = null,
+        imageId: String? = null,
     ): Long {
-        val message = ChatMessage(nextMsgId++, role, text, useAsContext, retryOfUserMessageId)
+        val message = ChatMessage(nextMsgId++, role, text, useAsContext, retryOfUserMessageId, imageId)
         _uiState.update { st ->
             st.copy(transcript = (st.transcript + message).takeLast(MAX_LOG_LINES))
         }
@@ -456,7 +466,8 @@ class McosViewModel : ViewModel() {
     private var nextMsgId = 0L
 
     private fun taskCanSwitch(): Boolean = _uiState.value.let {
-        it.tasksReady && !it.isExecuting && it.pendingAgentPlan == null && it.pendingConfirmation == null
+        it.tasksReady && !it.isExecuting && !it.preparingImage &&
+            it.pendingAgentPlan == null && it.pendingConfirmation == null
     }
 
     fun newTask() {
@@ -508,6 +519,7 @@ class McosViewModel : ViewModel() {
         val current = previous.copy(
             title = title, draft = state.nlText, messages = state.transcript, outcome = state.lastAgentOutcome,
             resumeAtMs = state.taskResumeAtMs, unfinished = state.agentWorking || state.pendingAgentPlan != null,
+            draftImageId = state.draftImageId,
         )
         if (current == previous) return
         taskWorkspace = taskWorkspace.withTask(current)
@@ -519,7 +531,8 @@ class McosViewModel : ViewModel() {
             TaskHistoryEntry(
                 task.id,
                 task.title.ifBlank {
-                    task.draft.trim().lineSequence().first().take(TASK_TITLE_LIMIT).ifBlank { "Untitled task" }
+                    task.draft.trim().lineSequence().first().take(TASK_TITLE_LIMIT)
+                        .ifBlank { if (task.draftImageId != null) "Image draft" else "Untitled task" }
                 },
                 when {
                     task.resumeAtMs != null -> "Waiting to resume"
@@ -535,6 +548,8 @@ class McosViewModel : ViewModel() {
                 tasksReady = true,
                 activeTaskId = activeTask.id,
                 nlText = activeTask.draft,
+                draftImageId = activeTask.draftImageId,
+                imageError = null,
                 transcript = activeTask.messages,
                 lastAgentOutcome = activeTask.outcome,
                 taskResumeAtMs = activeTask.resumeAtMs,
@@ -592,16 +607,44 @@ class McosViewModel : ViewModel() {
         rememberActiveTask()
     }
 
+    internal fun prepareChatImage(taskId: String, importImage: suspend () -> String) {
+        val state = _uiState.value
+        if (!taskCanSwitch() || state.activeTaskId != taskId || state.taskResumeAtMs != null) return
+        _uiState.update { it.copy(preparingImage = true, imageError = null) }
+        viewModelScope.launch {
+            try {
+                val imageId = importImage()
+                _uiState.update { it.copy(draftImageId = imageId) }
+                rememberActiveTask()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                _uiState.update { it.copy(imageError = "Couldn’t open this image. Try another one.") }
+            } finally {
+                _uiState.update { it.copy(preparingImage = false) }
+            }
+        }
+    }
+
+    fun removeChatImage() {
+        if (!taskCanSwitch()) return
+        _uiState.update { it.copy(draftImageId = null, imageError = null) }
+        rememberActiveTask()
+    }
+
     fun restoreRequestForEditing(interruptionId: Long) {
         val state = _uiState.value
-        if (!taskCanSwitch() || state.taskResumeAtMs != null || state.nlText.isNotEmpty()) return
+        if (!taskCanSwitch() || state.taskResumeAtMs != null || state.nlText.isNotEmpty() || state.draftImageId != null) {
+            return
+        }
         val interruption = state.transcript.lastOrNull()?.takeIf {
             it.id == interruptionId && it.role == ChatRole.SYSTEM
         } ?: return
         val request = state.transcript.firstOrNull {
             it.id == interruption.retryOfUserMessageId && it.role == ChatRole.USER
         } ?: return
-        onNlTextChange(request.text)
+        _uiState.update { it.copy(nlText = request.text, draftImageId = request.imageId) }
+        rememberActiveTask()
     }
 
     // ── multi-vendor LLM settings (06 §17 V1 probing) ───────────────────
@@ -1180,20 +1223,25 @@ class McosViewModel : ViewModel() {
     /** Start an Agent turn for the current NL input (probe → replan loop). */
     fun agentTurn() {
         val s = _uiState.value
-        if (!taskCanSwitch() || s.taskResumeAtMs != null || s.nlText.isBlank()) return
+        val imageId = s.draftImageId
+        if (!taskCanSwitch() || s.taskResumeAtMs != null || (s.nlText.isBlank() && imageId == null)) return
 
         val config = selectedLlmConfig()
-        if (config == null && agentBridgeOverride == null) {
+        if (config == null && (imageId != null || agentBridgeOverride == null)) {
             say(ChatRole.SYSTEM, "Connect a model in Settings to run your own tasks.")
             return
         }
 
-        val goal = s.nlText.trim()
+        val goal = s.nlText.trim().ifBlank { "Describe this image." }
         val history = s.transcript.dialogueHistory()
         _events.value = emptyList()
-        _uiState.update { it.copy(nlText = "", lastAgentOutcome = null) }
-        val userMessageId = say(ChatRole.USER, goal)
+        _uiState.update { it.copy(nlText = "", draftImageId = null, imageError = null, lastAgentOutcome = null) }
+        val userMessageId = say(ChatRole.USER, goal, imageId = imageId)
         launchAgentWork(AgentProgress.WAITING_FOR_MODEL, requestId = userMessageId) {
+            if (imageId != null) {
+                analyzeChatImage(imageId, goal, history, checkNotNull(config))
+                return@launchAgentWork
+            }
             loadPlugins()
             val bridge = agentBridgeOverride ?: bridgeFor(s.selectedVendorId, checkNotNull(config))
             var readOnlyPlan = false
@@ -1207,6 +1255,33 @@ class McosViewModel : ViewModel() {
                 }
             }
             if (readOnlyPlan) bridge.resume(s.activeTaskId, true).collect { handleAgentResult(it) }
+        }
+    }
+
+    private suspend fun analyzeChatImage(
+        imageId: String,
+        goal: String,
+        history: List<LlmChatMessage>,
+        config: LlmConfig,
+    ) {
+        val jpeg = readChatImage(imageId)
+        if (jpeg == null) {
+            handleAgentResult(AgentTurnResult.Refuse("IMAGE_UNAVAILABLE", "The attachment is no longer available."))
+            return
+        }
+        val provider = OpenAiLlmProvider(config = config, transport = AndroidLlmHttpTransport())
+        when (val reply = provider.streamImageChat(goal, jpeg, history) {
+            handleAgentResult(AgentTurnResult.AnswerDelta(it))
+        }) {
+            is LlmResponse.Ok -> handleAgentResult(AgentTurnResult.Answer(reply.content))
+            is LlmResponse.Err -> {
+                val category = when (reply.code) {
+                    LlmErrorCode.TIMEOUT, LlmErrorCode.NETWORK_ERROR, LlmErrorCode.CONNECT_ERROR,
+                    LlmErrorCode.STREAM_INTERRUPTED, LlmErrorCode.EMPTY_RESPONSE -> reply.code
+                    else -> "IMAGE_ANALYSIS_FAILED"
+                }
+                handleAgentResult(AgentTurnResult.Refuse(category, "The image request could not be completed."))
+            }
         }
     }
 
@@ -1444,6 +1519,8 @@ class McosViewModel : ViewModel() {
                         "Couldn’t reach the model. Check your connection and model endpoint."
                     LlmErrorCode.STREAM_INTERRUPTED -> "The model response was interrupted."
                     LlmErrorCode.EMPTY_RESPONSE -> "The model returned an empty response."
+                    "IMAGE_UNAVAILABLE" -> "This image is no longer available. Choose it again to retry."
+                    "IMAGE_ANALYSIS_FAILED" -> "Image request failed. Check that the selected model supports images."
                     else -> null
                 }
                 say(

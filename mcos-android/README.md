@@ -17,6 +17,8 @@ adb shell am start -n com.morainet.mcos.android/.demo.MainActivity
 3. 从菜单打开 **Task history** 可搜索、重命名和回看任务。历史保存在本机加密存储。有草稿或消息时，点击右上角的 **New task** 可开启新任务。等待审批或执行时需要先处理当前任务再切换，重启后中断的审批需要重新发起。
 4. 菜单中的 **Model settings** 用于配置模型。**Capabilities** 管理技能、MCP 和设备权限。App 默认使用浅色，可在菜单中切换 **Dark mode**。选择会保存在本机。
 
+使用支持图片输入的模型时，可从输入区的 **+** 打开 **Attach image**。每次可选一张图片，发送前可预览、替换或移除，留空问题会请求模型描述图片。附件保存在本机加密缓存，后续对话会沿用文字上下文。
+
 同一 Debug APK 还包含 `RecordExportActivity`。[基础宿主回归指南](../docs/zh/14-embedded-host.md)说明如何直接打开这页，[ADB CLI](../tools/mcos-device/README.md)以这页为回归目标。
 
 ## 源码入口

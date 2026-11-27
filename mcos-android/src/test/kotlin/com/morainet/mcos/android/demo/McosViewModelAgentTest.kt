@@ -386,6 +386,32 @@ class McosViewModelAgentTest {
     }
 
     @Test
+    fun `an image draft belongs to its conversation and a missing image can be edited after sending`() = runBlocking {
+        val conversation = vm.uiState.value.activeTaskId
+        vm.prepareChatImage(conversation) { "test-image" }
+        withTimeout(5_000) { vm.uiState.first { !it.preparingImage && it.draftImageId == "test-image" } }
+        vm.newTask()
+        assertNull(vm.uiState.value.draftImageId)
+        vm.selectTask(conversation)
+        assertEquals("test-image", vm.uiState.value.draftImageId)
+
+        vm.onVendorKeyChange("openai", "test-key")
+        vm.agentTurn()
+        val failed = withTimeout(5_000) { vm.uiState.first { !it.isExecuting && it.lastAgentOutcome != null } }
+        assertEquals("test-image", failed.transcript.first().imageId)
+        assertEquals("Describe this image.", failed.transcript.first().text)
+        assertNull(failed.draftImageId)
+        assertTrue(failed.transcript.last().text.contains("no longer available"))
+        assertNull(bridge.lastMessage)
+
+        vm.restoreRequestForEditing(failed.transcript.last().id)
+        assertEquals("test-image", vm.uiState.value.draftImageId)
+        vm.removeChatImage()
+        assertNull(vm.uiState.value.draftImageId)
+        assertEquals("Describe this image.", vm.uiState.value.nlText)
+    }
+
+    @Test
     fun `stopping a streamed answer preserves partial text and retries with completed context`() = runBlocking {
         bridge.turnResults = flowOf(AgentTurnResult.Answer("Topic saved"))
         startAgentTurn("Remember the topic")

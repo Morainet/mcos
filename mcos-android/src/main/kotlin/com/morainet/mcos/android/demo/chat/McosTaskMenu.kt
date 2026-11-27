@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -98,7 +99,13 @@ private fun DarkModeRow(onChangeDarkTheme: (Boolean) -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun QuickTasksSheet(canRunSample: Boolean, onDismiss: () -> Unit, onRunSample: () -> Unit) {
+internal fun QuickTasksSheet(
+    canRunSample: Boolean,
+    canAttachImage: Boolean,
+    onDismiss: () -> Unit,
+    onAttachImage: () -> Unit,
+    onRunSample: () -> Unit,
+) {
     val dark = LocalMcosDarkTheme.current
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -121,6 +128,7 @@ internal fun QuickTasksSheet(canRunSample: Boolean, onDismiss: () -> Unit, onRun
             verticalArrangement = Arrangement.spacedBy(McosSpace.lg),
         ) {
             Text("Quick tasks", style = MaterialTheme.typography.titleLarge)
+            TaskMenuItem("Attach image", Icons.Default.Photo, onAttachImage, enabled = canAttachImage)
             InspectionPreset(enabled = canRunSample, onClick = onRunSample)
         }
     }

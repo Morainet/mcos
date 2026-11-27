@@ -4,8 +4,14 @@ import com.sun.net.httpserver.HttpServer
 import java.io.IOException
 import java.net.ConnectException
 import java.net.InetSocketAddress
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.*
 
 /**
@@ -49,6 +55,48 @@ class OpenAiLlmProviderTransportTest {
 
         assertIs<LlmResponse.Ok>(result)
         assertEquals("hello", result.content)
+    }
+
+    @Test
+    fun `image chat streams with a JPEG in the current user message and no tools`() = runBlocking {
+        var request: String? = null
+        val transport = object : StreamingLlmHttpTransport {
+            override suspend fun postJson(
+                url: String, apiKey: String, body: String, connectTimeoutMs: Long, requestTimeoutMs: Long,
+            ): HttpTransportResponse = error("Expected the streaming transport")
+
+            override fun postEvents(
+                url: String, apiKey: String, body: String, connectTimeoutMs: Long, requestTimeoutMs: Long,
+            ): Flow<LlmStreamFrame> {
+                request = body
+                return flowOf(
+                    LlmStreamFrame.Data("""{"choices":[{"delta":{"content":"A red square"},"finish_reason":"stop"}]}"""),
+                    LlmStreamFrame.Data("[DONE]"),
+                )
+            }
+        }
+        val deltas = mutableListOf<String>()
+        val reply = OpenAiLlmProvider(config, transport).streamImageChat(
+            "What color is this?",
+            byteArrayOf(1, 2, 3),
+            history = listOf(ChatMessage("user", "Earlier question"), ChatMessage("assistant", "Earlier answer")),
+        ) { deltas += it }
+
+        assertEquals(LlmResponse.Ok("A red square"), reply)
+        assertEquals(listOf("A red square"), deltas)
+        val body = Json.parseToJsonElement(checkNotNull(request)).jsonObject
+        assertEquals("true", body.getValue("stream").jsonPrimitive.content)
+        assertFalse(body.containsKey("tools"))
+        val messages = body.getValue("messages").jsonArray
+        assertEquals("Earlier question", messages[1].jsonObject.getValue("content").jsonPrimitive.content)
+        assertEquals("Earlier answer", messages[2].jsonObject.getValue("content").jsonPrimitive.content)
+        val user = messages.last().jsonObject
+        assertEquals("user", user.getValue("role").jsonPrimitive.content)
+        val parts = user.getValue("content").jsonArray.map { it.jsonObject }
+        assertEquals("What color is this?", parts[0].getValue("text").jsonPrimitive.content)
+        assertEquals("image_url", parts[1].getValue("type").jsonPrimitive.content)
+        assertEquals("data:image/jpeg;base64,AQID", parts[1].getValue("image_url").jsonObject.getValue("url")
+            .jsonPrimitive.content)
     }
 
     @Test

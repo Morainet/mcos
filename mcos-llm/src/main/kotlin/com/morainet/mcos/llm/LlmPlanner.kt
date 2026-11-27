@@ -20,6 +20,31 @@ private const val MAX_HISTORY_MESSAGES = 8
 private const val MAX_HISTORY_BYTES = 1_800
 private const val MAX_HISTORY_MESSAGE_BYTES = 1_000
 
+internal fun boundedDialogue(history: List<ChatMessage>): List<ChatMessage> {
+    var remaining = MAX_HISTORY_BYTES
+    val recent = mutableListOf<ChatMessage>()
+    for (message in history.asReversed()) {
+        if (remaining == 0 || recent.size == MAX_HISTORY_MESSAGES) break
+        if (message.role != "user" && message.role != "assistant") continue
+        val limit = minOf(remaining, MAX_HISTORY_MESSAGE_BYTES)
+        val prefix = message.content.trim().take(limit)
+        val bytes = if (prefix.lastOrNull()?.isHighSurrogate() == true) {
+            prefix.dropLast(1).encodeToByteArray()
+        } else {
+            prefix.encodeToByteArray()
+        }
+        var end = minOf(bytes.size, limit)
+        // End at a UTF-8 character boundary, including for Chinese and emoji.
+        if (end < bytes.size) {
+            while (end > 0 && (bytes[end].toInt() and 0xc0) == 0x80) end--
+        }
+        if (end == 0) continue
+        recent += message.copy(content = bytes.decodeToString(endIndex = end))
+        remaining -= end
+    }
+    return recent.asReversed()
+}
+
 /**
  * Natural-language planner that uses an LLM to translate user intent
  * into executable MCOS DSL commands.
@@ -602,31 +627,6 @@ class LlmPlanner(
             is LlmResponse.Ok -> LlmPlan(emptyList(), "", providerId = provider.id, reply = response.content)
             is LlmResponse.Err -> LlmPlan(emptyList(), "", providerId = provider.id, error = response)
         }
-    }
-
-    private fun boundedDialogue(history: List<ChatMessage>): List<ChatMessage> {
-        var remaining = MAX_HISTORY_BYTES
-        val recent = mutableListOf<ChatMessage>()
-        for (message in history.asReversed()) {
-            if (remaining == 0 || recent.size == MAX_HISTORY_MESSAGES) break
-            if (message.role != "user" && message.role != "assistant") continue
-            val limit = minOf(remaining, MAX_HISTORY_MESSAGE_BYTES)
-            val prefix = message.content.trim().take(limit)
-            val bytes = if (prefix.lastOrNull()?.isHighSurrogate() == true) {
-                prefix.dropLast(1).encodeToByteArray()
-            } else {
-                prefix.encodeToByteArray()
-            }
-            var end = minOf(bytes.size, limit)
-            // End at a UTF-8 character boundary, including for Chinese and emoji.
-            if (end < bytes.size) {
-                while (end > 0 && (bytes[end].toInt() and 0xc0) == 0x80) end--
-            }
-            if (end == 0) continue
-            recent += message.copy(content = bytes.decodeToString(endIndex = end))
-            remaining -= end
-        }
-        return recent.asReversed()
     }
 
     // ---- Planning mode ---------------------------------------------------

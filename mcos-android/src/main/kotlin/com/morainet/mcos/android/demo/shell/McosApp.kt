@@ -36,6 +36,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -45,6 +46,7 @@ import com.morainet.mcos.android.demo.McosSpace
 import com.morainet.mcos.android.demo.McosTheme
 import com.morainet.mcos.android.demo.McosWarningColor
 import com.morainet.mcos.android.demo.chat.AgentPage
+import com.morainet.mcos.android.demo.chat.ChatImageStore
 import com.morainet.mcos.android.demo.chat.TaskLibraryPage
 import com.morainet.mcos.android.demo.chat.TaskMenu
 import com.morainet.mcos.android.demo.marketplace.MarketplaceCard
@@ -65,8 +67,10 @@ import com.morainet.mcos.marketplace.PackageMetadata
 @Composable
 fun MCOSApp(deps: AppDeps, darkTheme: Boolean, onChangeDarkTheme: (Boolean) -> Unit) {
     val vm: McosViewModel = viewModel()
+    val context = LocalContext.current.applicationContext
+    val imageStore = remember(context) { ChatImageStore(context) }
     // Bind the process runtime to this Activity's view model.
-    LaunchedEffect(deps) { vm.attach(deps) }
+    LaunchedEffect(deps, imageStore) { vm.attach(deps, imageStore::read) }
     val ui by vm.uiState.collectAsState()
     val events by vm.events.collectAsState()
 
@@ -108,7 +112,8 @@ fun MCOSApp(deps: AppDeps, darkTheme: Boolean, onChangeDarkTheme: (Boolean) -> U
     var page by rememberSaveable { mutableStateOf(ShellPage.AGENT) }
     val goBack = { page = page.parent() }
     BackHandler(page != ShellPage.AGENT, onBack = goBack)
-    val canSwitch = ui.tasksReady && !ui.isExecuting && ui.pendingAgentPlan == null && ui.pendingConfirmation == null
+    val canSwitch = ui.tasksReady && !ui.isExecuting && !ui.preparingImage &&
+        ui.pendingAgentPlan == null && ui.pendingConfirmation == null
 
     McosTheme(dark = darkTheme) {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -132,6 +137,7 @@ fun MCOSApp(deps: AppDeps, darkTheme: Boolean, onChangeDarkTheme: (Boolean) -> U
                             vm = vm,
                             ui = ui,
                             canSwitch = canSwitch,
+                            imageStore = imageStore,
                             onOpenMenu = { page = ShellPage.MENU },
                             onConnectModel = { page = ShellPage.MODEL_SETUP },
                         )

@@ -26,9 +26,10 @@ internal data class SavedTask(
     val outcome: String? = null,
     val resumeAtMs: Long? = null,
     val unfinished: Boolean = false,
+    val draftImageId: String? = null,
 ) {
     val visibleInHistory: Boolean
-        get() = draft.isNotBlank() || messages.isNotEmpty() || resumeAtMs != null
+        get() = draft.isNotBlank() || draftImageId != null || messages.isNotEmpty() || resumeAtMs != null
 
     fun matches(query: String): Boolean = title.contains(query, ignoreCase = true) ||
         draft.contains(query, ignoreCase = true) ||
@@ -90,11 +91,13 @@ internal class TaskWorkspaceStore(private val secureStore: SecureStore) {
                     text = text,
                     useAsContext = message["useAsContext"]?.jsonPrimitive?.booleanOrNull ?: legacyDialogue,
                     retryOfUserMessageId = message["retryOfUserMessageId"]?.jsonPrimitive?.longOrNull,
+                    imageId = message["imageId"]?.jsonPrimitive?.contentOrNull,
                 )
             },
             outcome = outcome,
             resumeAtMs = entry["resumeAtMs"]?.jsonPrimitive?.longOrNull,
             unfinished = unfinished,
+            draftImageId = entry["draftImageId"]?.jsonPrimitive?.contentOrNull,
         )
     }
 
@@ -102,6 +105,7 @@ internal class TaskWorkspaceStore(private val secureStore: SecureStore) {
         put("id", task.id)
         put("title", task.title)
         put("draft", task.draft)
+        task.draftImageId?.let { put("draftImageId", it) }
         task.outcome?.let { put("outcome", it) }
         task.resumeAtMs?.let { put("resumeAtMs", it) }
         put("unfinished", task.unfinished)
@@ -113,6 +117,7 @@ internal class TaskWorkspaceStore(private val secureStore: SecureStore) {
                     put("text", message.text)
                     put("useAsContext", message.useAsContext)
                     message.retryOfUserMessageId?.let { put("retryOfUserMessageId", it) }
+                    message.imageId?.let { put("imageId", it) }
                 })
             }
         })
