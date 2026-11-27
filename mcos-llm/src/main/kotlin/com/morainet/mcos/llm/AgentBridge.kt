@@ -139,6 +139,14 @@ sealed class AgentTurnResult {
         override val headline: String get() = question
     }
 
+    /** A conversational answer that requires no Runtime execution. */
+    data class AnswerDelta(val text: String) : AgentTurnResult()
+
+    /** A completed conversational answer. */
+    data class Answer(val text: String) : AgentTurnResult(), TerminalResult {
+        override val headline: String get() = text
+    }
+
     /**
      * The loop declined. `category` is machine-readable:
      * `QUOTA` (agent cap exceeded), `POLICY` (planner refusal),

@@ -27,7 +27,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.morainet.mcos.android.demo.McosColor
 import com.morainet.mcos.android.demo.McosRadius
 import com.morainet.mcos.android.demo.McosSpace
 
@@ -77,7 +76,7 @@ fun PageHeader(
             Text(
                 description,
                 style = MaterialTheme.typography.bodySmall,
-                color = McosColor.fgMuted,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
@@ -91,7 +90,7 @@ fun SectionLabel(text: String) {
         style = MaterialTheme.typography.labelSmall,
         letterSpacing = 1.sp,
         fontWeight = FontWeight.SemiBold,
-        color = McosColor.fgDim,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(bottom = McosSpace.md),
     )
 }
@@ -117,6 +116,7 @@ fun QuietField(
         androidx.compose.ui.text.input.VisualTransformation.None,
     trailing: @Composable (() -> Unit)? = null,
 ) {
+    val palette = MaterialTheme.colorScheme
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
@@ -131,7 +131,7 @@ fun QuietField(
         placeholder = {
             Text(
                 placeholder,
-                style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp, color = McosColor.fgDim),
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp, color = palette.onSurfaceVariant),
             )
         },
         shape = RoundedCornerShape(McosRadius.md),
@@ -142,9 +142,9 @@ fun QuietField(
         colors = OutlinedTextFieldDefaults.colors(
             focusedBorderColor = Color.Transparent,
             unfocusedBorderColor = Color.Transparent,
-            focusedContainerColor = McosColor.surfaceAlt,
-            unfocusedContainerColor = McosColor.surfaceAlt,
-            cursorColor = MaterialTheme.colorScheme.primary,
+            focusedContainerColor = palette.surfaceVariant,
+            unfocusedContainerColor = palette.surfaceVariant,
+            cursorColor = palette.primary,
         ),
     )
 }
@@ -159,7 +159,7 @@ fun StatusDot(color: Color, text: String) {
         Text(
             text,
             style = MaterialTheme.typography.labelSmall,
-            color = McosColor.fgMuted,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }

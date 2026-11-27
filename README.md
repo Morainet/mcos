@@ -49,7 +49,7 @@ Presets submit command requests directly. For natural language, a configured mod
 
 ## Quick Start
 
-Open the [MCOS Android app](./mcos-android/README.md) and try **Export the latest completed inspection** on the Agent home screen. The sample works before you connect a model. Enable a model in Settings to enter your own goals.
+Open the [MCOS Android app](./mcos-android/README.md), open the workspace menu in the upper-left corner of the conversation, and choose **Export the latest completed inspection**. The sample runs without a model. Open **Model settings** from the same menu to connect a model and submit your own tasks.
 
 The App owns task submission, approval, and results. The developer-only [ADB host](./tools/mcos-device/README.md) can provide an inspection tool to the Agent on authorized debug devices.
 

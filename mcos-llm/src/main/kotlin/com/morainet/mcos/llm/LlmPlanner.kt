@@ -59,6 +59,7 @@ import kotlinx.serialization.json.jsonPrimitive
  *        section of the system prompt. Prompt-level augmentation only — the
  *        command allow-list is unchanged; a skill just steers the model toward
  *        the commands already registered (Claude-style skill packages).
+ * @param allowConversationalReplies Accept plain replies in native tool-calling turns.
  */
 class LlmPlanner(
     private val provider: LlmProvider,
@@ -70,6 +71,7 @@ class LlmPlanner(
     private val recipes: List<Recipe> = emptyList(),
     private val classifier: UtteranceClassifier = UtteranceClassifier(),
     private val skills: List<Skill> = emptyList(),
+    private val allowConversationalReplies: Boolean = false,
 ) {
 
     private val recipeMatcher: RecipeMatcher = RecipeMatcher(recipes)
@@ -289,12 +291,13 @@ class LlmPlanner(
         naturalLanguage: String,
         mode: PlanMode? = null,
         extraContext: String? = null,
+        onTextDelta: (suspend (String) -> Unit)? = null,
     ): LlmPlan {
         val tools = buildToolDescriptors()
         if (mode == PlanMode.LATENCY_TIERED) {
             return planTiered(naturalLanguage, tools, extraContext)
         }
-        return runLlmChain(listOf(provider) + fallbacks, naturalLanguage, tools, extraContext)
+        return runLlmChain(listOf(provider) + fallbacks, naturalLanguage, tools, extraContext, onTextDelta)
     }
 
     /**
@@ -406,6 +409,7 @@ class LlmPlanner(
         naturalLanguage: String,
         tools: List<ToolDescriptor>,
         extraContext: String? = null,
+        onTextDelta: (suspend (String) -> Unit)? = null,
     ): LlmPlan {
         var lastErr: LlmResponse.Err? = null
         var attemptedIds = mutableListOf<String>()
@@ -439,7 +443,17 @@ class LlmPlanner(
             attemptedIds += p.id
             if (p.tier == ProviderTier.ON_DEVICE) triedOnDevice = true
             val mode = resolveMode(p)
+            if (mode == PlanMode.NATIVE_TOOL_CALL && allowConversationalReplies && tools.isEmpty()) {
+                return replyWithoutTools(p, naturalLanguage, onTextDelta)
+            }
             val messages = when (mode) {
+                PlanMode.NATIVE_TOOL_CALL -> listOf(
+                    ChatMessage(
+                        "system",
+                        if (allowConversationalReplies) buildConversationPrompt() else buildSystemPrompt(),
+                    ),
+                    ChatMessage("user", userContent),
+                )
                 PlanMode.CONSTRAINED ->
                     listOf(
                         ChatMessage("system", buildSystemPrompt(mode)),
@@ -453,10 +467,29 @@ class LlmPlanner(
             }
             when (mode) {
                 PlanMode.NATIVE_TOOL_CALL -> {
-                    val response = p.toolCall(messages, tools)
+                    var streamedText = false
+                    val response = if (allowConversationalReplies && onTextDelta != null && p is StreamingLlmProvider) {
+                        p.streamToolCall(messages, tools) { delta ->
+                            streamedText = true
+                            onTextDelta(delta)
+                        }
+                    } else {
+                        p.toolCall(messages, tools)
+                    }
                     when (response) {
                         is ToolCallResponse.Ok -> {
                             if (response.toolCalls.isEmpty()) {
+                                if (allowConversationalReplies) {
+                                    response.content?.trim()?.takeIf { it.isNotEmpty() }?.let { answer ->
+                                        return LlmPlan(
+                                            commands = emptyList(), rawDsl = "", providerId = p.id,
+                                            planMode = mode, reply = answer,
+                                        )
+                                    }
+                                    if (response.finishReason == "stop") {
+                                        return replyWithoutTools(p, naturalLanguage, onTextDelta)
+                                    }
+                                }
                                 return LlmPlan(
                                     commands = emptyList(),
                                     rawDsl = "",
@@ -477,8 +510,13 @@ class LlmPlanner(
                             )
                         }
                         is ToolCallResponse.Err -> {
+                            if (allowConversationalReplies && !streamedText &&
+                                response.code == LlmErrorCode.EMPTY_RESPONSE
+                            ) {
+                                return replyWithoutTools(p, naturalLanguage, onTextDelta)
+                            }
                             lastErr = LlmResponse.Err(response.code, response.message, response.retryable)
-                            if (!response.retryable) break // fatal: no point falling back
+                            if (!response.retryable || streamedText) break
                         }
                     }
                 }
@@ -525,6 +563,40 @@ class LlmPlanner(
             error = lastErr,
             providerId = attemptedIds.lastOrNull()
         )
+    }
+
+    private suspend fun buildConversationPrompt(): String = buildString {
+        appendLine("You are MCOS, a mobile assistant. Answer general questions and writing requests directly.")
+        appendLine("For requests that need device data or actions, call only the provided tools.")
+        appendLine("Never claim an action succeeded unless the supplied probe results confirm it.")
+        appendLine("If a needed tool is unavailable, say so. Reply in the user's language.")
+        appendLine(buildMemorySection())
+        append(buildSkillsSection())
+    }
+
+    private suspend fun replyWithoutTools(
+        provider: LlmProvider,
+        request: String,
+        onTextDelta: (suspend (String) -> Unit)?,
+    ): LlmPlan {
+        val messages = listOf(
+            ChatMessage(
+                "system",
+                "You are MCOS. Answer questions and writing requests directly in the user's language. " +
+                    "You have no device tools for this reply. If asked to perform or verify a device action, " +
+                    "explain that you cannot do it in this reply. Never claim the action ran.",
+            ),
+            ChatMessage("user", request),
+        )
+        val response = if (onTextDelta != null && provider is StreamingLlmProvider) {
+            provider.streamChat(messages, onTextDelta)
+        } else {
+            provider.chat(messages)
+        }
+        return when (response) {
+            is LlmResponse.Ok -> LlmPlan(emptyList(), "", providerId = provider.id, reply = response.content)
+            is LlmResponse.Err -> LlmPlan(emptyList(), "", providerId = provider.id, error = response)
+        }
     }
 
     // ---- Planning mode ---------------------------------------------------

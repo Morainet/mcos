@@ -48,7 +48,7 @@ MCOS 让手机上的 Agent 调用宿主注册的能力，并通过审批、结�
 
 ## 快速开始
 
-打开 [MCOS Android App](./mcos-android/README.md)，在 Agent 首页点击 **Export the latest completed inspection**。示例可直接在手机上完成，连接模型后可以输入自己的任务。
+打开 [MCOS Android App](./mcos-android/README.md)，在对话页左上角打开工作区菜单，选择 **Export the latest completed inspection**。示例可直接在手机上完成，也可以从菜单进入 **Model settings**，连接模型后输入自己的任务。
 
 任务提交、审批和结果都在 App 内完成。开发者可在授权的调试设备上连接 [ADB 宿主](./tools/mcos-device/README.md)，由 Agent 调用设备观察工具。
 

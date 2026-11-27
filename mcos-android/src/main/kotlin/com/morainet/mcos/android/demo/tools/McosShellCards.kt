@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.sp
 import com.morainet.mcos.android.demo.McosColor
 import com.morainet.mcos.android.demo.McosRadius
 import com.morainet.mcos.android.demo.McosSpace
+import com.morainet.mcos.android.demo.McosWarningColor
 import com.morainet.mcos.android.demo.shell.McosUiState
 import com.morainet.mcos.android.demo.shell.McosViewModel
 
@@ -62,7 +63,7 @@ internal fun StatusBar(
     ) {
         Icon(
             Icons.Default.Star, null,
-            tint = if (ui.pluginsLoaded) MaterialTheme.colorScheme.primary else McosColor.warn,
+            tint = if (ui.pluginsLoaded) MaterialTheme.colorScheme.primary else McosWarningColor,
             modifier = Modifier.size(18.dp),
         )
         Spacer(Modifier.width(McosSpace.sm))
@@ -70,7 +71,7 @@ internal fun StatusBar(
             "Plugins (${ui.commandIds.size} commands)" +
                 if (!ui.pluginsLoaded) " — not loaded" else "",
             style = MaterialTheme.typography.labelMedium,
-            color = if (ui.pluginsLoaded) MaterialTheme.colorScheme.primary else McosColor.warn,
+            color = if (ui.pluginsLoaded) MaterialTheme.colorScheme.primary else McosWarningColor,
         )
         Spacer(Modifier.weight(1f))
         TextButton(onClick = onToggle, contentPadding = PaddingValues(horizontal = McosSpace.md)) {
@@ -96,7 +97,7 @@ internal fun StatusBar(
                     Text(
                         "… +${ui.commandIds.size - 24} more",
                         style = MaterialTheme.typography.labelSmall,
-                        color = McosColor.fgDim,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
@@ -112,9 +113,10 @@ internal fun DslInputCard(
     vm: McosViewModel,
     ui: McosUiState,
 ) {
+    val palette = MaterialTheme.colorScheme
     Card(
         Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        colors = CardDefaults.cardColors(containerColor = palette.surface),
         shape = RoundedCornerShape(McosRadius.lg),
     ) {
         Column(Modifier.padding(McosSpace.xl)) {
@@ -134,7 +136,7 @@ internal fun DslInputCard(
                     it,
                     style = MaterialTheme.typography.labelSmall,
                     fontFamily = FontFamily.Monospace,
-                    color = if (it.startsWith("⚠")) McosColor.danger else MaterialTheme.colorScheme.secondary,
+                    color = if (it.startsWith("⚠")) palette.error else palette.secondary,
                     modifier = Modifier.padding(top = McosSpace.xs),
                 )
             }
@@ -147,14 +149,14 @@ internal fun DslInputCard(
                     onClick = { vm.run() },
                     enabled = !ui.isExecuting && ui.dslText.isNotBlank(),
                     shape = RoundedCornerShape(McosRadius.md),
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                    colors = ButtonDefaults.buttonColors(containerColor = palette.primary),
                 ) {
                     Icon(Icons.Default.PlayArrow, null, Modifier.size(18.dp))
                     Spacer(Modifier.width(McosSpace.sm))
                     if (ui.isExecuting) {
                         CircularProgressIndicator(
                             Modifier.size(16.dp), strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.onPrimary,
+                            color = palette.onPrimary,
                         )
                         Spacer(Modifier.width(McosSpace.sm))
                     }
@@ -189,7 +191,7 @@ internal fun OutputLog(
             Text(
                 "${events.size} events",
                 style = MaterialTheme.typography.labelSmall,
-                color = McosColor.fgDim,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.weight(1f))
             TextButton(onClick = onClear, contentPadding = PaddingValues(horizontal = McosSpace.md)) {

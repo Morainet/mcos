@@ -54,11 +54,13 @@ sealed class ToolCallResponse {
      *        to answer with plain text instead.
      * @param finishReason Provider finish reason ("stop" | "tool_calls" | ...).
      * @param usage Token usage when the provider reports it.
+     * @param content Assistant text when the provider replies directly.
      */
     data class Ok(
         val toolCalls: List<ToolCall>,
         val finishReason: String = "tool_calls",
         val usage: TokenUsage? = null,
+        val content: String? = null,
     ) : ToolCallResponse()
 
     /** Failed call with error details. */

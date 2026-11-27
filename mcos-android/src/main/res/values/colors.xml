@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="mcos_window_bg">#F2F5F0</color>
+    <color name="mcos_window_bg">#FAFBFA</color>
+    <color name="mcos_window_bg_dark">#101114</color>
     <color name="mcos_splash_bg">#FFFFFF</color>
     <color name="mcos_launcher_background">#FFFFFF</color>
     <color name="mcos_mark_body">#17483B</color>

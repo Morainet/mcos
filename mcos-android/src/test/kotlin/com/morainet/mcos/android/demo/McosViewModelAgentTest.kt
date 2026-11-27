@@ -16,11 +16,13 @@ import com.morainet.mcos.runtime.core.ir.IrSequence
 import java.nio.file.Files
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -195,6 +197,27 @@ class McosViewModelAgentTest {
         withTimeout(5_000) { vm.uiState.first { it.lastAgentOutcome == "Battery checked" } }
         assertEquals(true, bridge.lastApproved)
         assertNull(vm.uiState.value.pendingAgentPlan)
+    }
+
+    @Test
+    fun `stopping a streamed answer preserves its text and message identity`() = runBlocking {
+        bridge.turnResults = flow {
+            emit(AgentTurnResult.AnswerDelta("Partial"))
+            emit(AgentTurnResult.AnswerDelta(" answer"))
+            awaitCancellation()
+        }
+        vm.onNlTextChange("Write an answer")
+        vm.agentTurn()
+        val partial = withTimeout(5_000) {
+            vm.uiState.first { it.streamingReply?.text == "Partial answer" }.streamingReply
+        }
+
+        vm.cancelAgentTurn()
+        val stopped = withTimeout(5_000) { vm.uiState.first { !it.isExecuting } }
+
+        assertNull(stopped.streamingReply)
+        assertEquals(listOf(partial), stopped.transcript.filter { it.role == ChatRole.AGENT })
+        assertTrue(stopped.transcript.any { it.text.contains("Task stopped") })
     }
 
     @Test

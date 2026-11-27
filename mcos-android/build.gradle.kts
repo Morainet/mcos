@@ -77,6 +77,8 @@ dependencies {
     implementation(libs.compose.ui.graphics)
     implementation(libs.compose.ui.tooling.preview)
     implementation(libs.compose.material3)
+    implementation(libs.commonmark.core)
+    implementation(libs.commonmark.tables)
     // Full Material icon set (PhotoCamera / QrCodeScanner / AutoAwesome …) — BOM-managed.
     implementation(libs.compose.icons.extended)
 

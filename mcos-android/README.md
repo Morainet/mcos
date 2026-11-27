@@ -12,9 +12,10 @@ adb install -r mcos-android/build/outputs/apk/debug/mcos-android-debug.apk
 adb shell am start -n com.morainet.mcos.android/.demo.MainActivity
 ```
 
-1. 在 Agent 首页点击 **Export the latest completed inspection**，在确认框核对并批准。任务结果包含经过核验的文件名和记录内容。
-2. 要运行自己的自然语言任务，通过 **Connect model** 配置模型。
-3. 从右上角的 **Task history** 搜索、重命名和回看任务。历史保存在本机加密存储。等待审批或执行时需要先处理当前任务再切换，重启后中断的审批需要重新发起。
+1. App 打开即进入对话。从输入区描述任务，点击发送按钮提交。首次提交时如果还未连接模型，App 会打开模型设置并保留草稿。
+2. 点击输入区的 **+** 打开 **Quick tasks**，或从左上角打开工作区菜单。选择 **Export the latest completed inspection** 可试用巡检示例，在确认框核对并批准后，对话会显示经过核验的文件名和记录内容。
+3. 从菜单打开 **Task history** 可搜索、重命名和回看任务。历史保存在本机加密存储。有草稿或消息时，点击右上角的 **New task** 可开启新任务。等待审批或执行时需要先处理当前任务再切换，重启后中断的审批需要重新发起。
+4. 菜单中的 **Model settings** 用于配置模型。**Capabilities** 管理技能、MCP 和设备权限。App 默认使用浅色，可在菜单中切换 **Dark mode**。选择会保存在本机。
 
 同一 Debug APK 还包含 `RecordExportActivity`。[基础宿主回归指南](../docs/zh/14-embedded-host.md)说明如何直接打开这页，[ADB CLI](../tools/mcos-device/README.md)以这页为回归目标。
 
@@ -26,7 +27,7 @@ adb shell am start -n com.morainet.mcos.android/.demo.MainActivity
 | `shell/McosApp.kt` | 页面导航、Activity 结果和权限桥、审批交互 |
 | `shell/McosViewModel.kt` | 任务协调、运行状态、模型配置和能力管理 |
 | `shell/TaskWorkspaceStore.kt`、`shell/AgentSuspensionStore.kt` | 加密任务历史、草稿和 Agent 暂停点 |
-| `chat/McosChatPage.kt`、`chat/McosTaskLibrary.kt` | 任务工作台与历史 |
+| `chat/` | 对话、工作区菜单与任务历史 |
 | `records/InspectionTask.kt`、`records/RecordExportPlugin.kt` | 内置巡检流程和应用自有记录命令 |
 | `device/AdbInspectionPlugin.kt` | Debug App 的固定 ADB 观察工具，按可调试标志注册 |
 | `src/debug/.../records/RecordExportActivity.kt`、`RecordDebugHost.kt` | 独立基础 Runtime 的 Debug 回归入口 |

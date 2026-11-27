@@ -46,7 +46,6 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.morainet.mcos.android.demo.McosColor
 import com.morainet.mcos.android.demo.McosRadius
 import com.morainet.mcos.android.demo.McosSpace
 import com.morainet.mcos.android.demo.shell.LlmVendorUi
@@ -109,16 +108,17 @@ private fun VendorCard(
     onEndpointChange: (String) -> Unit,
     onProbe: () -> Unit,
 ) {
+    val palette = MaterialTheme.colorScheme
     var expanded by remember { mutableStateOf(selected && row.apiKey.isBlank()) }
     var revealKey by remember { mutableStateOf(false) }
 
     Surface(
         Modifier.fillMaxWidth().animateContentSize(),
         shape = RoundedCornerShape(McosRadius.lg),
-        color = MaterialTheme.colorScheme.surface,
+        color = palette.surface,
         border = BorderStroke(
             width = if (selected) 1.5.dp else 1.dp,
-            color = if (selected) McosColor.border else McosColor.borderSoft,
+            color = if (selected) palette.outline else palette.outlineVariant,
         ),
     ) {
         Column(Modifier.padding(McosSpace.xl)) {
@@ -129,28 +129,29 @@ private fun VendorCard(
                 RadioButton(
                     selected = selected,
                     onClick = onSelect,
-                    colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary),
+                    colors = RadioButtonDefaults.colors(selectedColor = palette.primary),
                 )
                 Column(Modifier.weight(1f)) {
                     Text(
                         row.vendor.name,
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurface,
+                        color = palette.onSurface,
                     )
                     Spacer(Modifier.height(2.dp))
                     val (dot, statusText) = when {
-                        healthy == true -> McosColor.success to "ready · ${row.model}"
-                        healthy == false -> McosColor.danger to "down · ${healthError ?: "probe failed"}"
-                        row.apiKey.isNotBlank() || row.vendor.keyOptional -> McosColor.info to "configured · ${row.model}"
-                        else -> McosColor.fgDim to "no key"
+                        healthy == true -> palette.primary to "ready · ${row.model}"
+                        healthy == false -> palette.error to "down · ${healthError ?: "probe failed"}"
+                        row.apiKey.isNotBlank() || row.vendor.keyOptional ->
+                            palette.secondary to "configured · ${row.model}"
+                        else -> palette.onSurfaceVariant to "no key"
                     }
                     StatusDot(color = dot, text = statusText)
                 }
                 Text(
                     if (expanded) "Hide" else "Edit",
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = palette.primary,
                     modifier = Modifier
                         .clickable { expanded = !expanded }
                         .padding(horizontal = McosSpace.lg, vertical = McosSpace.md),
@@ -171,7 +172,7 @@ private fun VendorCard(
                             Icon(
                                 if (revealKey) Icons.Default.VisibilityOff else Icons.Default.Visibility,
                                 contentDescription = if (revealKey) "Hide key" else "Show key",
-                                tint = McosColor.fgDim,
+                                tint = palette.onSurfaceVariant,
                                 modifier = Modifier.size(18.dp),
                             )
                         }
@@ -196,11 +197,11 @@ private fun VendorCard(
                                     Text(m, style = MaterialTheme.typography.labelSmall)
                                 },
                                 shape = RoundedCornerShape(McosRadius.pill),
-                                border = BorderStroke(1.dp, McosColor.border),
+                                border = BorderStroke(1.dp, palette.outline),
                                 colors = FilterChipDefaults.filterChipColors(
-                                    containerColor = MaterialTheme.colorScheme.surface,
-                                    selectedContainerColor = MaterialTheme.colorScheme.primary,
-                                    selectedLabelColor = McosColor.onAccent,
+                                    containerColor = palette.surface,
+                                    selectedContainerColor = palette.primary,
+                                    selectedLabelColor = palette.onPrimary,
                                 ),
                             )
                         }
@@ -221,12 +222,12 @@ private fun VendorCard(
                         onClick = onProbe,
                         enabled = !probing && row.usable,
                         shape = RoundedCornerShape(McosRadius.md),
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                        colors = ButtonDefaults.buttonColors(containerColor = palette.primary),
                     ) {
                         if (probing) {
                             CircularProgressIndicator(
                                 Modifier.size(14.dp), strokeWidth = 2.dp,
-                                color = McosColor.onAccent,
+                                color = palette.onPrimary,
                             )
                             Spacer(Modifier.width(McosSpace.sm))
                             Text("Testing…")
@@ -244,7 +245,7 @@ private fun VendorCard(
                         Text(
                             if (row.vendor.custom) "enter endpoint + model + key" else "enter an API key",
                             style = MaterialTheme.typography.labelSmall,
-                            color = McosColor.fgDim,
+                            color = palette.onSurfaceVariant,
                         )
                     }
                 }
@@ -259,7 +260,7 @@ private fun FieldLabel(text: String) {
         text,
         style = MaterialTheme.typography.labelSmall,
         fontWeight = FontWeight.Medium,
-        color = McosColor.fgMuted,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(bottom = McosSpace.sm, start = McosSpace.xs),
     )
 }

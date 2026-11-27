@@ -2,6 +2,7 @@ package com.morainet.mcos.llm
 
 import java.net.http.HttpTimeoutException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
 import java.net.ConnectException
 import java.io.IOException
@@ -54,6 +55,23 @@ interface LlmHttpTransport {
         connectTimeoutMs: Long,
         requestTimeoutMs: Long,
     ): HttpTransportResponse
+}
+
+/** Optional streaming support for Android and other hosts that can consume SSE incrementally. */
+interface StreamingLlmHttpTransport : LlmHttpTransport {
+    fun postEvents(
+        url: String,
+        apiKey: String,
+        body: String,
+        connectTimeoutMs: Long,
+        requestTimeoutMs: Long,
+    ): Flow<LlmStreamFrame>
+}
+
+sealed interface LlmStreamFrame {
+    data class Data(val value: String) : LlmStreamFrame
+    /** A complete JSON response or HTTP error sent instead of an event stream. */
+    data class Response(val value: HttpTransportResponse) : LlmStreamFrame
 }
 
 /**

@@ -32,7 +32,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.morainet.mcos.android.demo.McosColor
 import com.morainet.mcos.android.demo.McosRadius
 import com.morainet.mcos.android.demo.McosSpace
 import com.morainet.mcos.android.demo.shell.McosUiState
@@ -102,18 +101,19 @@ internal fun SkillsPage(
 
 @Composable
 private fun EmptySkills() {
+    val palette = MaterialTheme.colorScheme
     Column(
         Modifier.fillMaxWidth().padding(vertical = McosSpace.xxl),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        IconBadge(icon = Icons.Default.Extension, tint = McosColor.fgDim, size = 48, iconSize = 24)
+        IconBadge(icon = Icons.Default.Extension, tint = palette.onSurfaceVariant, size = 48, iconSize = 24)
         Spacer(Modifier.height(McosSpace.lg))
-        Text("No skills yet", style = MaterialTheme.typography.titleMedium, color = McosColor.fgMuted)
+        Text("No skills yet", style = MaterialTheme.typography.titleMedium, color = palette.onSurfaceVariant)
         Spacer(Modifier.height(McosSpace.xs))
         Text(
             "Paste a SKILL.md below to teach MCOS a new trick.",
             style = MaterialTheme.typography.bodySmall,
-            color = McosColor.fgDim,
+            color = palette.onSurfaceVariant,
         )
         Spacer(Modifier.height(McosSpace.xl))
     }
@@ -125,20 +125,21 @@ private fun SkillCard(
     onToggle: (Boolean) -> Unit,
     onRemove: () -> Unit,
 ) {
+    val palette = MaterialTheme.colorScheme
     Surface(
         Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(McosRadius.lg),
-        color = MaterialTheme.colorScheme.surface,
+        color = palette.surface,
         border = BorderStroke(
             width = 1.dp,
-            color = if (skill.enabled) McosColor.border else McosColor.borderSoft,
+            color = if (skill.enabled) palette.outline else palette.outlineVariant,
         ),
     ) {
         Column(Modifier.padding(McosSpace.xl)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconBadge(
                     icon = Icons.Default.Extension,
-                    tint = if (skill.enabled) MaterialTheme.colorScheme.primary else McosColor.fgDim,
+                    tint = if (skill.enabled) palette.primary else palette.onSurfaceVariant,
                 )
                 Spacer(Modifier.width(McosSpace.lg))
                 Column(Modifier.weight(1f)) {
@@ -146,13 +147,13 @@ private fun SkillCard(
                         skill.name,
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurface,
+                        color = palette.onSurface,
                     )
                     if (skill.description.isNotBlank()) {
                         Text(
                             skill.description,
                             style = MaterialTheme.typography.labelSmall,
-                            color = McosColor.fgMuted,
+                            color = palette.onSurfaceVariant,
                             maxLines = 2,
                         )
                     }
@@ -162,7 +163,7 @@ private fun SkillCard(
                     Icon(
                         Icons.Default.DeleteOutline,
                         contentDescription = "Remove ${skill.name}",
-                        tint = McosColor.fgDim,
+                        tint = palette.onSurfaceVariant,
                         modifier = Modifier.size(20.dp),
                     )
                 }
@@ -171,7 +172,7 @@ private fun SkillCard(
                 Spacer(Modifier.height(McosSpace.md))
                 Surface(
                     shape = RoundedCornerShape(McosRadius.md),
-                    color = McosColor.surfaceAlt,
+                    color = palette.surfaceVariant,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text(
@@ -180,7 +181,7 @@ private fun SkillCard(
                             fontFamily = FontFamily.Monospace,
                             fontSize = 11.sp,
                         ),
-                        color = McosColor.fgMuted,
+                        color = palette.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = McosSpace.lg, vertical = McosSpace.md),
                     )
                 }

@@ -349,6 +349,122 @@ class AgentLoopTest {
     }
 
     @Test
+    fun `native assistant text renders as an answer without executing commands`() = runBlocking {
+        val gateway = FakeRuntimeGateway()
+        val requests = mutableListOf<String>()
+        val agent = conversationalAgent(
+            gateway,
+            requests,
+            HttpTransportResponse(200, """{"choices":[{"message":{"content":"AI models learn patterns."}}]}"""),
+        )
+
+        val result = agent.runTurn("text", "What is an AI model?").toList().single()
+
+        assertEquals(AgentTurnResult.Answer("AI models learn patterns."), result)
+        assertContains(requests.single(), "Answer general questions and writing requests directly")
+        assertTrue(gateway.probeCalls.isEmpty())
+        assertTrue(gateway.executedRequests.isEmpty())
+    }
+
+    @Test
+    fun `agent emits text before the stream ends and keeps only one final answer`() = runBlocking {
+        val gateway = FakeRuntimeGateway()
+        val results = mutableListOf<AgentTurnResult>()
+        val transport = object : StreamingLlmHttpTransport {
+            override fun postEvents(
+                url: String,
+                apiKey: String,
+                body: String,
+                connectTimeoutMs: Long,
+                requestTimeoutMs: Long,
+            ) = flow {
+                assertContains(body, "\"stream\":true")
+                emit(LlmStreamFrame.Data("""{"choices":[{"delta":{"content":"Hello"}}]}"""))
+                assertEquals(AgentTurnResult.AnswerDelta("Hello"), results.single())
+                emit(LlmStreamFrame.Data("""{"choices":[{"delta":{"content":" world"},"finish_reason":"stop"}]}"""))
+                emit(LlmStreamFrame.Data("[DONE]"))
+            }
+
+            override suspend fun postJson(
+                url: String, apiKey: String, body: String, connectTimeoutMs: Long, requestTimeoutMs: Long,
+            ): HttpTransportResponse = error("Unexpected buffered request")
+        }
+        val provider = OpenAiLlmProvider(LlmConfig(apiKey = "test"), transport)
+        val agent = McosAgent(
+            LlmPlanner(provider, registry, allowConversationalReplies = true), gateway, registry,
+        )
+
+        agent.runTurn("stream", "Say hello").toList(results)
+
+        assertEquals(
+            listOf(
+                AgentTurnResult.AnswerDelta("Hello"),
+                AgentTurnResult.AnswerDelta(" world"),
+                AgentTurnResult.Answer("Hello world"),
+            ),
+            results,
+        )
+        assertTrue(gateway.executedRequests.isEmpty())
+    }
+
+    @Test
+    fun `upstream no response retries once without device tools`() = runBlocking {
+        val gateway = FakeRuntimeGateway()
+        val requests = mutableListOf<String>()
+        val agent = conversationalAgent(
+            gateway,
+            requests,
+            HttpTransportResponse(400, """{"error":{"message":"模型无返回结果。No response, please try again."}}"""),
+            HttpTransportResponse(200, """{"choices":[{"message":{"content":"Here is a paper outline."}}]}"""),
+        )
+
+        val result = agent.runTurn("fallback", "Draft a paper outline").toList().single()
+
+        assertEquals(AgentTurnResult.Answer("Here is a paper outline."), result)
+        assertEquals(2, requests.size)
+        assertContains(requests[0], "\"tools\":")
+        assertFalse(requests[1].contains("\"tools\":"))
+        assertTrue(gateway.probeCalls.isEmpty())
+        assertTrue(gateway.executedRequests.isEmpty())
+    }
+
+    @Test
+    fun `conversational mode still requires approval for tool calls with assistant text`() = runBlocking {
+        val gateway = FakeRuntimeGateway()
+        val requests = mutableListOf<String>()
+        val response = """{"choices":[{"message":{"content":"I can enhance it.","tool_calls":[""" +
+            """{"id":"1","function":{"name":"photo.enhance","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}"""
+        val agent = conversationalAgent(gateway, requests, HttpTransportResponse(200, response))
+
+        val result = assertIs<AgentTurnResult.PlanReady>(agent.runTurn("write", "Enhance my photo").toList().single())
+
+        assertTrue(result.needsConfirmation)
+        assertTrue(gateway.probeCalls.isEmpty())
+        assertTrue(gateway.executedRequests.isEmpty())
+    }
+
+    private fun conversationalAgent(
+        gateway: FakeRuntimeGateway,
+        requests: MutableList<String>,
+        vararg responses: HttpTransportResponse,
+    ): McosAgent {
+        val transport = object : LlmHttpTransport {
+            override suspend fun postJson(
+                url: String,
+                apiKey: String,
+                body: String,
+                connectTimeoutMs: Long,
+                requestTimeoutMs: Long,
+            ): HttpTransportResponse {
+                requests += body
+                return responses[requests.lastIndex]
+            }
+        }
+        val provider = OpenAiLlmProvider(LlmConfig(apiKey = "test"), transport)
+        return McosAgent(LlmPlanner(provider, registry, allowConversationalReplies = true), gateway, registry)
+    }
+
+    @Test
     fun `A22-a compile that yields no commands surfaces as Refuse COMPILE_FAILED`() = runBlocking {
         // A plan that neither succeeds (no commands) nor carries a structured
         // Clarify/Refuse/Defer lands in the COMPILE_FAILED refuse category —

@@ -26,6 +26,14 @@ class AdbBridgeTest(unittest.TestCase):
                 ]
                 self.assertEqual(inspect_screen(device), "agent_workspace")
 
+    def test_title_free_workspace_recognizes_menu_and_filled_composer(self):
+        device = Mock()
+        device.observe.return_value = [
+            Element("node", {"content-desc": "Task menu", "package": PACKAGE}),
+            Element("node", {"content-desc": "Describe a task", "text": "Check my battery", "package": PACKAGE}),
+        ]
+        self.assertEqual(inspect_screen(device), "agent_workspace")
+
     def test_only_unanswered_uuid_requests_reach_adb(self):
         device = Mock()
         first = "11111111-1111-4111-8111-111111111111"

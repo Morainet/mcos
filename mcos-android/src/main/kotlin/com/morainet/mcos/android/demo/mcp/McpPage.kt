@@ -43,9 +43,9 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.morainet.mcos.android.demo.McosColor
 import com.morainet.mcos.android.demo.McosRadius
 import com.morainet.mcos.android.demo.McosSpace
+import com.morainet.mcos.android.demo.McosWarningColor
 import com.morainet.mcos.android.demo.shell.McosUiState
 import com.morainet.mcos.android.demo.shell.McosViewModel
 import com.morainet.mcos.android.demo.shell.McpServerUi
@@ -72,7 +72,7 @@ internal fun McpPage(
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         PageHeader(
             icon = Icons.Default.Hub,
-            tint = McosColor.info,
+            tint = MaterialTheme.colorScheme.secondary,
             title = "MCP Servers",
             description = "Bridge external tools as commands. Enable a server, then pick which of its tools to expose.",
         )
@@ -157,7 +157,7 @@ internal fun McpPage(
         Text(
             "HTTP servers only — stdio (command) entries are skipped.",
             style = MaterialTheme.typography.labelSmall,
-            color = McosColor.fgDim,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = McosSpace.sm, bottom = McosSpace.xl),
         )
     }
@@ -165,18 +165,19 @@ internal fun McpPage(
 
 @Composable
 private fun EmptyServers() {
+    val palette = MaterialTheme.colorScheme
     Column(
         Modifier.fillMaxWidth().padding(vertical = McosSpace.xxl),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        IconBadge(icon = Icons.Default.Dns, tint = McosColor.fgDim, size = 48, iconSize = 24)
+        IconBadge(icon = Icons.Default.Dns, tint = palette.onSurfaceVariant, size = 48, iconSize = 24)
         Spacer(Modifier.height(McosSpace.lg))
-        Text("No servers yet", style = MaterialTheme.typography.titleMedium, color = McosColor.fgMuted)
+        Text("No servers yet", style = MaterialTheme.typography.titleMedium, color = palette.onSurfaceVariant)
         Spacer(Modifier.height(McosSpace.xs))
         Text(
             "Add one below, or paste an mcp.json to import in bulk.",
             style = MaterialTheme.typography.bodySmall,
-            color = McosColor.fgDim,
+            color = palette.onSurfaceVariant,
         )
     }
 }
@@ -192,11 +193,11 @@ private fun McpServerCard(
         Modifier.fillMaxWidth().animateContentSize(),
         shape = RoundedCornerShape(McosRadius.lg),
         color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, McosColor.borderSoft),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Column(Modifier.padding(McosSpace.xl)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                IconBadge(icon = Icons.Default.Dns, tint = McosColor.info)
+                IconBadge(icon = Icons.Default.Dns, tint = MaterialTheme.colorScheme.secondary)
                 Spacer(Modifier.width(McosSpace.lg))
                 Column(Modifier.weight(1f)) {
                     Text(
@@ -208,11 +209,11 @@ private fun McpServerCard(
                     )
                     Spacer(Modifier.height(2.dp))
                     val (dot, statusText) = when {
-                        server.busy -> McosColor.info to "connecting…"
+                        server.busy -> MaterialTheme.colorScheme.secondary to "connecting…"
                         server.enabled && server.status?.startsWith("on") == true ->
-                            McosColor.success to (server.status ?: "online")
-                        server.enabled -> McosColor.warn to (server.status ?: "connecting…")
-                        else -> McosColor.fgDim to "off"
+                            MaterialTheme.colorScheme.primary to (server.status ?: "online")
+                        server.enabled -> McosWarningColor to (server.status ?: "connecting…")
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant to "off"
                     }
                     StatusDot(color = dot, text = statusText)
                 }
@@ -235,7 +236,7 @@ private fun McpServerCard(
                     Icon(
                         Icons.Default.DeleteOutline,
                         contentDescription = "Remove ${server.id}",
-                        tint = McosColor.fgDim,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(20.dp),
                     )
                 }
@@ -244,7 +245,7 @@ private fun McpServerCard(
                 Spacer(Modifier.height(McosSpace.md))
                 Surface(
                     shape = RoundedCornerShape(McosRadius.md),
-                    color = McosColor.surfaceAlt,
+                    color = MaterialTheme.colorScheme.surfaceVariant,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Column(Modifier.padding(horizontal = McosSpace.lg, vertical = McosSpace.md)) {
@@ -258,14 +259,14 @@ private fun McpServerCard(
                             Icon(
                                 Icons.Default.ExpandMore,
                                 contentDescription = if (expanded) "Collapse" else "Expand",
-                                tint = McosColor.fgMuted,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(18.dp).rotate(if (expanded) 180f else 0f),
                             )
                             Spacer(Modifier.width(McosSpace.md))
                             Text(
                                 "${server.tools.size} tools",
                                 style = MaterialTheme.typography.labelMedium,
-                                color = McosColor.fgMuted,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                         if (expanded) {
@@ -290,6 +291,7 @@ private fun McpToolRow(
     busy: Boolean,
     onToggle: (Boolean) -> Unit,
 ) {
+    val palette = MaterialTheme.colorScheme
     Row(
         Modifier.fillMaxWidth().padding(vertical = McosSpace.xs),
         verticalAlignment = Alignment.CenterVertically,
@@ -300,10 +302,10 @@ private fun McpToolRow(
                 style = MaterialTheme.typography.bodySmall,
                 fontFamily = FontFamily.Monospace,
                 fontSize = 12.sp,
-                color = if (tool.mapped) MaterialTheme.colorScheme.onSurface else McosColor.fgDim,
+                color = if (tool.mapped) palette.onSurface else palette.onSurfaceVariant,
             )
             tool.description?.takeIf { it.isNotBlank() }?.let {
-                Text(it, style = MaterialTheme.typography.labelSmall, color = McosColor.fgDim, maxLines = 2)
+                Text(it, style = MaterialTheme.typography.labelSmall, color = palette.onSurfaceVariant, maxLines = 2)
             }
         }
         Switch(

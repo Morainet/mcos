@@ -21,8 +21,9 @@ def inspect_screen(device):
         return 'approval_required'
     if SAMPLE_TITLE in lines:
         return 'record_workspace'
-    agent_home = 'MCOS' in lines and (
-        'Describe a task' in lines or 'Describe a task' in labels or 'Task history' in labels
+    composer = 'Describe a task' in lines or 'Describe a task' in labels
+    agent_home = ('Task menu' in labels and composer) or (
+        'MCOS' in lines and (composer or 'Task history' in labels)
     )
     task_library = 'Tasks' in lines and 'Back to workspace' in labels
     if agent_home or task_library:

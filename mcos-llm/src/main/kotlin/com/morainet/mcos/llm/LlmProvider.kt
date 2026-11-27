@@ -25,6 +25,17 @@ sealed class LlmResponse {
     ) : LlmResponse()
 }
 
+/** A provider that can surface text fragments while preserving the final tool-calling result. */
+interface StreamingLlmProvider {
+    suspend fun streamChat(messages: List<ChatMessage>, onTextDelta: suspend (String) -> Unit): LlmResponse
+
+    suspend fun streamToolCall(
+        messages: List<ChatMessage>,
+        tools: List<ToolDescriptor>,
+        onTextDelta: suspend (String) -> Unit,
+    ): ToolCallResponse
+}
+
 /**
  * Result of an [LlmPlanner.plan] call: parsed commands ready for execution,
  * plus diagnostic information.
@@ -107,6 +118,8 @@ data class LlmPlan(
      * approval — so the agent's read-prefix/§14.1 invariants are untouched.
      */
     val parallel: Boolean = false,
+    /** A conversational answer, with no executable commands. */
+    val reply: String? = null,
 ) {
     /** True if the plan contains executable commands without errors. */
     val isSuccess: Boolean get() = error == null && commands.isNotEmpty()
@@ -203,6 +216,8 @@ enum class ProviderTier {
  * Standard error codes used by the planner / fallback chain (06 §13.2).
  */
 object LlmErrorCode {
+    const val EMPTY_RESPONSE = "LLM_EMPTY_RESPONSE"
+
     /**
      * Provider cannot handle the request with its current capabilities
      * (06 §13.2 `Refuse(CAPABILITY)`). On-device providers return this to

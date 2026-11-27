@@ -115,6 +115,7 @@ tasks.matching { it.name == "mergeDebugAndroidTestAssets" }.configureEach {
 }
 
 dependencies {
+    implementation(libs.okhttp)
     // MCOS internal modules. The SDK is the UI-free Android host runtime —
     // any app can embed it and ship its own UI (the demo shell in
     // :mcos-android shows how). No Compose/ViewModel dependencies here by

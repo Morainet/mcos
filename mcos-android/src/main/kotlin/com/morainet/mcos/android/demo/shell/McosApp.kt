@@ -6,35 +6,24 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.exclude
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.ime
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Extension
-import androidx.compose.material.icons.filled.Hub
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -46,17 +35,18 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.foundation.layout.Row
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.morainet.mcos.android.AppDeps
-import com.morainet.mcos.android.demo.McosColor
 import com.morainet.mcos.android.demo.McosSpace
+import com.morainet.mcos.android.demo.McosTheme
+import com.morainet.mcos.android.demo.McosWarningColor
 import com.morainet.mcos.android.demo.chat.AgentPage
+import com.morainet.mcos.android.demo.chat.TaskLibraryPage
+import com.morainet.mcos.android.demo.chat.TaskMenu
 import com.morainet.mcos.android.demo.marketplace.MarketplaceCard
 import com.morainet.mcos.android.demo.marketplace.MarketplaceViewModel
 import com.morainet.mcos.android.demo.marketplace.RecipeWizardDialog
@@ -67,12 +57,13 @@ import com.morainet.mcos.android.demo.skills.SkillsPage
 import com.morainet.mcos.android.demo.tools.DslInputCard
 import com.morainet.mcos.android.demo.tools.OutputLog
 import com.morainet.mcos.android.demo.tools.StatusBar
+import com.morainet.mcos.android.demo.ui.PageHeader
 import com.morainet.mcos.marketplace.PackageMetadata
 
 /** Routes the Agent workspace and capability settings, and hosts Runtime approval dialogs. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MCOSApp(deps: AppDeps) {
+fun MCOSApp(deps: AppDeps, darkTheme: Boolean, onChangeDarkTheme: (Boolean) -> Unit) {
     val vm: McosViewModel = viewModel()
     // Bind the process runtime to this Activity's view model.
     LaunchedEffect(deps) { vm.attach(deps) }
@@ -115,44 +106,71 @@ fun MCOSApp(deps: AppDeps) {
     LaunchedEffect(promptLauncher) { deps.permissionBridge.attach { promptLauncher.launch(it) } }
 
     var page by rememberSaveable { mutableStateOf(ShellPage.AGENT) }
-    BackHandler(page != ShellPage.AGENT) {
-        page = if (page == ShellPage.SKILLS || page == ShellPage.MCP) ShellPage.TOOLS else ShellPage.AGENT
-    }
+    val goBack = { page = page.parent() }
+    BackHandler(page != ShellPage.AGENT, onBack = goBack)
+    val canSwitch = ui.tasksReady && !ui.isExecuting && ui.pendingAgentPlan == null && ui.pendingConfirmation == null
 
-    _root_ide_package_.com.morainet.mcos.android.demo.McosTheme {
-        Scaffold(
-            // Full-screen immersive, no top bar (mainstream chat shells go
-            // edge-to-edge under the status bar). IME is deliberately EXCLUDED
-            // from these insets — the page container applies imePadding() once;
-            // doing it in both places double-lifts the content and opens a gap
-            // between the composer and the keyboard.
-            contentWindowInsets = WindowInsets.safeDrawing.exclude(WindowInsets.ime),
-            bottomBar = { McosNavBar(page = page, onSelect = { page = it }) },
-        ) { padding ->
+    McosTheme(dark = darkTheme) {
+        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             Crossfade(targetState = page, label = "shell-page") { current ->
-                Box(
+                Column(
                     Modifier
                         .fillMaxSize()
-                        .imePadding()
-                        .padding(padding)
+                        .safeDrawingPadding()
                         .padding(
                             horizontal = if (current == ShellPage.AGENT) McosSpace.xl else McosSpace.lg,
                             vertical = McosSpace.md
                         )
                 ) {
+                    if (current != ShellPage.AGENT && current != ShellPage.HISTORY) {
+                        IconButton(onClick = goBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        }
+                    }
                     when (current) {
                         ShellPage.AGENT -> AgentPage(
                             vm = vm,
                             ui = ui,
-                            onConnectModel = { page = ShellPage.SETTINGS },
+                            canSwitch = canSwitch,
+                            onOpenMenu = { page = ShellPage.MENU },
+                            onConnectModel = { page = ShellPage.MODEL_SETUP },
+                        )
+                        ShellPage.MENU -> TaskMenu(
+                            canRunSample = canSwitch && ui.taskResumeAtMs == null,
+                            onChangeDarkTheme = onChangeDarkTheme,
+                            onOpenHistory = {
+                                vm.searchTaskHistory("")
+                                page = ShellPage.HISTORY
+                            },
+                            onOpenModelSettings = { page = ShellPage.SETTINGS },
+                            onOpenCapabilities = { page = ShellPage.TOOLS },
+                            onRunSample = {
+                                page = ShellPage.AGENT
+                                vm.runInspectionTask()
+                            },
+                        )
+                        ShellPage.HISTORY -> TaskLibraryPage(
+                            ui = ui,
+                            canSwitch = canSwitch,
+                            onBack = goBack,
+                            onSearch = vm::searchTaskHistory,
+                            onRename = vm::renameTask,
+                            onNewTask = {
+                                vm.newTask()
+                                page = ShellPage.AGENT
+                            },
+                            onOpenTask = { id ->
+                                vm.selectTask(id)
+                                page = ShellPage.AGENT
+                            },
                         )
 
                         ShellPage.SKILLS -> SkillsPage(vm = vm, ui = ui)
                         ShellPage.MCP -> McpPage(vm = vm, ui = ui)
-                        ShellPage.TOOLS -> Column(Modifier.fillMaxSize().verticalScroll(_root_ide_package_.androidx.compose.foundation.rememberScrollState())) {
-                            com.morainet.mcos.android.demo.ui.PageHeader(
+                        ShellPage.TOOLS -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                            PageHeader(
                                 icon = Icons.Default.Extension,
-                                tint = McosColor.warn,
+                                tint = McosWarningColor,
                                 title = "Capabilities",
                                 description = "Manage tools, skills and device permissions.",
                             )
@@ -190,7 +208,7 @@ fun MCOSApp(deps: AppDeps) {
                             }
                         }
 
-                        ShellPage.SETTINGS -> SettingsPage(vm = vm, ui = ui)
+                        ShellPage.SETTINGS, ShellPage.MODEL_SETUP -> SettingsPage(vm = vm, ui = ui)
                     }
                 }
             }
@@ -222,7 +240,11 @@ fun MCOSApp(deps: AppDeps) {
                             Text(
                                 "Risk level: $risk",
                                 style = MaterialTheme.typography.labelMedium,
-                                color = if (risk == "destructive") _root_ide_package_.com.morainet.mcos.android.demo.McosColor.danger else _root_ide_package_.com.morainet.mcos.android.demo.McosColor.warn,
+                                color = if (risk == "destructive") {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    McosWarningColor
+                                },
                             )
                         }
                     }
@@ -286,8 +308,8 @@ fun MCOSApp(deps: AppDeps) {
                             )
                             meta.permissionsPreview.forEach { entry ->
                                 val tierColor = when (entry.riskTier) {
-                                    "destructive" -> _root_ide_package_.com.morainet.mcos.android.demo.McosColor.danger
-                                    "elevated" -> _root_ide_package_.com.morainet.mcos.android.demo.McosColor.warn
+                                    "destructive" -> MaterialTheme.colorScheme.error
+                                    "elevated" -> McosWarningColor
                                     else -> MaterialTheme.colorScheme.onSurface
                                 }
                                 Text(
@@ -299,7 +321,7 @@ fun MCOSApp(deps: AppDeps) {
                                     Text(
                                         "    “$it”",
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = _root_ide_package_.com.morainet.mcos.android.demo.McosColor.fgDim,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
                             }
@@ -317,7 +339,7 @@ fun MCOSApp(deps: AppDeps) {
                         Text(
                             "The artifact is verified (SHA-256 + publisher signature) before activation.",
                             style = MaterialTheme.typography.labelSmall,
-                            color = _root_ide_package_.com.morainet.mcos.android.demo.McosColor.fgDim,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 },
@@ -350,37 +372,12 @@ fun MCOSApp(deps: AppDeps) {
     }
 }
 
-/** The shell tabs (bottom navigation, ≤5 items). */
-enum class ShellPage(val title: String, val icon: ImageVector) {
-    AGENT("Agent", Icons.AutoMirrored.Filled.Chat),
-    SKILLS("Skills", Icons.Default.Extension),
-    MCP("MCP", Icons.Default.Hub),
-    TOOLS("Capabilities", Icons.Default.Extension),
-    SETTINGS("Settings", Icons.Default.Settings),
-}
+private enum class ShellPage {
+    AGENT, MENU, HISTORY, SETTINGS, MODEL_SETUP, TOOLS, SKILLS, MCP;
 
-@Composable
-private fun McosNavBar(page: ShellPage, onSelect: (ShellPage) -> Unit) {
-    Surface(color = MaterialTheme.colorScheme.surface) {
-        Column {
-            HorizontalDivider(color = McosColor.border)
-            NavigationBar(
-                modifier = Modifier.navigationBarsPadding().height(68.dp),
-                containerColor = MaterialTheme.colorScheme.surface,
-                windowInsets = WindowInsets(0),
-            ) {
-                listOf(ShellPage.AGENT, ShellPage.TOOLS, ShellPage.SETTINGS).forEach { item ->
-                    val selected = page == item ||
-                        (item == ShellPage.TOOLS && (page == ShellPage.SKILLS || page == ShellPage.MCP))
-                    NavigationBarItem(
-                        selected = selected,
-                        onClick = { onSelect(item) },
-                        icon = { Icon(item.icon, contentDescription = null) },
-                        label = { Text(item.title) },
-                        colors = NavigationBarItemDefaults.colors(indicatorColor = MaterialTheme.colorScheme.primaryContainer),
-                    )
-                }
-            }
-        }
+    fun parent(): ShellPage = when (this) {
+        SKILLS, MCP -> TOOLS
+        HISTORY, SETTINGS, TOOLS -> MENU
+        MENU, MODEL_SETUP, AGENT -> AGENT
     }
 }

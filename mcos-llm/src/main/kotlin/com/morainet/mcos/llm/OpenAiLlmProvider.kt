@@ -2,9 +2,11 @@ package com.morainet.mcos.llm
 
 import java.io.IOException
 import java.net.ConnectException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -29,21 +31,20 @@ open class OpenAiLlmProvider(
     protected val config: LlmConfig,
     private val transport: LlmHttpTransport = JdkLlmHttpTransport(),
     override val id: String = "openai",
-) : LlmProvider {
+) : LlmProvider, StreamingLlmProvider {
 
     override val capabilities: Set<Capability> =
         setOf(Capability.CHAT, Capability.TOOL_CALL, Capability.CONSTRAINED)
 
     /**
-     * Probe uses a minimal 1-token chat request to check connectivity
-     * without significant latency or cost.
+     * Probe uses a small token budget accepted by the configured chat model.
      */
     override suspend fun probe(): LlmProbeResult =
         withContext(Dispatchers.IO) {
             try {
                 val requestBody = buildJsonObject {
                     put("model", JsonPrimitive(config.model))
-                    put("max_tokens", JsonPrimitive(1))
+                    put("max_tokens", JsonPrimitive(32))
                     put("messages", buildJsonArray {
                         add(buildJsonObject {
                             put("role", JsonPrimitive("user"))
@@ -156,6 +157,77 @@ open class OpenAiLlmProvider(
             }
         }
 
+    override suspend fun streamChat(
+        messages: List<ChatMessage>,
+        onTextDelta: suspend (String) -> Unit,
+    ): LlmResponse {
+        if (transport !is StreamingLlmHttpTransport) return chat(messages)
+        return when (val response = stream(messages, emptyList(), onTextDelta)) {
+            is ToolCallResponse.Ok -> response.content?.takeIf { it.isNotBlank() }
+                ?.let { LlmResponse.Ok(it) }
+                ?: LlmResponse.Err(LlmErrorCode.EMPTY_RESPONSE, "The model returned no answer.", false)
+            is ToolCallResponse.Err -> LlmResponse.Err(response.code, response.message, response.retryable)
+        }
+    }
+
+    override suspend fun streamToolCall(
+        messages: List<ChatMessage>,
+        tools: List<ToolDescriptor>,
+        onTextDelta: suspend (String) -> Unit,
+    ): ToolCallResponse {
+        if (transport !is StreamingLlmHttpTransport) return toolCall(messages, tools)
+        return stream(messages, tools, onTextDelta)
+    }
+
+    private suspend fun stream(
+        messages: List<ChatMessage>,
+        tools: List<ToolDescriptor>,
+        onTextDelta: suspend (String) -> Unit,
+    ): ToolCallResponse = try {
+        val eventTransport = transport as StreamingLlmHttpTransport
+        val payload = if (tools.isEmpty()) buildRequestBody(messages) else buildToolCallRequestBody(messages, tools)
+        val json = Json.parseToJsonElement(payload).jsonObject
+        val body = JsonObject(json + ("stream" to JsonPrimitive(true))).toString()
+        val pending = OpenAiStream()
+        var nonStreaming: HttpTransportResponse? = null
+        eventTransport.postEvents(
+            config.endpoint, config.apiKey, body, config.connectTimeoutMs, config.requestTimeoutMs,
+        ).collect { frame ->
+            when (frame) {
+                is LlmStreamFrame.Response -> nonStreaming = frame.value
+                is LlmStreamFrame.Data -> {
+                    val data = frame.value
+                    if (data == "[DONE]") {
+                        pending.markDone()
+                    } else {
+                        pending.countFrame(data.length)
+                        val event = Json.parseToJsonElement(data).jsonObject
+                        if (event["error"] is JsonObject) {
+                            val error = parseProviderError(500, data)
+                            throw LlmTransportException(error.code, error.message, error.retryable)
+                        }
+                        val delta = event["choices"]?.jsonArray?.firstOrNull()?.jsonObject?.let(pending::receive)
+                        if (delta != null) onTextDelta(delta)
+                    }
+                }
+            }
+        }
+        val response = nonStreaming
+        when {
+            response == null -> pending.result()
+            response.statusCode == 200 -> parseToolCallResponse(response.body)
+            else -> parseToolCallError(response.statusCode, response.body)
+        }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: LlmTransportException) {
+        ToolCallResponse.Err(e.code, e.message, e.retryable)
+    } catch (e: IOException) {
+        ToolCallResponse.Err("LLM_NETWORK_ERROR", e.message ?: "Network error", true)
+    } catch (e: IllegalArgumentException) {
+        ToolCallResponse.Err("LLM_PARSE_ERROR", "The model returned an invalid stream.", false)
+    }
+
     // ---- Request building ------------------------------------------------
 
     private fun buildRequestBody(
@@ -228,14 +300,14 @@ open class OpenAiLlmProvider(
             val json = Json.parseToJsonElement(responseBody).jsonObject
             val choices = json["choices"]?.jsonArray
             val message = choices?.firstOrNull()?.jsonObject?.get("message")?.jsonObject
-            val content = message?.get("content")?.jsonPrimitive?.content
+            val content = message?.get("content")?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
 
             if (content != null) {
                 LlmResponse.Ok(content)
             } else {
                 LlmResponse.Err(
-                    "LLM_PARSE_ERROR",
-                    "Response missing 'choices[0].message.content'",
+                    LlmErrorCode.EMPTY_RESPONSE,
+                    "The model returned no answer.",
                     false
                 )
             }
@@ -275,7 +347,8 @@ open class OpenAiLlmProvider(
                 )
             }
 
-            ToolCallResponse.Ok(toolCalls = toolCalls, finishReason = finishReason, usage = usage)
+            val content = message?.get("content")?.jsonPrimitive?.contentOrNull
+            ToolCallResponse.Ok(toolCalls = toolCalls, finishReason = finishReason, usage = usage, content = content)
         } catch (e: Exception) {
             ToolCallResponse.Err(
                 "LLM_PARSE_ERROR",
@@ -286,25 +359,24 @@ open class OpenAiLlmProvider(
     }
 
     private fun parseToolCallError(statusCode: Int, responseBody: String): ToolCallResponse {
+        val error = parseProviderError(statusCode, responseBody)
+        return ToolCallResponse.Err(error.code, error.message, error.retryable)
+    }
+
+    protected fun parseErrorResponse(statusCode: Int, responseBody: String): LlmResponse =
+        parseProviderError(statusCode, responseBody)
+
+    private fun parseProviderError(statusCode: Int, responseBody: String): LlmResponse.Err {
         val errorMessage = try {
             val json = Json.parseToJsonElement(responseBody).jsonObject
             json["error"]?.jsonObject?.get("message")?.jsonPrimitive?.content
         } catch (_: Exception) {
             null
         }
-        return ToolCallResponse.Err(
-            "LLM_API_ERROR",
-            errorMessage ?: "HTTP $statusCode",
-            statusCode >= 500 // server errors are retryable
-        )
-    }
-
-    protected fun parseErrorResponse(statusCode: Int, responseBody: String): LlmResponse {
-        val errorMessage = try {
-            val json = Json.parseToJsonElement(responseBody).jsonObject
-            json["error"]?.jsonObject?.get("message")?.jsonPrimitive?.content
-        } catch (_: Exception) {
-            null
+        val emptyResponse = errorMessage?.startsWith("模型无返回结果") == true ||
+            errorMessage?.contains("No response, please try again", ignoreCase = true) == true
+        if (emptyResponse && statusCode !in 401..403 && statusCode != 429) {
+            return LlmResponse.Err(LlmErrorCode.EMPTY_RESPONSE, "The model returned no answer.", true)
         }
         return LlmResponse.Err(
             "LLM_API_ERROR",

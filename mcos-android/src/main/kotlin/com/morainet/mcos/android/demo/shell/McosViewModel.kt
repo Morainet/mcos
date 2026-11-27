@@ -31,6 +31,7 @@ import com.morainet.mcos.llm.AgentTurnResult
 import com.morainet.mcos.llm.ChatOrchestrator
 import com.morainet.mcos.llm.LlmConfig
 import com.morainet.mcos.llm.LlmPlanner
+import com.morainet.mcos.llm.LlmProbePolicy
 import com.morainet.mcos.llm.LlmProviderRegistry
 import com.morainet.mcos.llm.McosAgent
 import com.morainet.mcos.llm.OpenAiLlmProvider
@@ -134,6 +135,7 @@ data class McosUiState(
     val skillImportText: String = "",
     /** Typed conversation transcript — the chat page's primary view (presentation only). */
     val transcript: List<ChatMessage> = emptyList(),
+    val streamingReply: ChatMessage? = null,
     val tasksReady: Boolean = false,
     val activeTaskId: String = FIRST_TASK_ID,
     val taskHistory: List<TaskHistoryEntry> = emptyList(),
@@ -397,6 +399,17 @@ class McosViewModel : ViewModel() {
         rememberActiveTask()
     }
 
+    private fun finishReply(text: String) {
+        _uiState.update { state ->
+            val message = state.streamingReply?.copy(text = text) ?: ChatMessage(nextMsgId++, ChatRole.AGENT, text)
+            state.copy(
+                transcript = (state.transcript + message).takeLast(MAX_LOG_LINES),
+                streamingReply = null,
+            )
+        }
+        rememberActiveTask()
+    }
+
     private var nextMsgId = 0L
 
     private fun taskCanSwitch(): Boolean = _uiState.value.let {
@@ -627,7 +640,8 @@ class McosViewModel : ViewModel() {
                 if (llmRegistry.size == 0) {
                     _uiState.update { it.copy(providerHealth = emptyList()) }
                 } else {
-                    _uiState.update { it.copy(providerHealth = llmRegistry.probeAll()) }
+                    val health = llmRegistry.probeAll(LlmProbePolicy(probeTimeoutMs = 20_000))
+                    _uiState.update { it.copy(providerHealth = health) }
                 }
             } finally {
                 _uiState.update { it.copy(probing = false) }
@@ -1126,6 +1140,7 @@ class McosViewModel : ViewModel() {
             var readOnlyPlan = false
             bridge.runTurn(s.activeTaskId, goal).collect { result ->
                 if (result is AgentTurnResult.PlanReady && !result.needsConfirmation) {
+                    _uiState.update { it.copy(streamingReply = null) }
                     readOnlyPlan = true
                 } else {
                     handleAgentResult(result)
@@ -1206,6 +1221,7 @@ class McosViewModel : ViewModel() {
                 _uiState.update {
                     it.copy(
                         isExecuting = false, agentWorking = false, agentProgress = null,
+                        streamingReply = null,
                         pendingConfirmation = null, inspectionRecordId = null,
                     )
                 }
@@ -1259,6 +1275,7 @@ class McosViewModel : ViewModel() {
                 ),
                 registry = deps().registry,
                 skills = cachedSkills,
+                allowConversationalReplies = true,
             ),
             runtime = agentRuntime(),
             registry = deps().registry,
@@ -1276,9 +1293,16 @@ class McosViewModel : ViewModel() {
 
     /** Surface one streamed Agent state on the console (and dialogs). */
     private fun handleAgentResult(result: AgentTurnResult) {
+        if (result is AgentTurnResult.AnswerDelta) {
+            _uiState.update { state ->
+                val reply = state.streamingReply ?: ChatMessage(nextMsgId++, ChatRole.AGENT, "")
+                state.copy(streamingReply = reply.copy(text = reply.text + result.text), agentProgress = "Generating reply")
+            }
+            return
+        }
         // Non-terminal progress: log the detail, don't touch the outcome line.
         if (result is AgentTurnResult.Probing) {
-            _uiState.update { it.copy(agentProgress = "Checking device capabilities") }
+            _uiState.update { it.copy(agentProgress = "Checking device capabilities", streamingReply = null) }
             say(ChatRole.AGENT, result.observation)
             log("[${now()}] ⌖ probe: ${result.observation.replace("\n", " | ").take(120)}")
             log("[${now()}] ↻ ${result.nextAction}")
@@ -1287,6 +1311,14 @@ class McosViewModel : ViewModel() {
         // Terminal states carry a self-contained headline: record it verbatim
         // as the turn outcome, then log any state-specific detail below it.
         if (result is AgentTurnResult.TerminalResult) {
+            val partial = _uiState.value.streamingReply
+            if (partial != null && result !is AgentTurnResult.Answer) {
+                if (result is AgentTurnResult.Declined || result is AgentTurnResult.Refuse) {
+                    finishReply(partial.text)
+                } else {
+                    _uiState.update { it.copy(streamingReply = null) }
+                }
+            }
             _uiState.update {
                 it.copy(
                     lastAgentOutcome = result.headline,
@@ -1295,7 +1327,7 @@ class McosViewModel : ViewModel() {
             }
         }
         when (result) {
-            is AgentTurnResult.Probing -> Unit // handled above
+            is AgentTurnResult.Probing, is AgentTurnResult.AnswerDelta -> Unit // handled above
             is AgentTurnResult.PlanReady -> {
                 val preview = describeIr(result.ir)
                 _uiState.update { it.copy(pendingAgentPlan = preview) }
@@ -1307,6 +1339,7 @@ class McosViewModel : ViewModel() {
                 log("[${now()}] ? ${result.headline}")
                 say(ChatRole.AGENT, result.headline)
             }
+            is AgentTurnResult.Answer -> finishReply(result.text)
             is AgentTurnResult.Refuse -> {
                 log("[ERROR] ${result.headline}")
                 say(ChatRole.SYSTEM, result.headline)

@@ -140,16 +140,25 @@ class McosAgent(
                     // 1. Compile — folds this session's observations into the
                     //    prompt as extraContext (06 §11.1).
                     val context = sessions.observations(sessionId)
-                    val plan = planner.plan(userMessage, extraContext = context.ifBlank { null })
+                    val plan = planner.plan(userMessage, extraContext = context.ifBlank { null }) { delta ->
+                        emit(AgentTurnResult.AnswerDelta(delta))
+                    }
                     currentCoroutineContext().ensureActive()
 
                     // 2. Forward structured planner outcomes verbatim.
+                    plan.reply?.let { return@withTimeoutOrNull AgentTurnResult.Answer(it) }
                     plan.clarify?.let { return@withTimeoutOrNull AgentTurnResult.Clarify(it) }
                     plan.refuse?.let {
                         return@withTimeoutOrNull AgentTurnResult.Refuse(it.category ?: "POLICY", it.reason)
                     }
                     plan.defer?.let { return@withTimeoutOrNull suspendTurn(sessionId, it) }
                     if (!plan.isSuccess) {
+                        if (plan.error?.code == LlmErrorCode.EMPTY_RESPONSE) {
+                            return@withTimeoutOrNull AgentTurnResult.Refuse(
+                                category = LlmErrorCode.EMPTY_RESPONSE,
+                                reason = plan.error.message,
+                            )
+                        }
                         return@withTimeoutOrNull AgentTurnResult.Refuse(
                             category = "COMPILE_FAILED",
                             reason = plan.error?.message ?: plan.thoughts ?: "planning failed",

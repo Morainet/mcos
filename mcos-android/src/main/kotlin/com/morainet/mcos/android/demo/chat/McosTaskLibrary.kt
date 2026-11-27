@@ -48,7 +48,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.morainet.mcos.android.demo.McosColor
 import com.morainet.mcos.android.demo.shell.McosUiState
 import com.morainet.mcos.android.demo.shell.TASK_TITLE_LIMIT
 import com.morainet.mcos.android.demo.shell.TaskHistoryEntry
@@ -152,7 +151,7 @@ internal fun TaskHistoryRow(
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = if (current) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, McosColor.border),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         shape = RoundedCornerShape(16.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -165,7 +164,8 @@ internal fun TaskHistoryRow(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Box(
-                    Modifier.size(36.dp).background(McosColor.accentSoft, RoundedCornerShape(9.dp)),
+                    Modifier.size(36.dp)
+                        .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(9.dp)),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(Icons.Default.Description, contentDescription = null, modifier = Modifier.size(19.dp),

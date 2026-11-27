@@ -14,9 +14,10 @@ import androidx.core.splashscreen.SplashScreenViewProvider
 private const val MARK_BEFORE_FADE_MS = 205L
 private const val FADE_DURATION_MS = 135L
 
-internal fun SplashScreenViewProvider.animateToWorkspace() {
+internal fun SplashScreenViewProvider.animateToWorkspace(onFinished: () -> Unit) {
     if (!ValueAnimator.areAnimatorsEnabled()) {
         remove()
+        onFinished()
         return
     }
 
@@ -42,7 +43,10 @@ internal fun SplashScreenViewProvider.animateToWorkspace() {
     ObjectAnimator.ofFloat(window, View.ALPHA, 0f).apply {
         startDelay = if (mark == null) 0L else MARK_BEFORE_FADE_MS
         duration = FADE_DURATION_MS
-        doOnEnd { remove() }
+        doOnEnd {
+            remove()
+            onFinished()
+        }
         start()
     }
 }

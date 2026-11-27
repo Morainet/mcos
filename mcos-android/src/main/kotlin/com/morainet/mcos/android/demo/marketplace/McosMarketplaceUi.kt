@@ -41,9 +41,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.morainet.mcos.android.demo.McosColor
 import com.morainet.mcos.android.demo.McosRadius
 import com.morainet.mcos.android.demo.McosSpace
+import com.morainet.mcos.android.demo.McosWarningColor
 import com.morainet.mcos.marketplace.InstallResult
 import com.morainet.mcos.marketplace.InstallState
 import com.morainet.mcos.marketplace.PackageMetadata
@@ -68,6 +68,7 @@ internal fun MarketplaceCard(
     onToggle: () -> Unit,
     onInstallRequest: (PackageMetadata) -> Unit,
 ) {
+    val palette = MaterialTheme.colorScheme
     Column(Modifier.fillMaxWidth().padding(bottom = McosSpace.md)) {
         Row(
             Modifier.fillMaxWidth(),
@@ -77,13 +78,13 @@ internal fun MarketplaceCard(
                 "Marketplace",
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.tertiary,
+                color = palette.tertiary,
             )
             Spacer(Modifier.width(McosSpace.md))
             Text(
                 if (ui.installResults.isEmpty()) "" else "${ui.installResults.size} installed",
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.secondary,
+                color = palette.secondary,
             )
             Spacer(Modifier.weight(1f))
             TextButton(onClick = onToggle, contentPadding = PaddingValues(horizontal = McosSpace.md)) {
@@ -94,7 +95,7 @@ internal fun MarketplaceCard(
             var recipeMode by remember { mutableStateOf(false) }
             Card(
                 Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                colors = CardDefaults.cardColors(containerColor = palette.surface),
                 shape = RoundedCornerShape(McosRadius.lg),
             ) {
                 Column(Modifier.padding(McosSpace.xl)) {
@@ -110,7 +111,7 @@ internal fun MarketplaceCard(
                                     label,
                                     style = MaterialTheme.typography.labelMedium,
                                     fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (selected) MaterialTheme.colorScheme.primary else McosColor.fgDim,
+                                    color = if (selected) palette.primary else palette.onSurfaceVariant,
                                 )
                             }
                         }
@@ -140,13 +141,13 @@ internal fun MarketplaceCard(
                             enabled = !ui.searching && ui.baseUrl.isNotBlank(),
                             shape = RoundedCornerShape(McosRadius.md),
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.primary
+                                containerColor = palette.primary
                             ),
                         ) {
                             if (ui.searching) {
                                 CircularProgressIndicator(
                                     Modifier.size(16.dp), strokeWidth = 2.dp,
-                                    color = MaterialTheme.colorScheme.onPrimary,
+                                    color = palette.onPrimary,
                                 )
                                 Spacer(Modifier.width(McosSpace.sm))
                             }
@@ -157,7 +158,7 @@ internal fun MarketplaceCard(
                         Text(
                             it,
                             style = MaterialTheme.typography.labelSmall,
-                            color = McosColor.danger,
+                            color = palette.error,
                             modifier = Modifier.padding(top = McosSpace.xs),
                         )
                     }
@@ -165,7 +166,7 @@ internal fun MarketplaceCard(
                         Text(
                             it,
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.secondary,
+                            color = palette.secondary,
                             modifier = Modifier.padding(top = McosSpace.xs),
                         )
                     }
@@ -210,7 +211,7 @@ private fun PackageResultRow(
 
     Card(
         Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = McosColor.console),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         shape = RoundedCornerShape(McosRadius.sm),
     ) {
         Column(Modifier.padding(McosSpace.md)) {
@@ -224,7 +225,7 @@ private fun PackageResultRow(
                 Text(
                     "  v${meta.version}",
                     style = MaterialTheme.typography.labelSmall,
-                    color = McosColor.fgDim,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.weight(1f))
                 when {
@@ -266,7 +267,7 @@ private fun PackageResultRow(
             Text(
                 "${meta.publisherName} · ↓${meta.downloadCount} · ${meta.summary}",
                 style = MaterialTheme.typography.labelSmall,
-                color = McosColor.fgMuted,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 2,
             )
             if (meta.commandsPreview.isNotEmpty()) {
@@ -282,17 +283,17 @@ private fun PackageResultRow(
                 result is InstallResult.Installed -> Text(
                     "✓ INSTALLED · ${result.trustLevel} · ${result.commandsRegistered} command(s)",
                     style = MaterialTheme.typography.labelSmall,
-                    color = McosColor.success,
+                    color = MaterialTheme.colorScheme.primary,
                 )
                 result is InstallResult.Failed -> Text(
                     "✗ ${result.code}: ${result.reason}",
                     style = MaterialTheme.typography.labelSmall,
-                    color = McosColor.danger,
+                    color = MaterialTheme.colorScheme.error,
                 )
                 progress != null -> Text(
                     progress.state.name + (progress.message?.let { " — $it" } ?: ""),
                     style = MaterialTheme.typography.labelSmall,
-                    color = McosColor.warn,
+                    color = McosWarningColor,
                 )
                 else -> { /* nothing running */ }
             }
@@ -308,7 +309,7 @@ private fun RecipeResultRow(
 ) {
     Card(
         Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = McosColor.console),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         shape = RoundedCornerShape(McosRadius.sm),
     ) {
         Column(Modifier.padding(McosSpace.md)) {
@@ -322,7 +323,7 @@ private fun RecipeResultRow(
                 Text(
                     "  v${recipe.version}",
                     style = MaterialTheme.typography.labelSmall,
-                    color = McosColor.fgDim,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.weight(1f))
                 Button(
@@ -336,7 +337,7 @@ private fun RecipeResultRow(
                 Text(
                     it,
                     style = MaterialTheme.typography.labelSmall,
-                    color = McosColor.fgMuted,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2,
                 )
             }
@@ -413,14 +414,14 @@ internal fun RecipeWizardDialog(
                         Text(
                             "Missing plugin(s) — install these first:",
                             style = MaterialTheme.typography.labelMedium,
-                            color = McosColor.danger,
+                            color = MaterialTheme.colorScheme.error,
                         )
                         plan.missingDependencies.forEach { dep ->
                             val avail = dep.suggestedVersion?.let { " (available $it)" } ?: " (not in marketplace)"
                             Text(
                                 "• ${dep.pluginId}@${dep.range}$avail",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = McosColor.danger,
+                                color = MaterialTheme.colorScheme.error,
                             )
                         }
                     }
@@ -481,12 +482,12 @@ internal fun UpdateConsentDialog(
                 Text(
                     "This update requests new or elevated permissions:",
                     style = MaterialTheme.typography.labelMedium,
-                    color = McosColor.warn,
+                    color = McosWarningColor,
                 )
                 diff.added.forEach { entry ->
                     val tierColor = when (entry.riskTier) {
-                        "destructive" -> McosColor.danger
-                        "elevated" -> McosColor.warn
+                        "destructive" -> MaterialTheme.colorScheme.error
+                        "elevated" -> McosWarningColor
                         else -> MaterialTheme.colorScheme.onSurface
                     }
                     Text(
@@ -499,7 +500,7 @@ internal fun UpdateConsentDialog(
                     Text(
                         "Δ ${change.scope}: ${change.oldEntry.riskTier} → ${change.newEntry.riskTier}",
                         style = MaterialTheme.typography.bodySmall,
-                        color = McosColor.warn,
+                        color = McosWarningColor,
                     )
                 }
             }
