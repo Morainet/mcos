@@ -1,7 +1,7 @@
 # mcos-server
 
 Standalone, self-hosted sync endpoint for MCOS episodic memories. Implements
-the `SyncBlobTransport` REST contract ([07-memory.md §11.0](../../docs/zh/07-memory.md))
+the `SyncBlobTransport` REST contract ([07-memory.md §11.0](../docs/zh/07-memory.md))
 against a backing store of **opaque blobs** — the server treats every blob as
 opaque bytes and never parses, inspects or transforms payloads; decryption
 happens only on the device. The one exception is the **enterprise-policy
@@ -9,7 +9,7 @@ management channel** (see below), which the server validates on upload so a
 typo is refused with `400` instead of silently pushing clients into their
 fail-closed restricted mode.
 
-Zero third-party runtime dependencies (JDK `com.sun.net.httpserver` + NIO).
+The HTTP transport and file storage use the JDK (`com.sun.net.httpserver` and NIO). Policy parsing uses `mcos-security`.
 
 ## REST contract
 
@@ -29,7 +29,7 @@ allowlist prevents path traversal). Blobs are capped at 16 MiB.
 ## Enterprise policy channel
 
 `PUT|GET|DELETE /enterprise/policy` is the **"delivered via `mcos-server`"**
-arm of enterprise-policy distribution ([08-security.md §13.3](../../docs/en/08-security.md)).
+arm of enterprise-policy distribution ([08-security.md §13.3](../docs/en/08-security.md)).
 The server stores a single well-known `EnterprisePolicy` JSON document
 (atomic write, survives restarts) behind the same mandatory Bearer auth as the
 blob API:

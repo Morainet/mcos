@@ -704,7 +704,7 @@ The pipeline has a sharp transactional seam at **Stage 7 (Execute)**. Every stag
 
 ### 10.2 Failure Envelope
 
-> ✅ **Implementation status:** `retryable` and `details` are implemented — `CommandResult.Err(code, message, retryable, details: JsonObject)` lives in `mcos-sdk` and is populated by the Executor's structured error mapping. See [11-implementation-status.md](./11-implementation-status.md) §7.
+> ✅ **Implementation status:** `retryable` and `details` are implemented — `CommandResult.Err(code, message, retryable, details: JsonObject)` lives in `mcos-sdk` and is populated by the Executor's structured error mapping. See [`CommandResult.kt`](../../mcos-sdk/src/main/kotlin/com/morainet/mcos/sdk/CommandResult.kt).
 
 ```json
 {

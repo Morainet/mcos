@@ -4,7 +4,7 @@
 > Implementation-status note (kept current as code lands): the machine-checkable contract is the
 > executable interop suite in `mcos-index-server/src/test` (live server + the **real**
 > `MarketplaceIndex`/`JdkMarketplaceHttpTransport` client) plus the `mcos-conformance` "market"
-> suite that drives the shared review gate engine ([11-implementation-status.md](./11-implementation-status.md) item 52).
+> suite that drives the shared review gate engine.
 > An OpenAPI 3.1 `api/openapi.yaml` mirror (09 §11.5) is deferred until the endpoint surface
 > stabilises past the first operational release — the JVM interop tests are the live contract.
 
@@ -15,8 +15,7 @@ The public index server is the server half of the P3 marketplace. It hosts the
 (submission → CI gates 1–11 → human decision), the **key registry** and the
 **signed blocklist** that every client fetches.
 
-This document is the contract that `mcos-index-server` (this repo, zero third-party
-runtime dependencies) implements and that `MarketplaceIndex` (the shipped client,
+This document is the contract that `mcos-index-server` (using the JDK HTTP server and shared review components) implements and that `MarketplaceIndex` (the shipped client,
 `mcos-marketplace`) talks to. It mirrors the normative surface in
 [09-marketplace.md](./09-marketplace.md) §5, §6, §11, §14 and fills the server-only
 gaps (registry persistence, management API, key rotation runbook) that the client
@@ -24,7 +23,7 @@ document never needed to specify.
 
 > **Where the blob sync server fits:** `mcos-server` implements the *memory sync*
 > endpoint (07 §11). The index server is a separate process/role; they share only the
-> self-hosted deployment posture (zero third-party deps, `com.sun.net.httpserver`,
+> self-hosted deployment posture (`com.sun.net.httpserver`,
 > token auth, TLS at the reverse proxy). Run them as separate services.
 
 ## 2. Scope & honest boundaries (MVP)

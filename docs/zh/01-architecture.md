@@ -1,7 +1,6 @@
 # MCOS 系统架构
 
-> **近期架构入口：** [架构收敛与开发边界](./13-architecture-convergence.md)——宿主 SDK 定位、当前依赖与后续拆分顺序。
-
+> **历史设计参考。** 本页保留早期设计、术语和章节引用。实际模块、接线和迁移设计请看[当前架构](./13-architecture-convergence.md)，开发优先级请看[产品方向](./15-product-direction.md)。
 
 > **语言:** [English](../en/01-architecture.md) · 中文（当前）
 > **Status:** Draft
@@ -111,83 +110,13 @@ flowchart TB
 
 \* 无障碍（Accessibility）桥接是可选的、受到高度限制，并且不是首选的集成路径。
 
-### 3.1 包 → 模块对照（按实际实现）
+### 3.1 包 → 模块对照
 
-运行时族已拆分为职责聚焦的 Gradle 模块。自 2026-08-17 起每个模块独占
-`com.morainet.mcos.<module>.*` 根命名空间：`runtime.` 前缀仅保留给运行时
-内核（门面 `mcos-runtime` 与 `mcos-runtime-core`），security / llm /
-marketplace 等其余模块各自以模块名为根（见 §3.3）。映射由
-`PackageBoundariesTest` 强制执行。
-
-| 包 | Gradle 模块 | 依赖 |
-|----|------------|------|
-| `com.morainet.mcos.sdk` | `mcos-sdk` | — |
-| `com.morainet.mcos.security`（安全内核）· `security.audit` · `security.validate` · `security.permission` | `mcos-security` | sdk |
-| `com.morainet.mcos.runtime.core`：`core.api`（RuntimeGateway、RuntimeTypes、StubHostServices）及 `core.error` · `core.ir` · `core.events` · `core.registry` · `core.plugin` · `core.memory` · `core.executor` · `core.workflow` · `core.parse` | `mcos-runtime-core` | sdk、security |
-| `com.morainet.mcos.llm` | `mcos-llm` | sdk、runtime-core |
-| `com.morainet.mcos.marketplace` | `mcos-marketplace` | sdk、security、runtime-core |
-| `com.morainet.mcos.runtime`（bare）· `com.morainet.mcos.runtime.api`（McosRuntime facade、ConfirmationCoordinator、RunManager） | `mcos-runtime` | sdk、security、runtime-core、marketplace |
-| `com.morainet.mcos.android`（含 `host`） | `mcos-android-sdk` | sdk、security、runtime-core、runtime（facade）、llm、marketplace、内置插件 |
-| `com.morainet.mcos.android.demo` | `mcos-android`（演示壳 App） | mcos-android-sdk + sdk/security/runtime-core/runtime/llm/marketplace/plugin-mcp 直接边 |
-| `com.morainet.mcos.server` | `mcos-server` | runtime-core（仅 test） |
-| `com.morainet.mcos.plugin.*` | `plugins:mcos-plugin-*` | sdk |
+源码归属由 `PackageBoundariesTest` 校验。当前职责和入口见[架构文档](./13-architecture-convergence.md#需求从哪里改)。
 
 ### 3.2 模块依赖图
 
-```mermaid
-graph LR
-  SDK[mcos-sdk]
-  SEC[mcos-security]
-  CORE[mcos-runtime-core]
-  LLM[mcos-llm]
-  MKT[mcos-marketplace]
-  FACADE[mcos-runtime<br/>facade]
-  ASDK[mcos-android-sdk<br/>宿主 SDK，无 UI]
-  AND[mcos-android<br/>Compose 演示壳]
-  SRV[mcos-server]
-  PLUGINS[mcos-plugin-*]
-
-  SEC --> SDK
-  CORE --> SDK
-  CORE --> SEC
-  LLM --> SDK
-  LLM --> CORE
-  MKT --> SDK
-  MKT --> SEC
-  MKT --> CORE
-  FACADE --> SDK
-  FACADE --> SEC
-  FACADE --> CORE
-  FACADE --> MKT
-  ASDK --> SDK
-  ASDK --> SEC
-  ASDK --> CORE
-  ASDK --> FACADE
-  ASDK --> LLM
-  ASDK --> MKT
-  ASDK --> PLUGINS
-  AND --> ASDK
-  AND --> SDK
-  AND --> SEC
-  AND --> CORE
-  AND --> FACADE
-  AND --> LLM
-  AND --> MKT
-  SRV --> CORE
-  PLUGINS --> SDK
-```
-
-值得注意的边：
-
-- `mcos-llm` 与门面**互不依赖**：`ChatOrchestrator` 经 `runtime.core.api`
-  的 `RuntimeGateway` 端口（`execute()` + `observe()`，门面 `McosRuntime`
-  为规范实现）驱动内核——llm 与门面是内核的两个对等客户端，装配发生在
-  消费侧（如 `McosViewModel`），模块层面单向无环。
-- `mcos-android-sdk` 声明了全部直接边（sdk、security、core、facade、
-  llm、marketplace、内置插件），不依赖任何 `api` 透传；它**不含任何 UI
-  代码**——集成方 App 嵌入它并自研界面，`mcos-android` 是参考 Compose
-  演示壳（仅为其 ViewModel/测试代码用到的模块保留直接边，外加 MCP 适配
-  插件）；`mcos-server` 仅在 test 中依赖 core。
+直接依赖和目标架构见[当前 Gradle 依赖](./13-architecture-convergence.md#当前-gradle-依赖)。
 
 ### 3.3 模块边界规则
 
@@ -1040,11 +969,11 @@ enum class McosErrorCode(val retryableDefault: Boolean) {
 | 云端 | `mcos-server` | P3 |
 | 规格 | `docs/*` | ✅ 今日已存在 |
 
-模块依赖图的权威来源见 [REPOSITORIES.md](./REPOSITORIES.md)，各子系统分阶段见 [11-implementation-status.md](./11-implementation-status.md)。
+模块依赖图的权威来源见 [当前架构](./13-architecture-convergence.md)，各子系统的验证入口见[当前实现](./11-implementation-status.md)。
 
 ### 17.1 P1 实现清单
 
-将 [11-implementation-status.md §6](./11-implementation-status.md) 中的 10 步 P1 路径映射到本文档中规定它的章节：
+下面的表将早期 P1 开发路径映射到本设计稿的章节。
 
 | P1 步骤 | 本文档 § |
 |---------|-----------|

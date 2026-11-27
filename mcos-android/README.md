@@ -1,82 +1,43 @@
-# MCOS Android（演示壳）
+# MCOS Android Agent
 
-基于 `mcos-android-sdk` 的 Compose Material3 演示 App——终端风外壳，把宿主 SDK 的全部
-能力（DSL 执行、确认弹窗、Agent 循环、MCP 桥、marketplace 安装/Recipe 向导）以
-"纯渲染 Composable + 纯 JVM 可测 ViewModel" 的架构演示出来，供集成方照抄接线方式。
+`mcos-android` 是用户在手机上发起任务、审批和查看结果的 App，也是源码调试入口。用户描述目标后，模型从已注册命令中规划，Runtime 负责校验、权限、确认和执行。内置巡检预设可以直接运行。
 
-## 模块定位
+## 构建与体验
 
-- `applicationId com.morainet.mcos.android`，包名 `com.morainet.mcos.android.demo`
-  （保持 applicationId 不变以维持安装身份；宿主面全部由 SDK manifest merge 进来，
-  本模块 manifest 刻意极简）。
-- **可整体替换**：它只是参考 UI，宿主 SDK 不依赖它。
+需要 JDK 17 和 Android SDK Platform 35。最低运行版本为 API 26。
 
-## 入口链
-
-```
-McosApplication（实现 McosHostApp：CompositionRoot.create + RuntimeBootstrap.ensureRehydrated）
-  → MainActivity（唯一职责 setContent { MCOSApp(deps) }）
-  → shell/McosApp.kt MCOSApp（NavigationBar 5 tab + 页面路由 + 四个 AlertDialog）
+```bash
+sh gradlew :mcos-android:assembleDebug
+adb install -r mcos-android/build/outputs/apk/debug/mcos-android-debug.apk
+adb shell am start -n com.morainet.mcos.android/.demo.MainActivity
 ```
 
-## 源码结构（子包，包名统一 `com.morainet.mcos.android.demo`）
+1. 在 Agent 首页点击 **Export the latest completed inspection**，在确认框核对并批准。任务结果包含经过核验的文件名和记录内容。
+2. 要运行自己的自然语言任务，通过 **Connect model** 配置模型。
+3. 从右上角的 **Task history** 搜索、重命名和回看任务。历史保存在本机加密存储。等待审批或执行时需要先处理当前任务再切换，重启后中断的审批需要重新发起。
 
-```
-demo/
-├── MainActivity.kt · McosApplication.kt · McosTheme.kt   # 入口与共享主题（留根）
-├── shell/       McosApp.kt（导航 + 对话框）· McosViewModel.kt（架构核心）
-├── chat/        McosChatPage.kt
-├── skills/      SkillsPage（McosSkillsPage.kt）· SkillStore.kt（导入/持久化）
-├── mcp/         McpPage.kt（server 管理 + JSON 导入 + 逐工具勾选）
-├── tools/       McosShellCards.kt（StatusBar / DslInputCard / OutputLog 等）
-├── settings/    McosSettingsPage.kt · McosVendors.kt
-└── marketplace/ MarketplaceViewModel.kt · McosMarketplaceUi.kt
-```
+同一 Debug APK 还包含 `RecordExportActivity`。[基础宿主回归指南](../docs/zh/14-embedded-host.md)说明如何直接打开这页，[ADB CLI](../tools/mcos-device/README.md)以这页为回归目标。
 
-> 子包统一保留根包名 `…android.demo`，`PackageBoundariesTest` 按最长前缀匹配自动归属
-> 本模块,无需改健身测试。
+## 源码入口
 
-## UI 结构（NavigationBar 5 tab）
+| 位置 | 职责 |
+|---|---|
+| `McosApplication.kt`、`MainActivity.kt` | 进程级宿主装配、Compose 启动和系统闪屏接线 |
+| `shell/McosApp.kt` | 页面导航、Activity 结果和权限桥、审批交互 |
+| `shell/McosViewModel.kt` | 任务协调、运行状态、模型配置和能力管理 |
+| `shell/TaskWorkspaceStore.kt`、`shell/AgentSuspensionStore.kt` | 加密任务历史、草稿和 Agent 暂停点 |
+| `chat/McosChatPage.kt`、`chat/McosTaskLibrary.kt` | 任务工作台与历史 |
+| `records/InspectionTask.kt`、`records/RecordExportPlugin.kt` | 内置巡检流程和应用自有记录命令 |
+| `device/AdbInspectionPlugin.kt` | Debug App 的固定 ADB 观察工具，按可调试标志注册 |
+| `src/debug/.../records/RecordExportActivity.kt`、`RecordDebugHost.kt` | 独立基础 Runtime 的 Debug 回归入口 |
+| `settings/`、`tools/`、`skills/`、`mcp/`、`marketplace/` | 模型设置、能力管理与开发者界面 |
 
-| Tab | 页面文件 | 演示能力 |
-|-----|----------|----------|
-| **Chat** | chat/McosChatPage.kt | API key 管理（SecureStore）、provider 探活、NL→DSL 规划、Agent 模式;对话 + 事件日志 |
-| **Skills** | skills/McosSkillsPage.kt | Claude 风格 skill 包导入(SKILL.md / JSON 粘贴)、启用开关、删除、指令预览 —— 注入 planner 系统提示 |
-| **MCP** | mcp/McpPage.kt | server 增/删/开关/重连、**粘贴 `mcp.json` 批量导入**、展开后**逐个工具勾选** |
-| **Tools** | tools/McosShellCards.kt · marketplace/McosMarketplaceUi.kt | 插件状态 + 命令面板、marketplace 搜索/安装/卸载/Recipe、DSL 输入 + 实时 preview、事件流控制台 |
-| **Settings** | settings/McosSettingsPage.kt | LLM 厂商切换与凭据 |
-| 四个 AlertDialog | shell/McosApp.kt | 运行确认（08 §5）/ Agent 计划审批（06 §11）/ 安装权限预览 / Recipe 向导 + 更新权限 diff |
+源码包名是 `com.morainet.mcos.android.demo`，`applicationId` 是 `com.morainet.mcos.android`。可复用宿主适配见 [Android SDK](../mcos-android-sdk/README.md)，当前模块边界及迁移计划见[架构文档](../docs/zh/13-architecture-convergence.md)。
 
-## ViewModel（架构核心）
+## 验证
 
-- `McosViewModel`：`attach(deps)` 随 Activity onCreate 重绑；`run()`（preview→execute→observe）、
-  `chat()`（ChatOrchestrator + PromptInjectionDetector）、`agentTurn()/resumeAgentTurn()/
-  cancelAgentTurn()`（多轮 Agent）、`respondConfirmation()`；MCP 块只把 `McpServerController`
-  结果映射到 UI(含 `importMcpJson()`、逐工具 `setMcpToolEnabled()`)。`chat()/agentTurn()`
-  构建 planner 时懒读 `SkillStore.enabled()` 传入 `skills=`,skill 列表变更后经版本号使
-  agent bridge 重建。
-- `SkillStore`（skills/）：SecureStore key `skills` 存 JSON 列表(含 enabled);
-  `SkillParser` 识别 SKILL.md(YAML frontmatter + 正文)或 JSON,不引额外依赖。
-- `MarketplaceViewModel`：search/install/uninstall/searchRecipes/prepareRecipe/submitRecipe/
-  confirmUpdate；`registryRevision` 单调计数驱动命令面板刷新。
-- 测试全部纯 JVM（`McosViewModelAgentTest` 有 agentBridgeOverride 测试缝）。
-
-## 集成方必抄的接线
-
-```kotlin
-// Activity 桥（摘自 McosApp.kt）
-val launcher = rememberLauncherForActivityResult(deps.resultBridge.contract) { ... }
-deps.resultBridge.attach(launcher)
-val permLauncher = rememberLauncherForActivityResult(RequestPermission()) { ... }
-deps.permissionBridge.onResult = permLauncher::launch
-
-// MCP 桥（摘自 McosViewModel.kt DemoMcpBridge）
-McpAdapter.discover(deps.hostServices.net, McpServerConfig(id, endpoint, secretKey),
-    secretLookup = { key -> deps.hostServices.secureStore.get(key) })
+```bash
+sh gradlew :mcos-android:testDebugUnitTest :mcos-android:assembleDebug
 ```
 
-## 依赖
-
-- `mcos-android-sdk`（核心）+ 显式 `mcos-sdk`/`mcos-runtime`/`mcos-llm`/`mcos-marketplace`/
-  `mcos-runtime-core`/`mcos-security` + `plugins:mcos-plugin-mcp`
-- Compose BOM + Material3 + lifecycle-viewmodel-compose
+`McosViewModelAgentTest` 覆盖任务状态、审批、历史和内置巡检。`RecordExportIntegrationTest` 用 JVM 验证基础 Runtime 的审批和文件产物。手机 UI、ADB 连接和实际文件核验按对应设备指南验证。

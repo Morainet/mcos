@@ -7,7 +7,7 @@
 
 > **Inspiration:** Android Permission Model · iOS TCC (Transparency, Consent, Control) · OAuth2 scopes · Claude Code tool-use confirmation · ChatGPT plugin security review · OWASP MASVS (Mobile Application Security Verification Standard)
 
-> ✅ **Implementation status:** the Permission Kernel gates every Stage 6 decision **and persists its grant table**; enterprise policy (§13, incl. fail-closed parsing + file hot-reload) and the marketplace signing chain (Ed25519 / RSA-PSS-4096 artifact, blocklist & recipe verification) are implemented. Audit at-rest encryption is implemented (§14 — per-line AES-256-GCM `AuditCipher`, on by default on Android). Remaining 🟡: third-party process isolation (P3, §8). Status: [11-implementation-status.md](./11-implementation-status.md) §3.
+> **Implementation status**　The permission kernel, persisted grants, enterprise policy, and signature verification are implemented. The Android host encrypts audit lines at rest with AES-GCM. The full host can opt into Binder plugin-process isolation. See the [Android SDK guide](../../mcos-android-sdk/README.md) for coverage.
 
 ---
 

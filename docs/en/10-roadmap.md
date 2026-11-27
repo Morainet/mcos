@@ -1,5 +1,7 @@
 # MCOS Roadmap
 
+> **Historical design reference.** This page retains the original design, terminology, and section anchors. See the [current architecture](./13-architecture-convergence.md) for actual modules, wiring, and migration, and [product direction](./15-product-direction.md) for priorities.
+
 > **Status:** Draft  
 > **Version:** 0.1.0  
 > **Last Updated:** 2026-08-25  
@@ -179,9 +181,9 @@ Each phase has a **single primary metric** that serves as its exit gate. The pha
 - [x] Architecture docs set (`docs/00`–`10`)
 - [x] Golden DSL fixtures directory (`docs/fixtures/01`–`08`, positive + negative)
 - [x] CONTRIBUTING + LICENSE (Apache-2.0)
-- [x] Kotlin multi-module skeleton — **delivered in P1** (12 source modules matching [REPOSITORIES.md](./REPOSITORIES.md))
+- [x] Kotlin multi-module skeleton — **delivered in P1** (12 source modules matching [current architecture](./13-architecture-convergence.md))
 
-> Phase 0 design is complete, and Phase 1 has since shipped the skeleton, the DSL parser and the full MVP pipeline — see [11-implementation-status.md](./11-implementation-status.md) §6 for the delivered list.
+> Phase 0 design is complete, and Phase 1 has since shipped the skeleton, the DSL parser and the full MVP pipeline — see [implementation status](./11-implementation-status.md) for the delivered list.
 
 ### 3.1 P0 Deliverable Inventory
 
@@ -191,11 +193,11 @@ Each phase has a **single primary metric** that serves as its exit gate. The pha
 | Bilingual mirror (EN + ZH) | ✅ Complete | `docs/en/` + `docs/zh/` |
 | Golden DSL fixtures (positive + negative) | ✅ Complete | `docs/fixtures/01`–`08` |
 | Repository README + Chinese README | ✅ Complete | `README.md`, `README.zh-CN.md` |
-| REPOSITORIES module index | ✅ Complete | `docs/en/REPOSITORIES.md` |
+| REPOSITORIES module index | ✅ Complete | [current architecture](./13-architecture-convergence.md) |
 | CONTRIBUTING (bilingual sync rules) | ✅ Complete | `CONTRIBUTING.md` |
 | CHANGELOG (expansion history) | ✅ Complete | `CHANGELOG.md` |
 | Implementation status matrix | ✅ Complete | [11-implementation-status.md](./11-implementation-status.md) |
-| Kotlin multi-module skeleton | ✅ Delivered in P1 | 12 modules — [REPOSITORIES.md](./REPOSITORIES.md) |
+| Kotlin multi-module skeleton | ✅ Delivered in P1 | 12 modules — [current architecture](./13-architecture-convergence.md) |
 | Reference DSL parser | ✅ Delivered in P1 | `mcos-runtime-core` `parse/` (DslParser) |
 
 ### 3.2 P0 → P1 Transition Gates
@@ -751,7 +753,7 @@ Rules (enforced by [CONTRIBUTING.md](../../CONTRIBUTING.md)):
 ### 13.0 Action List
 
 1. ✅ Choose LICENSE (Apache-2.0) — committed as `LICENSE`
-2. ✅ Create Gradle multi-module skeleton matching repo topology — 12 modules live (see [REPOSITORIES.md](./REPOSITORIES.md))
+2. ✅ Create Gradle multi-module skeleton matching repo topology — 12 modules live (see [current architecture](./13-architecture-convergence.md))
 3. ✅ Implement reference DSL parser + golden tests — `DslParser` + 8 golden fixtures green ([02 §16](./02-command-protocol.md))
 4. ✅ Ship `hello.world` + `camera.capture` vertical slice — four built-in plugins run end-to-end on the Android shell with audit logging
 5. 🟡 Dogfood daily CLI for one real personal workflow — the Android demo covers the full flow; sustained daily dogfooding is the ongoing part
@@ -761,7 +763,7 @@ Rules (enforced by [CONTRIBUTING.md](../../CONTRIBUTING.md)):
 | # | Action | Done when… |
 |---|--------|-----------|
 | 1 | LICENSE | `LICENSE` file committed; `build.gradle.kts` references Apache-2.0 |
-| 2 | Gradle skeleton | `./gradlew projects` lists all modules from [REPOSITORIES.md](./REPOSITORIES.md); empty modules compile |
+| 2 | Gradle skeleton | `./gradlew projects` lists all modules from [current architecture](./13-architecture-convergence.md); empty modules compile |
 | 3 | DSL parser | `./gradlew :mcos-runtime:test` passes all golden fixtures ([02 §16](./02-command-protocol.md)) |
 | 4 | Vertical slice | `hello.world()` and `camera.capture()` execute end-to-end from CLI with audit log entry |
 | 5 | Daily dogfood | At least 1 core team member uses the CLI daily for ≥ 1 week; issues filed for every friction point |
@@ -877,7 +879,7 @@ Kernel 1.0 is **not** a feature release. It is the moment the three contracts be
 
 ### 17.3 Status
 
-**Residuals closed (2026-09-10); 4 of 5 §17.1 criteria met.** The two contract-surface items that blocked the freeze are done ([11 item 59](./11-implementation-status.md)): device-mutex key canonicalization (03 §8.5) and the isolated-process capability gaps (04 §6.1 — no fabricated success across the Binder boundary). The verification half is also in place ([11 item 60](./11-implementation-status.md)): the `kernel` conformance suite pins the error-code vocabulary, the retryable set, the per-code test-coverage registry, the future-`dslVersion` rejection, and the executor stage order — plus, since [item 65](./11-implementation-status.md), the §8 scheduler semantics (global cap, backoff, expedited guard, queued cancellation, device-mutex discipline) — and the suite runs in CI against a committed baseline. **The one open criterion is time-bound:** the golden fixtures holding green and unchanged for one full release cycle. When that cycle completes, the gate closes.
+**Residuals closed (2026-09-10); 4 of 5 §17.1 criteria met.** The two contract-surface items that blocked the freeze are done ([CHANGELOG](../../CHANGELOG.md)): device-mutex key canonicalization (03 §8.5) and the isolated-process capability gaps (04 §6.1 — no fabricated success across the Binder boundary). The verification half is also in place ([CHANGELOG](../../CHANGELOG.md)): the `kernel` conformance suite pins the error-code vocabulary, the retryable set, the per-code test-coverage registry, the future-`dslVersion` rejection, and the executor stage order — plus, since [item 65](./11-implementation-status.md), the §8 scheduler semantics (global cap, backoff, expedited guard, queued cancellation, device-mutex discipline) — and the suite runs in CI against a committed baseline. **The one open criterion is time-bound:** the golden fixtures holding green and unchanged for one full release cycle. When that cycle completes, the gate closes.
 
 ---
 

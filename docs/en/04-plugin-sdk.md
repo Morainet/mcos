@@ -249,7 +249,7 @@ The runtime-side `CommandDescriptor` produced from the manifest is normative in 
 
 ## 5. Core SDK Interfaces (Kotlin)
 
-> ✅ **Implementation status:** `McosPlugin` / `CommandHandler` (including the `cancel()` hook) live in `mcos-sdk`, exercised by the four reference plugins and the full test suite. Known deltas from this spec: `CommandId` is a plain `String` typealias, and `retryable` is carried by the runtime's `McosException`→`CommandResult.Err` mapping. See [11-implementation-status.md](./11-implementation-status.md) §7.
+> ✅ **Implementation status:** `McosPlugin` / `CommandHandler` (including the `cancel()` hook) live in `mcos-sdk`, exercised by the four reference plugins and the full test suite. Known deltas from this spec: `CommandId` is a plain `String` typealias, and `retryable` is carried by the runtime's `McosException`→`CommandResult.Err` mapping. See [`CommandResult.kt`](../../mcos-sdk/src/main/kotlin/com/morainet/mcos/sdk/CommandResult.kt).
 
 ```kotlin
 interface McosPlugin {

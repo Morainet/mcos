@@ -1,5 +1,7 @@
 # MCOS Vision
 
+> **Historical design reference.** This page retains the original design, terminology, and section anchors. See the [current architecture](./13-architecture-convergence.md) for actual modules, wiring, and migration, and [product direction](./15-product-direction.md) for priorities.
+
 > **Status:** Draft  
 > **Version:** 0.1.0  
 > **Last Updated:** 2026-08-24  
@@ -205,7 +207,7 @@ Local execution and local memory are default; cloud is sync/enhancement.
 
 ## 5. Repository Topology
 
-> ✅ **Implementation status:** P1 (MVP) and most of P2 are delivered — the topology below is the **actual** repository layout (12 Gradle source modules incl. `mcos-server`), not a target. Phase-by-phase history: [10-roadmap.md](./10-roadmap.md); per-subsystem status: [11-implementation-status.md](./11-implementation-status.md) §3.
+> The directory layout below describes the early P1 phase. See the [architecture guide](./13-architecture-convergence.md) for the current checkout.
 
 ```text
 mcos/
@@ -224,7 +226,7 @@ mcos/
 └── docs                  # This architecture & RFC set (exists today)
 ```
 
-> For the per-module dependency graph, package names, and build coordinates, see [REPOSITORIES.md](./REPOSITORIES.md). For implementation phasing, see [11-implementation-status.md](./11-implementation-status.md).
+> For the per-module dependency graph, package names, and build coordinates, see [current architecture](./13-architecture-convergence.md). For implementation phasing, see [11-implementation-status.md](./11-implementation-status.md).
 
 Logical stack:
 

@@ -4,11 +4,11 @@
 > **Version:** 0.1.0  
 > **Last Updated:** 2026-08-24  
 > **Depends on:** [01-architecture.md](./01-architecture.md), [02-command-protocol.md](./02-command-protocol.md), [03-runtime.md](./03-runtime.md), [04-plugin-sdk.md](./04-plugin-sdk.md), [05-workflow.md](./05-workflow.md), [07-memory.md](./07-memory.md), [08-security.md](./08-security.md)  
-> **Service:** `mcos-server` marketplace module
+> **Service:** `mcos-index-server`
 
 > **Inspiration:** npm registry · PyPI · Homebrew · Apple App Store review process · Certificate Transparency · VS Code Marketplace · F-Droid
 
-> 🟡 **Implementation status:** the **client side is delivered** — trust levels, artifact / blocklist / recipe signature verification, the end-to-end install pipeline (update consent, persistence + restart re-verification & rehydration, dynamic `.mcos` loading via DexClassLoader), the recipe store + install wizard, reports & opt-in telemetry, and the Android in-app UI. Remaining: the public index **server** deployment (the operator's well-known signing key is live in `TrustAnchors`; its private half is held offline, and a build-time consistency test plus a release guard keep the anchor honest). Status: [11-implementation-status.md](./11-implementation-status.md) §3.
+> **Implementation status**　`mcos-marketplace` implements installation, signature verification, recipes, and the index client. `mcos-index-server` supplies indexing, review, and signed blocklist endpoints. See the [index server guide](./12-index-server.md) for interfaces and deployment.
 
 ---
 
@@ -1157,7 +1157,7 @@ All errors use a consistent JSON shape. The `code` field uses HTTP-layer codes f
 
 ### 11.5 OpenAPI Spec Location
 
-The normative OpenAPI 3.1 specification lives in the `mcos-server` repository at `api/openapi.yaml`. This document is the human-readable design reference; the OpenAPI spec is the machine-checkable contract that the `mcos-server` implementation must satisfy. Clients (including third-party clients, per design goal 2) can generate type-safe bindings from the OpenAPI spec.
+The [index service guide](./12-index-server.md) and the interoperability tests in `mcos-index-server/src/test` describe the current contract. A machine-readable OpenAPI mirror is planned.
 
 ---
 

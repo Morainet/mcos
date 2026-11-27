@@ -251,7 +251,7 @@ SDK 文档关注**逻辑**形态；具体的打包口味属于宿主关心的问
 
 ## 5. 核心 SDK 接口（Kotlin）
 
-> ✅ **Implementation status:** `McosPlugin` / `CommandHandler`（含 `cancel()` 钩子）已在 `mcos-sdk` 落地，由四个参考插件与全量测试覆盖。与规范的已知差异：`CommandId` 为 `String` 别名；`retryable` 由运行时的 `McosException`→`CommandResult.Err` 映射承载。见 [11-implementation-status.md](./11-implementation-status.md) §7。
+> ✅ **Implementation status:** `McosPlugin` / `CommandHandler`（含 `cancel()` 钩子）已在 `mcos-sdk` 落地，由四个参考插件与全量测试覆盖。与规范的已知差异：`CommandId` 为 `String` 别名；`retryable` 由运行时的 `McosException`→`CommandResult.Err` 映射承载。见 [`CommandResult.kt`](../../mcos-sdk/src/main/kotlin/com/morainet/mcos/sdk/CommandResult.kt)。
 
 ```kotlin
 interface McosPlugin {

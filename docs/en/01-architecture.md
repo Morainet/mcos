@@ -1,7 +1,6 @@
 # MCOS System Architecture
 
-> **Current architecture entry:** [Architecture convergence](./13-architecture-convergence.md) — host SDK scope, current dependencies, and refactoring sequence.
-
+> **Historical design reference.** This page retains the original design, terminology, and section anchors. See the [current architecture](./13-architecture-convergence.md) for actual modules, wiring, and migration, and [product direction](./15-product-direction.md) for priorities.
 
 > **Status:** Draft
 > **Version:** 0.1.0
@@ -110,87 +109,13 @@ flowchart TB
 
 \* Accessibility bridges are optional, highly restricted, and not the preferred integration path.
 
-### 3.1 Package → module map (as built)
+### 3.1 Package → module map
 
-The runtime family is split into focused Gradle modules. Since 2026-08-17 every
-module exclusively owns its `com.morainet.mcos.<module>.*` root namespace: the
-`runtime.` prefix is reserved for the runtime kernel (the `mcos-runtime`
-facade and `mcos-runtime-core`), while security / llm / marketplace and the
-rest root at their module names (see §3.3). The mapping is enforced by
-`PackageBoundariesTest`.
-
-| Package(s) | Gradle module | Depends on |
-|------------|---------------|------------|
-| `com.morainet.mcos.sdk` | `mcos-sdk` | — |
-| `com.morainet.mcos.security` (security kernel) · `security.audit` · `security.validate` · `security.permission` | `mcos-security` | sdk |
-| `com.morainet.mcos.runtime.core`: `core.api` (RuntimeGateway, RuntimeTypes, StubHostServices) plus `core.error` · `core.ir` · `core.events` · `core.registry` · `core.plugin` · `core.memory` · `core.executor` · `core.workflow` · `core.parse` | `mcos-runtime-core` | sdk, security |
-| `com.morainet.mcos.llm` | `mcos-llm` | sdk, runtime-core |
-| `com.morainet.mcos.marketplace` | `mcos-marketplace` | sdk, security, runtime-core |
-| `com.morainet.mcos.runtime` (bare) · `com.morainet.mcos.runtime.api` (McosRuntime facade, ConfirmationCoordinator, RunManager) | `mcos-runtime` | sdk, security, runtime-core, marketplace |
-| `com.morainet.mcos.android` (+ `host`) | `mcos-android-sdk` | sdk, security, runtime-core, runtime (facade), llm, marketplace, built-in plugins |
-| `com.morainet.mcos.android.demo` | `mcos-android` (demo shell app) | mcos-android-sdk + direct sdk/security/runtime-core/runtime/llm/marketplace/plugin-mcp edges |
-| `com.morainet.mcos.server` | `mcos-server` | runtime-core (test only) |
-| `com.morainet.mcos.plugin.*` | `plugins:mcos-plugin-*` | sdk |
+`PackageBoundariesTest` checks package ownership. See [current architecture](./13-architecture-convergence.md#where-to-make-changes) for owners and entry points.
 
 ### 3.2 Module dependency graph
 
-```mermaid
-graph LR
-  SDK[mcos-sdk]
-  SEC[mcos-security]
-  CORE[mcos-runtime-core]
-  LLM[mcos-llm]
-  MKT[mcos-marketplace]
-  FACADE[mcos-runtime<br/>facade]
-  ASDK[mcos-android-sdk<br/>host SDK, UI-free]
-  AND[mcos-android<br/>Compose demo shell]
-  SRV[mcos-server]
-  PLUGINS[mcos-plugin-*]
-
-  SEC --> SDK
-  CORE --> SDK
-  CORE --> SEC
-  LLM --> SDK
-  LLM --> CORE
-  MKT --> SDK
-  MKT --> SEC
-  MKT --> CORE
-  FACADE --> SDK
-  FACADE --> SEC
-  FACADE --> CORE
-  FACADE --> MKT
-  ASDK --> SDK
-  ASDK --> SEC
-  ASDK --> CORE
-  ASDK --> FACADE
-  ASDK --> LLM
-  ASDK --> MKT
-  ASDK --> PLUGINS
-  AND --> ASDK
-  AND --> SDK
-  AND --> SEC
-  AND --> CORE
-  AND --> FACADE
-  AND --> LLM
-  AND --> MKT
-  SRV --> CORE
-  PLUGINS --> SDK
-```
-
-Notable edges:
-
-- `mcos-llm` and the facade **do not depend on each other**: `ChatOrchestrator`
-  drives the kernel through the `RuntimeGateway` port in `runtime.core.api`
-  (`execute()` + `observe()`, canonically implemented by the facade's
-  `McosRuntime`) — llm and the facade are sibling clients of the kernel, wired
-  together at the consumer (e.g. `McosViewModel`). The module graph stays
-  acyclic.
-- `mcos-android-sdk` declares every edge directly (sdk, security, core,
-  facade, llm, marketplace, built-in plugins) and relies on no `api`
-  re-exports; it contains **no UI code** — an integrating app embeds it and
-  ships its own interface, while `mcos-android` is the reference Compose demo
-  shell (direct edges only for what its ViewModel/test code touches, plus the
-  MCP adapter plugin); `mcos-server` depends on core in tests only.
+See [current Gradle dependencies](./13-architecture-convergence.md#current-gradle-dependencies) and the target layout on the same page.
 
 ### 3.3 Module-boundary rules
 
@@ -1068,11 +993,11 @@ enum class McosErrorCode(val retryableDefault: Boolean) {
 | Cloud | `mcos-server` | P3 |
 | Specs | `docs/*` | ✅ Exists today |
 
-See [REPOSITORIES.md](./REPOSITORIES.md) for the authoritative module dependency graph and [11-implementation-status.md](./11-implementation-status.md) for per-subsystem phasing.
+See [current architecture](./13-architecture-convergence.md) for the authoritative module dependency graph and [implementation status](./11-implementation-status.md) for the current verification entry points.
 
 ### 17.1 P1 implementation checklist
 
-Maps the 10-step P1 path from [11-implementation-status.md §6](./11-implementation-status.md) to the section in this document that specifies it:
+The table maps the original P1 path to the corresponding sections in this design draft.
 
 | P1 step | This doc § |
 |---------|-----------|

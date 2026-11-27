@@ -7,7 +7,7 @@
 >
 > **灵感来源：** Anthropic Claude Code / ChatGPT 工具调用 / Cursor Agent / Apple Intelligence App Intents —— 一个与提供商无关的编译器前端，将自然语言目标转化为 MCOS 命令 IR，并通过多轮智能体循环在写入前先进行探查。
 >
-> ✅/🟡 **实现状态：** **规划器（Planner）** 已远超 P1 基线交付——多 provider 注册表与健康探测（§17 V1）、回退链、端侧→云端隐私闸门（§13.2）、四种 PlanMode（NATIVE_TOOL_CALL / FREEFORM_JSON / CONSTRAINED 含 GBNF 语法注入 / LATENCY_TIERED 分层路由，§13.1）以及 NL→IR 黄金评测套件（§16）均已实现。多轮 **Agent 循环**（§11 —— P2 退出标准）也已交付：`McosAgent` 实现了流式 `AgentBridge` 契约（[§11.4](#114-agentbridge-interface) 按实际实现）—— 经 `RuntimeGateway.executeProbe` 的读前缀探查、观察折叠、每回合上限、§14.1 重规划漂移防护，以及 Android 外壳的允许/拒绝对话框。仍待交付：语音 STT 与真正的端侧模型运行时仍属 P3。参见 [§17](#17-mvp-vs-v1) 与 [11-implementation-status.md](./11-implementation-status.md) §3。
+> ✅/🟡 **实现状态：** **规划器（Planner）** 已远超 P1 基线交付——多 provider 注册表与健康探测（§17 V1）、回退链、端侧→云端隐私闸门（§13.2）、四种 PlanMode（NATIVE_TOOL_CALL / FREEFORM_JSON / CONSTRAINED 含 GBNF 语法注入 / LATENCY_TIERED 分层路由，§13.1）以及 NL→IR 黄金评测套件（§16）均已实现。多轮 **Agent 循环**（§11 —— P2 退出标准）也已交付：`McosAgent` 实现了流式 `AgentBridge` 契约（[§11.4](#114-agentbridge-interface) 按实际实现）—— 经 `RuntimeGateway.executeProbe` 的读前缀探查、观察折叠、每回合上限、§14.1 重规划漂移防护，以及 Android 外壳的允许/拒绝对话框。仍待交付：语音 STT 与真正的端侧模型运行时仍属 P3。参见 [§17](#17-mvp-vs-v1) 与 [当前实现](./11-implementation-status.md)。
 
 ---
 

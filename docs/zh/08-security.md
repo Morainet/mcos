@@ -9,7 +9,7 @@
 
 > **灵感来源:** Android Permission Model · iOS TCC（Transparency, Consent, Control）· OAuth2 scopes · Claude Code tool-use confirmation · ChatGPT plugin security review · OWASP MASVS（Mobile Application Security Verification Standard）
 
-> ✅ **实现状态:** 权限内核门控每一个 Stage 6 决策且**授权表已持久化**；企业策略（§13，含 fail-closed 解析 + 文件热加载）与市场签名链（Ed25519 / RSA-PSS-4096 工件、blocklist 与配方验签）均已实现。剩余 🟡：第三方进程隔离（P3，§8）与审计静态加密（§14）。状态见 [11-implementation-status.md](./11-implementation-status.md) §3。
+> **实现状态**　权限内核、授权持久化、企业策略与签名校验已实现。Android 宿主默认使用逐条 AES-GCM 加密本地审计；全量宿主支持可选 Binder 插件进程隔离。覆盖范围见 [Android SDK](../../mcos-android-sdk/README.md)。
 
 ---
 

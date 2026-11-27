@@ -1,58 +1,35 @@
-# 独立宿主：导出应用记录
+# Android Debug 基础宿主回归
 
-本示例面向给现有 Android 应用接入命令能力的开发者。宿主将自身业务能力注册为 `record.export`，用户通过预设任务完成计划预览、确认、实际文件生成、结果展示和审计。模型规划可在此链路上另行接入。
+[English](../en/14-embedded-host.md) · [当前架构](./13-architecture-convergence.md)
 
-## 运行
+`RecordExportActivity` 随 `mcos-android` Debug APK 打包。它由 `RecordDebugHost` 装配基础 Runtime，用真实的应用记录命令验证预览、确认、文件和审计。手机用户的 Agent 首页由 `MainActivity` 启动，使用另一套全量宿主装配。
+
+## 运行回归
+
+下列命令基于当前仓库源码。`createEmbedded` 属于源码中的基础宿主入口，`v0.0.6` 标签使用全量 `CompositionRoot.create`。
 
 ```bash
-sh gradlew :mcos-sample-embedded:testDebugUnitTest :mcos-sample-embedded:assembleDebug
-adb install -r mcos-sample-embedded/build/outputs/apk/debug/mcos-sample-embedded-debug.apk
-adb shell am start -n com.morainet.mcos.sample.embedded/.MainActivity
+sh gradlew :mcos-android:testDebugUnitTest :mcos-android:assembleDebug
+adb install -r mcos-android/build/outputs/apk/debug/mcos-android-debug.apk
+adb shell am start -n com.morainet.mcos.android/.demo.records.RecordExportActivity
 ```
-
-安装包名称为 MCOS Record Export，独立于完整演示壳。无需模型密钥、服务器地址、账号或媒体权限。示例移除了 Android SDK manifest 合并带来的权限和组件，仅写应用私有目录。
-
-## 操作与结果
 
 | 操作 | 预期结果 |
 |---|---|
-| Preview and export record → Export | 生成私有 txt 文件，显示文件名、记录正文、runId 与审计数量 |
-| Preview and export record → Reject | 明确失败，不创建文件 |
-| Try a missing record → Export | 显示 Record not found，不创建文件 |
-| 确认弹窗 → Cancel task | 取消当前 run，避免遗留等待确认的任务 |
+| **Preview and export record** → **Export** | 导出 `demo-001`，展示运行 ID、文件名、记录正文和审计数量。 |
+| **Find latest completed record** → **Preview and export located record** → **Export** | 查找并导出 `demo-002`。CLI 续验可按此记录 ID 校验。 |
+| 确认框选择 **Reject** 或 **Cancel task** | 出现失败或取消终态，当前 run 在确认前未创建文件。 |
+| **Try a missing record** → **Export** | 显示 `Completed record not found`，当前 run 未创建文件。 |
 
-导出源是宿主内置的固定业务记录 `demo-001`；输出在 `filesDir/record-exports/`。每次生成新文件，避免覆盖先前产物。文件 URI 是本应用私有引用，不用于跨应用分享。审计落在 `filesDir/embedded/audit.jsonl`，由现有设备密钥机制加密并提供 HMAC 导出签名。
+手动回归可以在离线状态下完成。导出生成新的应用私有 txt 文件，位置为 `filesDir/record-exports/`；基础宿主审计位于 `filesDir/embedded/audit.jsonl`。使用 [ADB 指南](../../tools/mcos-device/README.md) 按 runId 核验终态和文件内容。设备验证应记录 APK 来源、系统版本及审批路径。
 
-## 最小接入路径
+## 接入自有能力
 
-1. 实现 `McosPlugin`：声明命令 schema、`write` 副作用类别与处理器；参见示例 `RecordExportPlugin.kt`。
-2. 在 Application 的进程级协程中调用 `CompositionRoot.createEmbedded(context, plugins)`。
-3. 用 `runtime.preview(request)` 展示计划，再调用 `execute(request)`。
-4. 订阅 `observe(runId)`，处理 `ConfirmationNeeded` 并调用 `respondConfirmation`；分别展示成功、失败、取消。
-5. 使用 `ArtifactEmitted` 展示实际产物，在终态后等待审计 `flush()`。Activity 销毁时取消该页面发起的任务。
+1. 实现 `McosPlugin`，声明命令 schema、副作用类别和处理器。参照 [`RecordExportPlugin.kt`](../../mcos-android/src/main/kotlin/com/morainet/mcos/android/demo/records/RecordExportPlugin.kt)。
+2. 在 Application 的进程级协程调用 suspend `CompositionRoot.createEmbedded(context, plugins)`。需要 Activity 交互时，通过 `EmbeddedRuntime.create(hostServices, plugins, auditLog)` 注入宿主已接线的服务，或使用全量宿主。
+3. 用 `runtime.preview(request)` 展示计划，用 `execute(request)` 启动运行。订阅 `observe(runId)`，将审批传给 `respondConfirmation`，并处理成功、失败与取消事件。
+4. 根据 `ArtifactEmitted` 和终态展示实际产物。回归页在 Activity 销毁时取消本页的运行，在终态后刷新审计。
 
-实现位置：
+实现入口为 [Debug 回归页](../../mcos-android/src/debug/kotlin/com/morainet/mcos/android/demo/records/)、[EmbeddedRuntime](../../mcos-android-sdk/src/main/kotlin/com/morainet/mcos/android/EmbeddedRuntime.kt) 和 [宿主回归测试](../../mcos-android/src/testDebug/kotlin/com/morainet/mcos/android/demo/records/RecordExportIntegrationTest.kt)。
 
-- [独立宿主源码](../../mcos-sample-embedded/src/main/kotlin/com/morainet/mcos/sample/embedded/)
-- [基础装配](../../mcos-android-sdk/src/main/kotlin/com/morainet/mcos/android/EmbeddedRuntime.kt)
-- [端到端 JVM 验证](../../mcos-sample-embedded/src/test/kotlin/com/morainet/mcos/sample/embedded/RecordExportIntegrationTest.kt)
-
-## 能力边界与验证
-
-基础装配只接收随宿主发布的可信插件；宿主提供它们的声明权限，执行副作用仍需确认。它不接收任意第三方代码，不初始化市场、规划器、定时唤醒或后台恢复。Android 系统权限仍由系统控制。
-
-需要相机、系统选择器等 Activity 交互时，通过 `EmbeddedRuntime.create(hostServices, plugins, auditLog)` 提供已绑定 UI 桥的宿主服务；便捷入口 `createEmbedded` 的 UI 桥未绑定，不能将它当成完整演示壳的等价替代。
-
-目前是**运行装配收敛**：Android SDK 的 Gradle 制品仍传递依赖 LLM、市场与内置插件，runtime 仍依赖 marketplace。包体裁剪和发布制品拆分仍待处理。本示例不宣称实现了这些构建解耦。
-
-JVM 回归驱动真实 Runtime、同一基础装配和导出插件，校验审批前零写入、审批后文件内容和审计、拒绝、缺失记录及参数校验；Android 窗口与系统生命周期仍需按上表在设备上验证。
-
-审批拒绝、参数校验失败和审批前取消通过运行事件反馈；当前内核对这些提前退出路径不保证持久审计记录。导出文件与审计不构成事务，执行后取消或审计失败不代表文件已回滚。
-
-## 本轮验证记录（2026-11-27）
-
-- 完整 `sh gradlew build` 通过；一致性门 78/78。
-- 新增 5 条宿主端到端、3 条基础装配和 1 条同步审批响应回归，均通过。
-- TYH612M / Android 10 / API 29：实际安装并通过 UI 操作，审批导出生成正确文件；拒绝、缺失记录和审批前取消不新增文件。
-- 真机私有审计文件存在，未包含明文命令/记录；包信息确认未请求 Android 系统权限。
-- 真机验证限于上述固定记录场景，未验证任意 App 控制或第三方插件隔离。
+基础装配加载随宿主发布的可信插件。运行时确认、Android 系统权限和宿主授权各自生效。审批前的部分退出路径通过 run 事件报告，持久审计覆盖需按路径核对。文件写入和审计独立执行，写入后的取消或审计失败不保证文件回滚。

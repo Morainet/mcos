@@ -7,7 +7,7 @@
 >
 > **灵感来源：** MemGPT/Letta（三层记忆层级 + 分页）· Claude Code memory（CLAUDE.md/MEMORY.md 钉选 + 压缩）· ChatGPT memory（跨会话事实存储 + 检索）· Apple Intelligence App Intents（端侧个人上下文）—— 改造为一个移动优先、本地优先、token 受限的 Command OS，其中记忆是上下文复用与 token 削减的主要杠杆。
 >
-> ✅ **实现状态：** 记忆系统已实现且**超出** P2 范围——`MemoryStore`（TTL / 标签 / 模糊 `resolveRef` / CREATED-UPDATED-CONFLICT 语义 / superseded 历史）、归档层（`EpisodicMemory` + `RunSummarizer` + `EntityMatcher` §8.3）、设备间同步（向量时钟 LWW + `SyncPolicy`，§11）、端到端加密同步 blob（§11.0）与独立 `mcos-server` 均已交付。仅规范未实现：端侧 MemGPT 分页。状态见 [11-implementation-status.md](./11-implementation-status.md) §3。
+> ✅ **实现状态：** 记忆系统已实现且**超出** P2 范围——`MemoryStore`（TTL / 标签 / 模糊 `resolveRef` / CREATED-UPDATED-CONFLICT 语义 / superseded 历史）、归档层（`EpisodicMemory` + `RunSummarizer` + `EntityMatcher` §8.3）、设备间同步（向量时钟 LWW + `SyncPolicy`，§11）、端到端加密同步 blob（§11.0）与独立 `mcos-server` 均已交付。仅规范未实现：端侧 MemGPT 分页。状态见 [当前实现](./11-implementation-status.md)。
 
 ---
 
@@ -1090,7 +1090,7 @@ Archival paging:
 
 ## 16. MVP 与 V1
 
-对齐 [11-implementation-status.md](./11-implementation-status.md) 与 [10-roadmap.md](./10-roadmap.md) §5.3 的 P1/P2/P3 分期：
+原设计按[历史路线图](./10-roadmap.md) §5.3 划分 P1/P2/P3：
 
 | 特性 | MVP（P1 接缝） | V1（P2） | V2（P3） |
 |---------|---------------|---------|---------|

@@ -6,11 +6,11 @@
 > **版本:** 0.1.0
 > **最后更新:** 2026-08-24  
 > **依赖:** [01-architecture.md](./01-architecture.md)、[02-command-protocol.md](./02-command-protocol.md)、[03-runtime.md](./03-runtime.md)、[04-plugin-sdk.md](./04-plugin-sdk.md)、[05-workflow.md](./05-workflow.md)、[07-memory.md](./07-memory.md)、[08-security.md](./08-security.md)
-> **服务:** `mcos-server` marketplace 模块
+> **服务:** `mcos-index-server`
 
 > **灵感来源:** npm registry · PyPI · Homebrew · Apple App Store review process · Certificate Transparency · VS Code Marketplace · F-Droid
 
-> 🟡 **实现状态:** **客户端侧已交付**——信任级别、工件 / blocklist / 配方签名验证、端到端安装管线（更新同意、持久化 + 重启重验与再水合、DexClassLoader 动态加载 `.mcos`）、配方商店 + 安装向导、用户举报与 opt-in 遥测，以及 Android 应用内 UI。剩余：公共索引**服务端**部署（运营方 well-known 签名钥已落地 `TrustAnchors`，私钥离线保管；构建期一致性测试 + 发布守卫保证锚点可信）。状态见 [11-implementation-status.md](./11-implementation-status.md) §3。
+> **实现状态**　`mcos-marketplace` 提供安装、签名验证、配方和索引客户端，`mcos-index-server` 提供索引、评审及签名 blocklist 服务。接口与部署方式见[索引服务指南](./12-index-server.md)。
 
 ---
 
@@ -1159,7 +1159,7 @@ Content-Type: application/json
 
 ### 11.5 OpenAPI 规范位置
 
-规范性 OpenAPI 3.1 规范位于 `mcos-server` 仓库的 `api/openapi.yaml`。本文档是人类可读的设计参考；OpenAPI 规范是 `mcos-server` 实现必须满足的可机器校验契约。客户端（包括第三方客户端，依据设计目标 2）可从 OpenAPI 规范生成类型安全的绑定。
+[索引服务指南](./12-index-server.md)和 `mcos-index-server/src/test` 中的互操作测试描述当前契约。可机器读取的 OpenAPI 文件仍属计划。
 
 ---
 

@@ -1,6 +1,6 @@
 # Contributing to MCOS
 
-Thanks for helping build **Mobile Command OS** — an open command bus for mobile capabilities, where AI generates commands and the Runtime owns security.
+MCOS is an Android Agent and an embeddable secure command Runtime. Start with the [current architecture](./docs/en/13-architecture-convergence.md) to find the owner of the area you are changing.
 
 ## Table of Contents
 
@@ -19,19 +19,17 @@ Thanks for helping build **Mobile Command OS** — an open command bus for mobil
 ## Ways to Contribute
 
 - 🐛 **Report bugs** — open an [issue](https://github.com/Morainet/mcos/issues) with the command DSL, expected vs actual behavior, and log excerpts (redact secrets!).
-- 💡 **Propose features** — protocol-level ideas beat UI mockups; frame them against the [Command Protocol RFC](./docs/en/02-command-protocol.md).
+- 💡 **Propose features** — identify the user task and the affected layer. Assess protocol changes against the [Command Protocol RFC](./docs/en/02-command-protocol.md).
 - 🔌 **Write a plugin** — plugins live in `plugins/`, depend only on `mcos-sdk`, and are the lowest-risk way to touch the system. See [Writing a Plugin](#writing-a-plugin).
-- 📚 **Improve docs** — the RFC set is the product; precision there is as valuable as code.
+- 📚 **Improve docs** — keep entry points, examples, and architecture aligned with the source and Gradle configuration.
 - 🔧 **Fix something** — pick an issue, keep the slice small and demoable.
 
 ## Principles
 
-1. **Protocol first** — prefer Command Protocol / RFC changes over one-off UI hacks.
-2. **Specs before skins** — Runtime and DSL before prettier chat.
-3. **Safety by default** — permissions, confirmations, and audit are not optional polish.
-4. **Small vertical slices** — every PR should leave something demoable.
-
-Read [`docs/en/README.md`](./docs/en/README.md) before large design changes; [`docs/en/11-implementation-status.md`](./docs/en/11-implementation-status.md) is the docs ↔ code map of what exists today.
+1. Keep command validation, permissions, confirmation, and audit in the Runtime path.
+2. Keep Android integrations in the host adapter and product state in the app.
+3. Make changes in small, verifiable slices with explicit success and failure behavior.
+4. Use the [implementation status](./docs/en/11-implementation-status.md) to distinguish current behavior from plans and verification results.
 
 ## Getting Started
 
@@ -44,42 +42,25 @@ Read [`docs/en/README.md`](./docs/en/README.md) before large design changes; [`d
 
 > `gradlew` in this repo has no execute bit — invoke it through the shell: `sh gradlew <task>`. (CI does `chmod +x` itself.)
 
-Clone and run the full gate once before anything else:
+Clone the repository. The full build covers the JVM and Android modules:
 
 ```bash
 git clone https://github.com/Morainet/mcos.git
 cd mcos
-sh gradlew build          # JVM + Android + all tests (~10-25 min cold)
+sh gradlew build          # JVM and Android build, unit tests, and lint
 ```
 
 Faster loops while you work:
 
 ```bash
-sh gradlew test                                   # JVM module tests only
 sh gradlew :mcos-runtime-core:test                # one module
 sh gradlew :mcos-android-sdk:testDebugUnitTest    # Android library tests
-sh gradlew :mcos-android:assembleDebug            # demo shell APK
+sh gradlew :mcos-android:assembleDebug            # Android Agent Debug APK
 ```
 
 ## Repo Layout
 
-| Path | Role |
-|:-----|:-----|
-| `mcos-sdk/` | Plugin contracts (`McosPlugin`, `CommandHandler`, `HostServices`) — the leaf every plugin depends on |
-| `mcos-security/` | Permission kernel, AuthStamp signing, rate limits, egress policy, audit |
-| `mcos-runtime-core/` | DSL parser → IR, command registry, 7-stage executor, workflow engine, memory |
-| `mcos-llm/` | AI planner/chat, multi-provider registry, constrained decoding |
-| `mcos-marketplace/` | Index client, install pipeline, recipe store, telemetry |
-| `mcos-runtime/` | Facade (`McosRuntime`) wiring the subsystems together |
-| `mcos-android-sdk/` | UI-free Android host SDK (composition root, receivers, bridges, isolation RPC) |
-| `mcos-android/` | Compose demo shell — replaceable reference UI |
-| `mcos-server/` | Self-hosted sync endpoint |
-| `plugins/` | Independently buildable plugins (`hello`, `system`, `camera`, `files`, `mcp`, `iot`) |
-| `docs/en/` · `docs/zh/` | Bilingual RFC set (English authoritative) |
-| `docs/fixtures/` | Golden DSL ↔ IR fixtures (shared by both languages) |
-| `.agents/skills/mcos-dev-standards/` | Coding standards (see below) |
-
-Module dependency direction is fixed — see [`docs/en/REPOSITORIES.md`](./docs/en/REPOSITORIES.md) and the `PackageBoundariesTest` that enforces package → module mapping.
+The [architecture guide](./docs/en/13-architecture-convergence.md) owns the module table, current dependency graph, and target design. `PackageBoundariesTest` checks package ownership, and `settings.gradle.kts` lists included projects. User-facing Android development starts in [`mcos-android`](./mcos-android/README.md).
 
 ## Code Style & Standards
 
@@ -96,7 +77,7 @@ The authoritative rules live in [`.agents/skills/mcos-dev-standards/SKILL.md`](.
 
 - Tests mirror the source package structure (`src/test/kotlin/` ↔ `src/main/kotlin/`).
 - The full gate is `sh gradlew build`; Android changes should also pass `:mcos-android-sdk:testDebugUnitTest :mcos-android:testDebugUnitTest :mcos-android:assembleDebug`.
-- When your change adds or moves tests, update the **test baseline** (count + module breakdown) in the item entry of [`docs/en/11-implementation-status.md`](./docs/en/11-implementation-status.md) and its Chinese mirror — the baseline is re-measured from `build/test-results/**/TEST-*.xml` (`tests="…"` attributes).
+- When verification coverage changes, update the runnable check or coverage description in the [implementation status](./docs/en/11-implementation-status.md). The conformance suite owns its executable baseline.
 - CI runs on every PR: module test shards, the Android build, and an **unsigned publish dry-run** so publication task-graph drift fails in review, not at tag time.
 
 ## Command Protocol & Fixtures
@@ -138,7 +119,7 @@ Roadmap-sized work references the RFC section and the implementation-status item
 
 ## Bilingual Docs
 
-MCOS maintains a full bilingual doc set under `docs/en/` (authoritative) and `docs/zh/`. When you change an English doc, update its Chinese counterpart in the same PR — or explicitly flag the gap so it can be tracked.
+For changes to a bilingual document under `docs/en/` or `docs/zh/`, update its counterpart and preserve source links. Verify examples with current source and tests. The documentation indexes distinguish current guides, technical references, and historical designs.
 
 ## Writing a Plugin
 

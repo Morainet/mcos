@@ -1,13 +1,13 @@
 # MCOS Android SDK
 
-无 UI 的 Android 宿主运行时库——任何 App 依赖它即可获得完整的 `HostServices` 实现、
+无 UI 的 Android 宿主运行时库。接入方可选择基础宿主或全量宿主。全量宿主提供 `HostServices` 实现、
 进程常驻调度（精确闹钟 + 开机重整备）、marketplace 安装链、MCP 服务器管理，以及
-**opt-in 的 `:mcos_plugin` 进程隔离执行边界**。演示壳 `mcos-android` 只是它的第一个消费者。
+**opt-in 的 `:mcos_plugin` 进程隔离执行边界**。[`mcos-android`](../mcos-android/README.md) 使用全量装配，并在 Debug 包内提供基础装配回归。
 
 ## 模块定位
 
 - `compileSdk 35 / minSdk 26`，包名 `com.morainet.mcos.android`（含 `host`、`host.isolation`）。
-- **设计约束：无 UI 库**——不依赖 Compose/ViewModel，全部测试纯 JVM（无 Robolectric）。
+- **宿主 SDK 无 UI 依赖。** 普通测试运行于 JVM，Binder 隔离另有设备测试。
 - 依赖 `mcos-sdk`、`mcos-security`、`mcos-runtime-core`、`mcos-runtime`、`mcos-llm`、
   `mcos-marketplace` 与四个内置插件（hello/system/camera/files）。
 
@@ -20,7 +20,7 @@ com.morainet.mcos.android/
 ├── RuntimeBootstrap.kt          # 进程级一次性 rehydrate（恢复插件 + 重整备调度）
 ├── ScheduleAlarmReceiver.kt     # 精确闹钟接收 → driveScheduleTick()
 ├── BootReceiver.kt              # BOOT_COMPLETED 重整备（goAsync 拖住进程）
-├── McosPackage.kt               # .mcos 清单读取器（readPluginManifest 全 schema，fail-closed）
+├── EmbeddedRuntime.kt          # 基础宿主装配
 ├── DynamicPluginLoader.kt       # DexClassLoader 隔离加载
 ├── MarketplacePluginFactory.kt  # curated id → 本地类；其余走 dex
 ├── MarketplaceTrust.kt          # 吊销密钥刷新
@@ -38,23 +38,31 @@ com.morainet.mcos.android/
     └── isolation/                    # 进程隔离 RPC 全家桶（08 §8.1-§8.3）
 ```
 
-## 集成方式（三行起步）
+## 全量宿主接入
 
 ```kotlin
+import android.app.Application
+import com.morainet.mcos.android.AppDeps
+import com.morainet.mcos.android.CompositionRoot
+import com.morainet.mcos.android.McosHostApp
+import com.morainet.mcos.android.RuntimeBootstrap
+
 class MyApplication : Application(), McosHostApp {
-    override lateinit var deps: AppDeps
+    override var mcosDeps: AppDeps? = null
+        private set
+
     override fun onCreate() {
         super.onCreate()
-        deps = CompositionRoot.create(this)       // processIsolation = true 开启隔离
-        RuntimeBootstrap.ensureRehydrated(deps)   // 恢复插件 + 重整备持久化调度
+        val deps = CompositionRoot.create(this)
+        mcosDeps = deps
+        RuntimeBootstrap.ensureRehydrated(deps)
     }
 }
 ```
 
-宿主 App 经 manifest merge 免费获得：8 项 uses-permission、`ScheduleAlarmReceiver`、
-`BootReceiver`、`IsolatedPluginProcessService`（`:mcos_plugin` 进程）、FileProvider。
+在宿主 `AndroidManifest.xml` 的 `<application>` 设置 `android:name=".MyApplication"`。SDK 的 [manifest](./src/main/AndroidManifest.xml) 合并到宿主，包括所需权限、`ScheduleAlarmReceiver`、`BootReceiver`、`IsolatedPluginProcessService` 和 FileProvider。
 Activity 结果/权限弹窗经 `deps.resultBridge` / `deps.permissionBridge` 与宿主 UI 桥接
-（演示壳 `mcos-android` 有完整接线示例）。
+（`mcos-android` 的 `McosApp` 有完整接线）。
 
 ## 进程隔离链路（opt-in，`processIsolation = true`）
 
@@ -99,7 +107,7 @@ server 列表的唯一写者。SecureStore key `mcp_servers` 存 JSON(id/endpoin
 
 - **位置**：`mcos-android-sdk/src/androidTest/`
 - **目标套件**：`com.morainet.mcos.android.host.isolation.BinderIsolationDeviceTest`
-  —— 五个 case BD1-BD6，分别钉死：manifest-only 注册、`:mcos_plugin` 真进程、§8.3
+  覆盖 BD1–BD6：manifest-only 注册、`:mcos_plugin` 真进程、§8.3
   命名空间沙箱、运行中杀进程只影响本次、`linkToDeath` 透明重绑、损坏 staged
   artifact 时如实失败。
 - **Fixture 插件**：`plugins:mcos-plugin-devicefixture` —— 一个最小 `McosPlugin`，
@@ -116,7 +124,7 @@ adb devices                                # 确认设备挂上
 sh gradlew :mcos-android-sdk:connectedDebugAndroidTest
 ```
 
-- **诚实边界**（也写在 `docs/en/11-implementation-status.md` 的 item 50）：
+- **覆盖范围**：
   same-UID only（foreign-uid 拒绝仍靠 JVM `BinderIdentityPolicyTest` 罩着）、
   fixture 类在 instrumentation classloader 上可见但**执行 + sandbox + 崩溃隔离
   确实在独立插件进程**（主进程 dex-exclusivity 由 manifest-only 注册路径强制）、
@@ -134,6 +142,8 @@ sh gradlew :mcos-android-sdk:connectedDebugAndroidTest
 
 ## 基础宿主接入
 
-随 App 发布的自定义能力可用 `CompositionRoot.createEmbedded(context, plugins)` 创建基础运行时，无需初始化市场或模型。该方法是 suspend 函数，应用应在进程级协程创建一次；完整源码和确认/结果处理见[独立宿主指南](../docs/zh/14-embedded-host.md)。
+本节基于当前仓库源码。Maven 示例中的 `v0.0.6` 标签提供全量 `CompositionRoot.create`。
+
+随 App 发布的自定义能力可用 `CompositionRoot.createEmbedded(context, plugins)` 创建基础运行时，无需初始化市场或模型。该方法是 suspend 函数，应用应在进程级协程创建一次；完整源码和确认/结果处理见[基础宿主回归指南](../docs/zh/14-embedded-host.md)。
 
 需要自定义平台能力时，`McosRuntime.Builder.withHostServices` 保留 Builder 管理的权限、签名器、限流和运行时配置，避免仅为注入平台服务而手工构造 Executor。已有 `withExecutor` 显式注入仍优先。

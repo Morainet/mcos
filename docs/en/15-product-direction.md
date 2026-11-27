@@ -1,50 +1,21 @@
-# Product direction and proposal decisions (2026-11-27)
+# Product direction and acceptance criteria
 
-## 1. Direction and near-term promise
+[中文](../zh/15-product-direction.md) · [Architecture and migration design](./13-architecture-convergence.md)
 
-The long-term direction is an open AI capability execution runtime and plugin ecosystem: embeddable, extensible and interoperable. Initial users are developers exposing existing application capabilities to AI or preset tasks. Android is the first acceptance host; pure JVM contracts and platform adapter boundaries remain.
+## Near-term scope
 
-The near-term promise is a host-owned capability flowing through preview, consent, execution, actual output and failure feedback. The record-export sample is a reference integration, not evidence of external adoption or an established plugin ecosystem.
+- The open-source Android Agent lets users describe a goal on the phone, review planning and progress, confirm sensitive operations, and get a result.
+- The embeddable secure command Runtime lets developers register existing Android app capabilities as commands with validation, permissions, and audit. Models and presets share the execution path.
 
-## 2. Decisions on the broader proposal
+The first verifiable scenario is inspection-record export. The in-app preset finds the latest completed record, requests approval, creates a file, and verifies its contents. Host integration and ADB use the [Debug regression screen](./14-embedded-host.md) in the same APK. The [ADB CLI](../../tools/mcos-device/README.md) can start execution, wait for approval on the phone, and verify the result in separate calls tied to one run ID.
 
-| Proposal | Decision and current state |
-|---|---|
-| Core / Adapter / Extension / Services | Accept as responsibility groups; retain artifact names |
-| No model/marketplace runtime requirement | Base host initializes neither; artifact dependency reduction is pending |
-| Platform-independent protocol | Preserve existing DSL/typed IR, errors and version rules; a new JSON envelope needs an RFC and migration |
-| New manifest and lifecycle | Map existing PluginManifest, PluginLoader, install states and onLoad/onUnload first; avoid competing authorities |
-| Optional Workflow / Memory | Accept the goal; review RuntimeGateway, authorization, expansion and recovery dependencies before extraction |
-| Plugin Testkit / CLI | Reuse conformance and host regression first; add tooling based on external integration friction |
-| Bidirectional MCP | Keep inbound tool adaptation; design caller identity, scopes, execution handles and consent before exposing commands |
-| More platforms and marketplace growth | Follow independent host and external plugin validation |
+## Iteration priorities
 
-Illustrative identifiers and fields such as `system.get_battery`, `device.camera.capture`, `protocolVersion` and `capabilities` are not current APIs. Actual descriptors remain authoritative, including `sys.device.battery` and `camera.capture`. Documentation edits must not silently change contracts.
+| Priority | Goal | Acceptance |
+|---|---|---|
+| 1 | Consolidate docs, entry points, and ownership | A new developer can find the single app, embedded-host entry point, execution flow, and verification commands. |
+| 2 | Separate host Runtime assembly from extensions | A host capability runs without a model or remote service. The full host, approval, audit, and recovery retain regression coverage. |
+| 3 | Close the app task loop | Users can start a goal or preset, confirm it, cancel it, understand failures, and revisit the actual result. |
+| 4 | Improve reliability of authorized device tooling | Each step has observable before-and-after state, ambiguous UI or timeouts are diagnosable, and approval and artifacts have independent checks. |
 
-## 3. Next deliveries and acceptance
-
-1. Verify this host on a device, recording artifacts, rejection and cancellation separately from JVM evidence.
-2. Reduce base-host artifact dependencies, document migration from CompositionRoot/AppDeps, and retain the working sample.
-3. Provide a custom-plugin example buildable outside the main repository using manifest/conformance and publication checks.
-4. Connect business run IDs to audit records and define persistent diagnostics for early rejection/validation failures.
-5. Validate a second independent business host before stabilizing outward MCP and plugin lifecycle APIs.
-
-Five-minute integration, thirty-minute plugin authoring, two independent apps and three external-author plugins are validation targets, not achieved metrics. Releases follow actual compatibility and release gates rather than a fixed week-based promise of 1.0.
-
-## 4. Security and compatibility boundaries
-
-The base host loads trusted app-shipped plugins only. Android same-UID processes provide crash and memory separation, not a complete OS sandbox for hostile code. Application authorization, OS permissions and runtime approval remain distinct controls.
-
-Existing protocol fixtures and security gates constrain the changes. New build modules do not imply a new protocol; breaking public contracts requires migration guidance and an available path for existing artifacts.
-
-## 5. Confirmed next stage: ADB device-control prototype
-
-On 2026-11-27 the user confirmed: close the current host task flow first, then prioritize an agent observing, operating and verifying Android tasks through ADB. Dependency reduction remains engineering backlog; the ADB prototype is the next iteration.
-
-Scope: explicit device selection, connection state and timeouts, screenshots and UI trees, observation-guided tap/type/swipe/back/app launch, and post-action observation with verification results. Start with a local developer CLI before choosing MCP integration. Authorized ADB is required; Companion and other platforms follow later evaluation.
-
-Use the record-export host as the acceptance task: observe → locate export → handle consent → verify completion and actual file. Successful input delivery is not business success; screenshot, UI state and artifacts provide separate evidence.
-
-Device adaptation stays at the platform edge; common runtime owns command validation, execution state and audit. Native host capability access remains available without changing existing command/artifact contracts.
-
-The local ADB CLI now observes, launches and taps the reference app and verifies its output artifact. The host runtime handles on-device consent. General gestures, screenshots and MCP integration remain next-stage work. See the [ADB prototype](../../tools/mcos-device/README.md).
+Marketplace, MCP, and sync keep their existing extension boundaries. Additional platforms, public marketplace operations, and inbound control of the phone depend on validated use cases, permission scopes, and approval interfaces. Keep source, device evidence, and publication records distinct when reporting availability.

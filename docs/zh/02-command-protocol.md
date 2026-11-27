@@ -706,7 +706,7 @@ IR 的 `meta` 对象携带的是**运行时来源信息**，而非业务数据�
 
 ### 10.2 失败信封
 
-> ✅ **实现状态：** `retryable` 与 `details` 已实现——`CommandResult.Err(code, message, retryable, details: JsonObject)` 位于 `mcos-sdk`，由 Executor 的结构化错误映射填充。见 [11-implementation-status.md](./11-implementation-status.md) §7。
+> ✅ **实现状态：** `retryable` 与 `details` 已实现——`CommandResult.Err(code, message, retryable, details: JsonObject)` 位于 `mcos-sdk`，由 Executor 的结构化错误映射填充。见 [`CommandResult.kt`](../../mcos-sdk/src/main/kotlin/com/morainet/mcos/sdk/CommandResult.kt)。
 
 ```json
 {

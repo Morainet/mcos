@@ -1,5 +1,7 @@
 # MCOS 愿景
 
+> **历史设计参考。** 本页保留早期设计、术语和章节引用。实际模块、接线和迁移设计请看[当前架构](./13-architecture-convergence.md)，开发优先级请看[产品方向](./15-product-direction.md)。
+
 > **语言:** [English](../en/00-vision.md) · 中文（当前）
 
 > **Status:** Draft  
@@ -207,7 +209,7 @@ Apache 式的开放：开放协议、开放 SDK、开放市场 API。
 
 ## 5. 仓库拓扑
 
-> ✅ **实现状态：** P1（MVP）与 P2 的大部分已交付——下述拓扑是仓库的**实际**布局（12 个 Gradle 源码模块，含 `mcos-server`），而非目标。阶段历史见 [10-roadmap.md](./10-roadmap.md)；逐子系统状态见 [11-implementation-status.md](./11-implementation-status.md) §3。
+> 以下目录对应早期 P1 阶段。当前仓库布局见[架构文档](./13-architecture-convergence.md)。
 
 ```text
 mcos/
@@ -226,7 +228,7 @@ mcos/
 └── docs                  # This architecture & RFC set (exists today)
 ```
 
-> 各模块的依赖图、包名与构建坐标见 [REPOSITORIES.md](./REPOSITORIES.md)。实现阶段划分见 [11-implementation-status.md](./11-implementation-status.md)。
+> 各模块的依赖图、包名与构建坐标见 [当前架构](./13-architecture-convergence.md)。实现阶段划分见 [11-implementation-status.md](./11-implementation-status.md)。
 
 逻辑栈：
 

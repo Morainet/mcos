@@ -7,7 +7,7 @@
 >
 > **Inspiration:** MemGPT/Letta (three-tier memory hierarchy + paging) · Claude Code memory (CLAUDE.md/MEMORY.md pinning + compaction) · ChatGPT memory (cross-chat fact store + retrieval) · Apple Intelligence App Intents (on-device personal context) — adapted to a mobile-first, local-first, token-constrained Command OS where memory is the primary lever for context reuse and token reduction.
 >
-> ✅ **Implementation status:** Memory is implemented **beyond** the P2 scope — `MemoryStore` (TTL / tags / fuzzy `resolveRef` / CREATED-UPDATED-CONFLICT semantics / superseded history), the Archival tier (`EpisodicMemory` + `RunSummarizer` + `EntityMatcher` §8.3), device sync (vector-clock LWW + `SyncPolicy`, §11), E2E-encrypted sync blobs (§11.0) and the standalone `mcos-server` are all delivered. Spec-only: on-device MemGPT paging. Status: [11-implementation-status.md](./11-implementation-status.md) §3.
+> ✅ **Implementation status:** Memory is implemented **beyond** the P2 scope — `MemoryStore` (TTL / tags / fuzzy `resolveRef` / CREATED-UPDATED-CONFLICT semantics / superseded history), the Archival tier (`EpisodicMemory` + `RunSummarizer` + `EntityMatcher` §8.3), device sync (vector-clock LWW + `SyncPolicy`, §11), E2E-encrypted sync blobs (§11.0) and the standalone `mcos-server` are all delivered. Spec-only: on-device MemGPT paging. Status: [implementation status](./11-implementation-status.md).
 
 ---
 
@@ -1090,7 +1090,7 @@ This means compaction is "lossy but recoverable": the narrative summary may lose
 
 ## 16. MVP vs V1
 
-Aligned to the P1/P2/P3 phasing from [11-implementation-status.md](./11-implementation-status.md) and [10-roadmap.md](./10-roadmap.md) §5.3:
+The original P1/P2/P3 phases follow the [historical roadmap](./10-roadmap.md) §5.3:
 
 | Feature | MVP (P1 seam) | V1 (P2) | V2 (P3) |
 |---------|---------------|---------|---------|

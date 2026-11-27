@@ -5,7 +5,7 @@
 
 # MCOS — Mobile Command OS
 
-**A secure command runtime embedded in Android applications.**
+**An open-source Android task agent powered by an embeddable secure runtime.**
 
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.morainet/mcos-bom.svg?label=Maven%20Central)](https://central.sonatype.com/artifact/io.github.morainet/mcos-bom/overview)
 [![CI](https://img.shields.io/github/actions/workflow/status/Morainet/mcos/ci.yml.svg?branch=main&label=CI)](https://github.com/Morainet/mcos/actions/workflows/ci.yml)
@@ -20,7 +20,7 @@
 
 [Quick Start](#quick-start) · [How It Works](#how-it-works) · [What's Inside](#whats-inside) · [Documentation](#documentation) · [Report a Bug](https://github.com/Morainet/mcos/issues) · [中文文档](./README.zh-CN.md)
 
-*A secure command runtime embedded in Android applications, with a demo app demonstrating reliable phone capabilities through natural language or preset tasks.*
+*Give MCOS a goal on your phone. It uses available tools, asks for approval when needed, and reports what happened.*
 
 [Current architecture and development boundaries](./docs/en/13-architecture-convergence.md)
 
@@ -41,54 +41,17 @@
 
 ## Why MCOS
 
-- 🧠 **AI generates commands — it never touches the device.** Intents, accessibility, Bluetooth, IoT — every real operation is executed by the Runtime *after* permission checks. AI stays in the sandbox.
-- 🔒 **The Runtime owns security.** Permissions, rate limits, confirmation policy, and audit all live in the runtime kernel — never left to a plugin's goodwill.
-- 🔀 **Model-agnostic.** OpenAI, Gemini, Qwen, DeepSeek, Claude, on-device models — swap the model, keep the same command surface.
-- 📜 **Protocol over model.** HTTP unified the web; SQL unified data access. MCOS aims to unify mobile app capabilities with one open Command Protocol.
-- 🧱 **Opt-in process isolation.** Plugins can run in a separate `:mcos_plugin` process behind Binder RPC with stamp-scoped facades.
-- 🌍 **Open, self-hostable ecosystem.** Marketplace client, recipe store, sync server, AI planning — everything in one repo, all open source.
+MCOS gives a phone-based Agent access to host-registered capabilities, with approvals, results, and audit for each task. Android developers can embed the same command Runtime in their own app.
 
 ## How It Works
 
-Natural language in, auditable commands out — the AI plans, the Runtime enforces, plugins execute:
-
-```text
-   "Compress today's photos and send them to Tom"
-                      │
-                      ▼
-        ┌─────────────────────────┐
-        │       AI Planner        │  model-agnostic: OpenAI · Gemini · Qwen ·
-        └───────────┬─────────────┘  Claude · DeepSeek · on-device
-                    ▼
-              DSL ──► IR            typed · auditable · replayable
-                    ▼
-        ┌─────────────────────────┐
-        │    7-stage Executor     │  permission · rate-limit · confirmation ·
-        └───────────┬─────────────┘  stamp scope · audit
-                    ▼
-        ┌─────────────────────────┐
-        │  Plugins (isolated in   │  camera · files · iot · mcp · system …
-        │  optional :mcos_plugin) │
-        └───────────┬─────────────┘
-                    ▼
-               HostServices        net · files · ui · secureStore · clock
-                    │
-                    ▼
-                Audit Log          every side effect on the record
-```
-
-Example utterances and their compiled commands:
-
-```text
-> camera.scan          "scan this barcode"             帮我扫一下这个二维码
-> photo.compress       "compress today's photos"       把今天拍的照片压缩一下
-> home.scene.movie     "movie time"                    电影模式
-> iot.ac.set           "turn on the AC at 24°C"        打开空调，24 度
-```
+Presets submit command requests directly. For natural language, a configured model plans from the available commands. The Runtime compiles the request and applies validation, permissions, and approval. Plugins handle the capabilities, and the app presents the result. See the [current architecture](./docs/en/13-architecture-convergence.md).
 
 ## Quick Start
 
-Start with the [independent record-export host](./docs/en/14-embedded-host.md): one app-owned command, preview, confirmation, a real output file and audit, with no model key or marketplace configuration. The complete demo remains available for advanced integrations.
+Open the [MCOS Android app](./mcos-android/README.md) and try **Export the latest completed inspection** on the Agent home screen. The sample works before you connect a model. Enable a model in Settings to enter your own goals.
+
+The App owns task submission, approval, and results. The developer-only [ADB host](./tools/mcos-device/README.md) can provide an inspection tool to the Agent on authorized debug devices.
 
 ### Android host app
 
@@ -110,18 +73,7 @@ dependencies {
 }
 ```
 
-```kotlin
-class MyApplication : Application(), McosHostApp {
-    override lateinit var deps: AppDeps
-    override fun onCreate() {
-        super.onCreate()
-        deps = CompositionRoot.create(this)      // processIsolation = true enables the sandbox
-        RuntimeBootstrap.ensureRehydrated(deps)  // restore plugins + reschedule persisted alarms
-    }
-}
-```
-
-That's it — the SDK's manifest merge brings in the receivers, permissions, FileProvider, and the optional `:mcos_plugin` isolation process for free. See the [SDK README](./mcos-android-sdk/README.md) for the full integration guide.
+See the [Android SDK guide](./mcos-android-sdk/README.md#全量宿主接入) for the Application wiring. The host exposes its process-level assembly through `McosHostApp.mcosDeps` so SDK receivers can restore tasks.
 
 ### JVM host & plugin authors
 
@@ -135,44 +87,17 @@ dependencies {
 
 ## What's Inside
 
-A working multi-module Gradle project (every module has its own README):
+- [`mcos-android`](./mcos-android/README.md) is the Android Agent app and the device debugging entry point.
+- [`mcos-android-sdk`](./mcos-android-sdk/README.md) assembles the host. `mcos-runtime` and `mcos-runtime-core` manage execution, and `mcos-security` provides the security kernel.
+- `mcos-sdk` defines the plugin contracts. Models, marketplace, sync, and device adapters have their own entry points.
 
-| Module | Content | Status |
-|:-------|:--------|:------:|
-| 📜 [`mcos-sdk`](./mcos-sdk/README.md) | Plugin contracts (`McosPlugin`, `CommandHandler`, `HostServices`, `ExecutionContext`, `AuthStamp`, `DirectorySandbox`) | ✅ |
-| 🔒 [`mcos-security`](./mcos-security/README.md) | Permission kernel (AuthStamp minting/signing), rate limiter, egress policy + `DomainGlob`, enterprise policy, plugin trust gate, crash quarantine, audit log, schema validation | ✅ |
-| ⚙️ [`mcos-runtime-core`](./mcos-runtime-core/README.md) | DSL parser → IR, command registry (incl. manifest-only registration), 7-stage executor, isolation dispatch seam + stamp-scoped facades, scheduler (§8 priority lanes + §8.5 device mutex), event bus, workflow engine, memory | ✅ |
-| 🧠 [`mcos-llm`](./mcos-llm/README.md) | AI planner/chat, multi-provider registry, grammar-constrained decoding, prompt-injection guard, multi-turn agent loop | ✅ |
-| 🛒 [`mcos-marketplace`](./mcos-marketplace/README.md) | Index client, install pipeline (incl. manifest-only), blocklist verification, recipe store, dependency resolution, user reports, opt-in telemetry, install wizard | ✅ |
-| 🚀 [`mcos-runtime`](./mcos-runtime/README.md) | Facade (`McosRuntime` builder, confirmation coordinator, §8 scheduler admission, trigger coordinator) wiring all submodules | ✅ |
-| 🤖 [`mcos-android-sdk`](./mcos-android-sdk/README.md) | UI-free Android host SDK: composition root, headless bootstrap, schedule/boot receivers, activity-result & permission bridges, MCP server management, dynamic `.mcos` loading, opt-in `:mcos_plugin` process isolation | ✅ |
-| 📱 [`mcos-android`](./mcos-android/README.md) | Compose demo shell built on the SDK (replaceable reference UI) | ✅ |
-| 🖧 [`mcos-server`](./mcos-server/README.md) | Self-hosted sync endpoint: `SyncBlobTransport` REST contract + mandatory Bearer-token auth, opaque blob store | ✅ |
+![MCOS architecture layers showing the app, Android host, Runtime, and capability plugins](./docs/images/mcos-architecture-layers-en.png)
 
-🔌 Plugins are independently buildable in `plugins/`: `mcos-plugin-hello`, `mcos-plugin-system`, `mcos-plugin-camera`, `mcos-plugin-files`, `mcos-plugin-mcp`, `mcos-plugin-iot`, `mcos-plugin-intent` (each with tests and a README).
-
-> Plus an internal test fixture, [`:plugins:mcos-plugin-devicefixture`](./plugins/mcos-plugin-devicefixture/README.md) — **not published, not in the android-sdk default set**: it feeds `mcos-android-sdk`'s `BinderIsolationDeviceTest` so the §8 Binder-kernel boundary has a real on-device end-to-end test (item 50). Dexed on every build; no host app should depend on it.
+See the [current architecture](./docs/en/13-architecture-convergence.md) for the full module table, current dependencies, and target architecture.
 
 ## Documentation
 
-Available in two languages — [English](./docs/en/README.md) · [中文](./docs/zh/README.md):
-
-| # | Topic | What's in it |
-|:--:|:------|:-------------|
-| 00 | [Vision](./docs/en/00-vision.md) | why MCOS exists · principles · non-goals |
-| 01 | [Architecture](./docs/en/01-architecture.md) | layers · request lifecycle · process model · IPC contracts · threading |
-| 02 | [Command Protocol RFC](./docs/en/02-command-protocol.md) | **the spec core**: DSL · IR · type system · error codes |
-| 03 | [Runtime](./docs/en/03-runtime.md) | parser · registry · executor · scheduler · permission kernel · audit |
-| 04 | [Plugin SDK](./docs/en/04-plugin-sdk.md) | manifest · handler contract · host services |
-| 05 | [Workflow Engine](./docs/en/05-workflow.md) | graph IR: sequence, parallel, retry, compensation, triggers |
-| 06 | [AI Planner](./docs/en/06-agent.md) | AIProvider · command compiler · repair loop |
-| 07 | [Memory](./docs/en/07-memory.md) | memory tiers · reference resolution · privacy |
-| 08 | [Security](./docs/en/08-security.md) | threat model · defense in depth · confirmation UX |
-| 09 | [Marketplace](./docs/en/09-marketplace.md) | signing · install/update · recipe store |
-| 10 | [Roadmap](./docs/en/10-roadmap.md) | P0 → P4 roadmap |
-| 11 | [Implementation Status](./docs/en/11-implementation-status.md) | docs ↔ code mapping (**read this first for the current state**) |
-
-Golden DSL ↔ IR fixtures: [`docs/fixtures/`](./docs/fixtures/). For the full dependency graph, see [`docs/en/REPOSITORIES.md`](./docs/en/REPOSITORIES.md).
+[English docs](./docs/en/README.md) · [中文文档](./docs/zh/README.md) · [Current implementation](./docs/en/11-implementation-status.md) · [Product direction](./docs/en/15-product-direction.md) · [Command fixtures](./docs/fixtures/README.md)
 
 ## Build
 
@@ -180,8 +105,8 @@ Golden DSL ↔ IR fixtures: [`docs/fixtures/`](./docs/fixtures/). For the full d
 
 ```bash
 sh gradlew build        # full gate (JVM + Android + tests)
-sh gradlew test         # JVM module tests only
-sh gradlew :mcos-android:assembleDebug   # demo shell APK
+sh gradlew :mcos-runtime-core:test    # Runtime core unit tests
+sh gradlew :mcos-android:assembleDebug   # Android Agent Debug APK
 ```
 
 ## Release

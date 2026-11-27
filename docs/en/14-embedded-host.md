@@ -1,58 +1,35 @@
-# Independent host: exporting an application record
+# Android Debug embedded-host regression
 
-This sample targets developers adding command execution to an existing Android app. The host registers `record.export`; a preset task previews the plan, requests confirmation, writes an actual file, displays the result, and records an audit trail. A model planner can be added above this path separately.
+[中文](../zh/14-embedded-host.md) · [Current architecture](./13-architecture-convergence.md)
 
-## Run
+`RecordExportActivity` ships in the `mcos-android` Debug APK. `RecordDebugHost` assembles a base Runtime for exercising preview, confirmation, file creation, and audit with app-owned record commands. `MainActivity` launches the user-facing Agent with the separate full-host assembly.
+
+## Run the regression
+
+These commands use the current checkout. `createEmbedded` is the base-host entry point in this source tree. The `v0.0.6` tag exposes the full `CompositionRoot.create` entry point.
 
 ```bash
-sh gradlew :mcos-sample-embedded:testDebugUnitTest :mcos-sample-embedded:assembleDebug
-adb install -r mcos-sample-embedded/build/outputs/apk/debug/mcos-sample-embedded-debug.apk
-adb shell am start -n com.morainet.mcos.sample.embedded/.MainActivity
+sh gradlew :mcos-android:testDebugUnitTest :mcos-android:assembleDebug
+adb install -r mcos-android/build/outputs/apk/debug/mcos-android-debug.apk
+adb shell am start -n com.morainet.mcos.android/.demo.records.RecordExportActivity
 ```
-
-MCOS Record Export installs separately from the full demo shell. No model key, server, account, or media permission is needed. The sample removes inherited SDK permissions/components and writes only to app-private storage.
-
-## Actions and outcomes
 
 | Action | Expected outcome |
 |---|---|
-| Preview and export record → Export | Private txt file, displayed filename/content, run ID and audit count |
-| Preview and export record → Reject | Explicit failure and no file |
-| Try a missing record → Export | Record not found and no file |
-| Confirmation dialog → Cancel task | Cancel the run so approval cannot remain orphaned |
+| **Preview and export record** → **Export** | Export `demo-001` and display the run ID, filename, record contents, and audit count. |
+| **Find latest completed record** → **Preview and export located record** → **Export** | Find and export `demo-002`. The CLI can verify the run against that record ID. |
+| **Reject** or **Cancel task** in the confirmation dialog | The run reports failure or cancellation. The run has created no file before approval. |
+| **Try a missing record** → **Export** | Display `Completed record not found`. The run creates no file. |
 
-The source is the host's fixed business record `demo-001`. Each run creates a new file under `filesDir/record-exports/`. File URIs are private references, not cross-app sharing URLs. Audits persist under `filesDir/embedded/audit.jsonl`, encrypted using existing device-key handling, with HMAC export signatures.
+The manual regression runs offline. Each approved export creates a new private text file under `filesDir/record-exports/`. Base-host audit lives in `filesDir/embedded/audit.jsonl`. Use the [ADB guide](../../tools/mcos-device/README.md) to verify the terminal status and file by run ID. Record the APK source, Android version, and approval path for device checks.
 
-## Minimal integration path
+## Embed an app-owned capability
 
-1. Implement `McosPlugin`: command schema, write side-effect classification, and handler; see `RecordExportPlugin.kt`.
-2. Call `CompositionRoot.createEmbedded(context, plugins)` from a process-lifetime Application coroutine.
-3. Present `runtime.preview(request)`, then call `execute(request)`.
-4. Collect `observe(runId)`, answer `ConfirmationNeeded` through `respondConfirmation`, and distinguish success, failure, and cancellation.
-5. Present actual `ArtifactEmitted` output and flush the audit after termination. Cancel the page's run when its Activity is destroyed.
+1. Implement `McosPlugin` with a command schema, side-effect class, and handler. Refer to [`RecordExportPlugin.kt`](../../mcos-android/src/main/kotlin/com/morainet/mcos/android/demo/records/RecordExportPlugin.kt).
+2. Call the suspend `CompositionRoot.createEmbedded(context, plugins)` from an Application-scoped coroutine. For Activity interactions, supply wired host services through `EmbeddedRuntime.create(hostServices, plugins, auditLog)` or use the full host.
+3. Present `runtime.preview(request)` and start the run with `execute(request)`. Collect `observe(runId)`, pass decisions to `respondConfirmation`, and handle success, failure, and cancellation.
+4. Use `ArtifactEmitted` and the terminal event to present the actual output. The regression Activity cancels its run when destroyed and flushes the audit after a terminal result.
 
-Implementation:
+See the [Debug regression screen](../../mcos-android/src/debug/kotlin/com/morainet/mcos/android/demo/records/), [EmbeddedRuntime](../../mcos-android-sdk/src/main/kotlin/com/morainet/mcos/android/EmbeddedRuntime.kt), and [host regression test](../../mcos-android/src/testDebug/kotlin/com/morainet/mcos/android/demo/records/RecordExportIntegrationTest.kt).
 
-- [Independent host source](../../mcos-sample-embedded/src/main/kotlin/com/morainet/mcos/sample/embedded/)
-- [Base assembly](../../mcos-android-sdk/src/main/kotlin/com/morainet/mcos/android/EmbeddedRuntime.kt)
-- [JVM end-to-end verification](../../mcos-sample-embedded/src/test/kotlin/com/morainet/mcos/sample/embedded/RecordExportIntegrationTest.kt)
-
-## Boundaries and verification
-
-Base assembly accepts trusted app-shipped plugins only. The host grants their declared permissions; side-effect confirmations still apply. It does not accept arbitrary third-party code or initialize the marketplace, planner, scheduled wakes, or background recovery. Android permissions remain OS-controlled.
-
-For camera/picker interactions, supply host services with attached UI bridges through `EmbeddedRuntime.create(hostServices, plugins, auditLog)`. The convenience `createEmbedded` entry has unattached UI bridges and does not replace the full host's interactive wiring.
-
-This is runtime assembly convergence: the Android SDK artifact still transitively depends on LLM, marketplace and built-ins, and runtime still depends on marketplace. Artifact/dependency reduction is pending.
-
-JVM regression drives the real runtime, the same assembly and export plugin: no writes before approval, correct file contents/audit after approval, rejection, missing records, and argument validation. Android windows and system lifecycle still require the device checks above.
-
-Approval rejection, argument validation failure and pre-approval cancellation are reported as run events; the current kernel does not guarantee persistent audit records for these early exits. File output and audit are not transactional: cancellation after execution or an audit failure does not imply rollback.
-
-## Verification record (2026-11-27)
-
-- Full `sh gradlew build` passed; conformance 78/78.
-- Five host integration, three base assembly and one immediate-consent-response regression passed.
-- TYH612M / Android 10 / API 29: installed and operated through the UI. Approval created the correct file; rejection, missing-record failure and pre-approval cancellation created no additional file.
-- Private audit storage existed without plaintext command/record content; package inspection showed no requested Android system permissions.
-- Device evidence covers this fixed-record scenario, not arbitrary app control or third-party isolation.
+Base assembly uses trusted app-shipped plugins. Runtime confirmation, Android system permissions, and host authorization retain their own roles. Some early exits surface through run events, so verify persistent audit coverage for the path being tested. File writes and audit are independent. Cancellation or audit failure after a write may leave the file in place.

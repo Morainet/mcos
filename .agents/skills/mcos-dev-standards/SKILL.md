@@ -13,8 +13,7 @@ description: |
 ## 概述
 
 本技能定义 MCOS 项目的编码规范与常见错误避免规则。修改任何模块代码前,逐条检查以下规则。
-本文件是**唯一权威版本**,`.zcode/skills/`、`.codebuddy/skills/` 等平台目录下的同名技能
-均为指向本目录的符号链接,不要直接编辑那些副本。
+实际模块、依赖和重设计方案见[当前架构](../../../docs/zh/13-architecture-convergence.md)。
 
 ## 项目环境
 
@@ -31,20 +30,9 @@ description: |
 
 注意:本仓库的 `gradlew` 无执行位,统一用 `sh gradlew <task>`。
 
-## 模块拓扑(按当前 build 实测)
+## 模块拓扑
 
-```
-mcos-sdk              叶子模块,无内部依赖
- └─ mcos-security         依赖 sdk
-     └─ mcos-runtime-core     依赖 sdk、security
-         ├─ mcos-marketplace      依赖 sdk、security、core
-         ├─ mcos-runtime (facade) 依赖 sdk、security、core、marketplace
-         ├─ mcos-llm             依赖 sdk、core(经 core.api 的 RuntimeGateway 端口驱动内核,不依赖门面)
-         └─ plugins/*                各插件只依赖 sdk
-mcos-android-sdk      依赖 sdk、security、core、facade、llm、marketplace、内置插件（无 UI 库,禁止 Compose/ViewModel 依赖）
-mcos-android          依赖 android-sdk + sdk、security、core、facade、llm、marketplace、plugin-mcp（Compose 演示壳,包 …android.demo）
-mcos-server           依赖 core（仅 test）
-```
+修改前按[当前依赖表](../../../docs/zh/13-architecture-convergence.md#当前-gradle-依赖)和 `build.gradle.kts` 核对。Android App 开发使用 `mcos-android`。宿主集成使用无 UI 的 `mcos-android-sdk`。
 
 **包命名规则(模块一一对齐,由 PackageBoundariesTest 强制):**
 - `com.morainet.mcos.sdk` — SDK 契约层
@@ -55,14 +43,14 @@ mcos-server           依赖 core（仅 test）
 - `com.morainet.mcos.marketplace.*` — 配方商店、遥测
 - `com.morainet.mcos.plugin.<name>` — 插件模块
 - `com.morainet.mcos.android`（含 `host`、`host.isolation` 隔离 RPC 纯层）— Android 宿主 SDK（mcos-android-sdk）
-- `com.morainet.mcos.android.demo` — Compose 演示壳（mcos-android）
-- `com.morainet.mcos.server` — blob/索引服务
+- `com.morainet.mcos.android.demo` — Android Agent 与 Debug 回归页（mcos-android）
+- `com.morainet.mcos.server` — 同步与企业策略服务（mcos-server）
+- `com.morainet.mcos.indexserver` — 市场索引和评审（mcos-index-server）
 - 跨模块 split-package 禁止;`runtime.` 前缀仅属运行时内核两模块;新模块必须显式注册根包
 
 ## 规则 1: kotlinx.serialization.json 扩展属性导入
 
-`jsonObject` / `jsonPrimitive` / `jsonArray` 是 `JsonElement` 的扩展属性,通配符导入
-`kotlinx.serialization.json.*` 不保证覆盖。使用处必须显式导入:
+`jsonObject` / `jsonPrimitive` / `jsonArray` 是 `JsonElement` 的扩展属性。按项目风格显式导入：
 
 ```kotlin
 import kotlinx.serialization.json.jsonObject
@@ -83,7 +71,7 @@ Compose BOM 2024.12.01 中 `TopAppBar`、`TopAppBarDefaults` 等标记为
 
 ## 规则 4: 模块依赖与 api/implementation
 
-依赖方向必须与上方拓扑一致,不允许新增环(尤其 llm→facade 是唯一合法反向边)。
+维持项目依赖无环。`mcos-llm` 生产代码通过 `RuntimeGateway` 使用内核，`mcos-runtime` 仅用于 LLM 模块的集成测试。
 公开签名(公开类/函数/属性的类型、公开函数返回类型)出现某依赖的类型才用 `api`,
 否则 `implementation`。模板:
 
@@ -188,6 +176,6 @@ val r = ResolveResult.NotFound("cmd")
 ## 权威参考
 
 - `references/api_reference.md` — kotlinx.serialization / Material3 / SDK 核心类型速查
-- `docs/zh/01-architecture.md` §3 — 包→模块对照与模块边界规则
+- `docs/zh/13-architecture-convergence.md` — 当前架构、模块边界与迁移设计
 - `docs/zh/03-runtime.md` §4.2 — 运行时事件通道保证
 - `.github/workflows/ci.yml` — CI 分片与门禁命令

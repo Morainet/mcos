@@ -3,7 +3,7 @@
 > **状态：** P3 遗留收口 —— 索引托管（10-roadmap §6、09-marketplace §11.5）。
 > 实现状态注（随代码落地维护）：机器可校验的契约是 `mcos-index-server/src/test` 中的可执行互操作套件
 > （真服务端 + 真实 `MarketplaceIndex`/`JdkMarketplaceHttpTransport` 客户端），以及驱动共享评审门禁引擎的
-> `mcos-conformance` "market" 套件（[11-implementation-status.md](./11-implementation-status.md) item 52）。
+> `mcos-conformance` "market" 套件。
 > OpenAPI 3.1 `api/openapi.yaml` 镜像（09 §11.5）推迟到端点面稳定后；JVM 互操作测试即活契约。
 
 ## 1. 目的
@@ -11,12 +11,12 @@
 公共索引服务端是 P3 生态市场在服务端的落点。它承载：**索引**（可搜索的包/配方元数据）、
 **发布者评审管线**（提交 → CI 门禁 1–11 → 决策）、**密钥注册表** 与 **签名黑名单**（每个客户端拉取）。
 
-本文档是 `mcos-index-server`（本仓库，零三方运行时依赖）实现、`MarketplaceIndex`（已交付客户端，
+本文档是 `mcos-index-server`（使用 JDK HTTP 服务与共享评审组件）实现、`MarketplaceIndex`（已交付客户端，
 `mcos-marketplace`）对接的契约。它镜像 [09-marketplace.md](./09-marketplace.md) §5/§6/§11/§14 的规范面，
 并补齐服务端专属缺口（注册表持久化、管理 API、密钥轮换 runbook）。
 
 > **与 blob 同步服务端的关系：** `mcos-server` 实现 *记忆同步* 端点（07 §11）。索引服务端是独立进程/角色；
-> 二者共享自托管姿态（零三方依赖、`com.sun.net.httpserver`、token 鉴权、反向代理 TLS），作为独立服务分别运行。
+> 二者共享自托管姿态（`com.sun.net.httpserver`、token 鉴权、反向代理 TLS），作为独立服务分别运行。
 
 ## 2. 范围与诚实边界（MVP）
 

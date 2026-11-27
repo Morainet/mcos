@@ -1,5 +1,7 @@
 # MCOS 路线图（Roadmap）
 
+> **历史设计参考。** 本页保留早期设计、术语和章节引用。实际模块、接线和迁移设计请看[当前架构](./13-architecture-convergence.md)，开发优先级请看[产品方向](./15-product-direction.md)。
+
 > **语言:** [English](../en/10-roadmap.md) · 中文（当前）
 
 > **状态:** 草案  
@@ -181,9 +183,9 @@ flowchart LR
 - [x] 架构文档集（`docs/00`–`10`）
 - [x] 黄金 DSL 用例目录（`docs/fixtures/01`–`08`，含正例与反例）
 - [x] CONTRIBUTING + LICENSE（Apache-2.0）
-- [x] Kotlin 多模块骨架 —— **P1 已交付**（12 个源码模块，布局与 [REPOSITORIES.md](./REPOSITORIES.md) 一致）
+- [x] Kotlin 多模块骨架 —— **P1 已交付**（12 个源码模块，布局与 [当前架构](./13-architecture-convergence.md) 一致）
 
-> 阶段 0 设计已完成，且阶段 1 已交付骨架、DSL 解析器与完整 MVP 管线 —— 已交付清单见 [11-implementation-status.md](./11-implementation-status.md) §6。
+> 阶段 0 设计已完成，且阶段 1 已交付骨架、DSL 解析器与完整 MVP 管线 —— 已交付清单见 [当前实现](./11-implementation-status.md)。
 
 ### 3.1 P0 交付物清单
 
@@ -193,11 +195,11 @@ flowchart LR
 | 双语镜像（EN + ZH） | ✅ 完成 | `docs/en/` + `docs/zh/` |
 | 黄金 DSL 用例（正例 + 反例） | ✅ 完成 | `docs/fixtures/01`–`08` |
 | 仓库 README + 中文 README | ✅ 完成 | `README.md`、`README.zh-CN.md` |
-| REPOSITORIES 模块索引 | ✅ 完成 | `docs/en/REPOSITORIES.md` |
+| REPOSITORIES 模块索引 | ✅ 完成 | [当前架构](./13-architecture-convergence.md) |
 | CONTRIBUTING（双语同步规则） | ✅ 完成 | `CONTRIBUTING.md` |
 | CHANGELOG（扩充历史） | ✅ 完成 | `CHANGELOG.md` |
 | 实现状态矩阵 | ✅ 完成 | [11-implementation-status.md](./11-implementation-status.md) |
-| Kotlin 多模块骨架 | ✅ P1 已交付 | 12 个模块——[REPOSITORIES.md](./REPOSITORIES.md) |
+| Kotlin 多模块骨架 | ✅ P1 已交付 | 12 个模块——[当前架构](./13-architecture-convergence.md) |
 | 参考实现 DSL 解析器 | ✅ P1 已交付 | `mcos-runtime-core` `parse/`（DslParser） |
 
 ### 3.2 P0 → P1 过渡门槛
@@ -753,7 +755,7 @@ MCOS 维护两棵语言树：
 ### 13.0 行动清单
 
 1. ✅ 选择 LICENSE（Apache-2.0）—— 已提交为 `LICENSE`
-2. ✅ 创建与仓库拓扑匹配的 Gradle 多模块骨架 —— 12 个模块已落地（见 [REPOSITORIES.md](./REPOSITORIES.md)）
+2. ✅ 创建与仓库拓扑匹配的 Gradle 多模块骨架 —— 12 个模块已落地（见 [当前架构](./13-architecture-convergence.md)）
 3. ✅ 实现参考实现 DSL 解析器 + 黄金测试 —— `DslParser` + 8 个黄金用例全绿（[02 §16](./02-command-protocol.md)）
 4. ✅ 交付 `hello.world` + `camera.capture` 垂直切片 —— 四个内置插件在 Android 外壳端到端运行并写审计日志
 5. 🟡 每日为一条真实的个人工作流内测（dogfood）CLI —— Android 演示已覆盖全流程；持续每日内测仍在进行
@@ -763,7 +765,7 @@ MCOS 维护两棵语言树：
 | # | 动作 | 完成于… |
 |---|--------|-----------|
 | 1 | LICENSE | `LICENSE` 文件已提交；`build.gradle.kts` 引用 Apache-2.0 |
-| 2 | Gradle 骨架 | `./gradlew projects` 列出 [REPOSITORIES.md](./REPOSITORIES.md) 中的所有模块；空模块可编译 |
+| 2 | Gradle 骨架 | `./gradlew projects` 列出 [当前架构](./13-architecture-convergence.md) 中的所有模块；空模块可编译 |
 | 3 | DSL 解析器 | `./gradlew :mcos-runtime:test` 通过全部黄金用例（[02 §16](./02-command-protocol.md)） |
 | 4 | 垂直切片 | `hello.world()` 与 `camera.capture()` 从 CLI 端到端执行并写入审计日志 |
 | 5 | 每日内测 | 至少 1 名核心团队成员每天使用 CLI ≥ 1 周；为每个摩擦点提交 issue |
@@ -879,7 +881,7 @@ Kernel 1.0 **不是**一个功能版本。它是下面三份契约停止变动�
 
 ### 17.3 状态
 
-**剩余项已收口（2026-09-10）；§17.1 五条标准已满足四条。** 卡住冻结的两项契约表面工作已完成（[11 item 59](./11-implementation-status.md)）：设备互斥键规范化（03 §8.5）与隔离进程的能力缺口（04 §6.1——跨 Binder 边界无假成功）。验证的一半也已到位（[11 item 60](./11-implementation-status.md)）：`kernel` 一致性套件钉住错误码词汇表、retryable 集、逐码测试覆盖登记表、未来 `dslVersion` 拒绝与 Executor 阶段顺序——且自 [item 65](./11-implementation-status.md) 起加上 §8 调度语义（全局并发帽、退避、expedited 守卫、排队取消、设备互斥纪律）——套件在 CI 中对入库 baseline 比对。**唯一开放的标准是时间条件**：黄金 fixtures 在一个完整发布周期内保持全绿且未改动。该周期完成之日，即门关闭之时。
+**剩余项已收口（2026-09-10）；§17.1 五条标准已满足四条。** 卡住冻结的两项契约表面工作已完成（[CHANGELOG](../../CHANGELOG.md)）：设备互斥键规范化（03 §8.5）与隔离进程的能力缺口（04 §6.1——跨 Binder 边界无假成功）。验证的一半也已到位（[CHANGELOG](../../CHANGELOG.md)）：`kernel` 一致性套件钉住错误码词汇表、retryable 集、逐码测试覆盖登记表、未来 `dslVersion` 拒绝与 Executor 阶段顺序——且自 [item 65](./11-implementation-status.md) 起加上 §8 调度语义（全局并发帽、退避、expedited 守卫、排队取消、设备互斥纪律）——套件在 CI 中对入库 baseline 比对。**唯一开放的标准是时间条件**：黄金 fixtures 在一个完整发布周期内保持全绿且未改动。该周期完成之日，即门关闭之时。
 
 ---
 

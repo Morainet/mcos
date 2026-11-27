@@ -6,7 +6,7 @@
 > **Package:** `mcos-runtime`  
 > **Depends on:** [01-architecture.md](./01-architecture.md), [02-command-protocol.md](./02-command-protocol.md)
 
-> ✅ **Implementation status:** the Runtime pipeline below **is implemented** — Parser, Registry, Executor (incl. the §8 scheduler: four priority lanes, §8.2 concurrency caps, §8.4 backpressure, §8.5 device serialization via workflow `requiresDevices`), Workflow Engine, Event Bus, Memory and Audit live in `mcos-runtime-core`; the Permission Kernel, egress policy and audit sinks in `mcos-security`; the thin `McosRuntime` facade in `mcos-runtime`. Known 🟡 deltas: device-mutex keys are taken literally (an `x-mcos-ref` natural-language value is not canonicalized through Memory — that is the full Stage-4 Expand, not yet built), and third-party process isolation is not yet enforced (P3, §8 of [08-security.md](./08-security.md)). The scheduler's live knobs (global cap, backoff curve, backpressure threshold) are hot-retunable at runtime via `RunScheduler.reconfigure` / `McosRuntime.reconfigureScheduler` (item 55, §19.1 semantics — builder-time caps such as lane capacity and the Executor's per-plugin limiter stay fixed at construction). Per-subsystem status: [11-implementation-status.md](./11-implementation-status.md) §3.
+> **Implementation status**　The parser, registry, executor, scheduler, workflows, events, and memory live in `mcos-runtime-core`. The permission kernel and persistent audit live in `mcos-security`. `McosRuntime`, request compilation, and confirmation coordination live in `mcos-runtime`. `DeviceSemantics.resolveDeviceIds` resolves mutex keys through memory when possible and retains unresolved values. Android host plugin isolation is opt-in.
 
 ---
 

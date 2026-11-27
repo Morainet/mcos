@@ -45,4 +45,4 @@ A Runtime is protocol-conformant (v0.1) when it:
 1. Round-trips every **positive** case (`input.dsl` ↔ `expected.ir.json`).
 2. Rejects every **negative** case with the matching error code (`expected.error.json`).
 
-See [02-command-protocol.md](../02-command-protocol.md) §16.
+See [02-command-protocol.md](../en/02-command-protocol.md) §16.
