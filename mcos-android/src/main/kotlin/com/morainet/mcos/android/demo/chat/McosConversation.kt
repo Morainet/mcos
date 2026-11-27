@@ -18,12 +18,15 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -32,18 +35,24 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import com.morainet.mcos.android.demo.McosRadius
 import com.morainet.mcos.android.demo.McosSpace
 import com.morainet.mcos.android.demo.shell.ChatMessage
 import com.morainet.mcos.android.demo.shell.ChatRole
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
@@ -164,6 +173,9 @@ private fun TaskMessage(message: ChatMessage, showAgentLabel: Boolean, onEditRet
             SelectionContainer {
                 MarkdownReply(message.text)
             }
+            if (message.useAsContext && message.text.isNotBlank()) {
+                CopyReplyButton(message.text)
+            }
         }
         ChatRole.SYSTEM -> Surface(
             modifier = Modifier.fillMaxWidth(),
@@ -186,6 +198,36 @@ private fun TaskMessage(message: ChatMessage, showAgentLabel: Boolean, onEditRet
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun CopyReplyButton(text: String) {
+    val clipboard = LocalClipboardManager.current
+    var copied by remember(text) { mutableStateOf(false) }
+    LaunchedEffect(copied) {
+        if (copied) {
+            delay(1_500L)
+            copied = false
+        }
+    }
+
+    IconButton(
+        onClick = {
+            clipboard.setText(AnnotatedString(text))
+            copied = true
+        },
+        modifier = Modifier.semantics {
+            if (copied) stateDescription = "Copied to clipboard"
+            liveRegion = LiveRegionMode.Polite
+        },
+    ) {
+        Icon(
+            imageVector = if (copied) Icons.Default.Check else Icons.Outlined.ContentCopy,
+            contentDescription = "Copy reply",
+            tint = if (copied) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(18.dp),
+        )
     }
 }
 
