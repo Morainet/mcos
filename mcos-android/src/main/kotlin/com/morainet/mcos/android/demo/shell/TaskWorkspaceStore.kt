@@ -1,5 +1,6 @@
 package com.morainet.mcos.android.demo.shell
 
+import com.morainet.mcos.android.demo.records.InspectionTask
 import com.morainet.mcos.sdk.SecureStore
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -65,22 +66,36 @@ internal class TaskWorkspaceStore(private val secureStore: SecureStore) {
         secureStore.put(KEY, snapshot.toString().encodeToByteArray())
     }
 
-    private fun decodeTask(entry: JsonObject): SavedTask = SavedTask(
-        id = entry.getValue("id").jsonPrimitive.content,
-        title = entry["title"]?.jsonPrimitive?.contentOrNull.orEmpty(),
-        draft = entry["draft"]?.jsonPrimitive?.contentOrNull.orEmpty(),
-        messages = entry.getValue("messages").jsonArray.map { value ->
-            val message = value.jsonObject
-            ChatMessage(
-                id = requireNotNull(message.getValue("id").jsonPrimitive.longOrNull),
-                role = ChatRole.valueOf(message.getValue("role").jsonPrimitive.content),
-                text = message.getValue("text").jsonPrimitive.content,
-            )
-        },
-        outcome = entry["outcome"]?.jsonPrimitive?.contentOrNull,
-        resumeAtMs = entry["resumeAtMs"]?.jsonPrimitive?.longOrNull,
-        unfinished = entry["unfinished"]?.jsonPrimitive?.booleanOrNull == true,
-    )
+    private fun decodeTask(entry: JsonObject): SavedTask {
+        val outcome = entry["outcome"]?.jsonPrimitive?.contentOrNull
+        val unfinished = entry["unfinished"]?.jsonPrimitive?.booleanOrNull == true
+        val messages = entry.getValue("messages").jsonArray
+        return SavedTask(
+            id = entry.getValue("id").jsonPrimitive.content,
+            title = entry["title"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            draft = entry["draft"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            messages = messages.mapIndexed { index, value ->
+                val message = value.jsonObject
+                val role = ChatRole.valueOf(message.getValue("role").jsonPrimitive.content)
+                val text = message.getValue("text").jsonPrimitive.content
+                // Older transcripts identify the final answer by its exact terminal outcome.
+                val legacyDialogue = when (role) {
+                    ChatRole.USER -> text != InspectionTask.TITLE
+                    ChatRole.AGENT -> !unfinished && index == messages.lastIndex && text == outcome
+                    ChatRole.SYSTEM -> false
+                }
+                ChatMessage(
+                    id = requireNotNull(message.getValue("id").jsonPrimitive.longOrNull),
+                    role = role,
+                    text = text,
+                    useAsContext = message["useAsContext"]?.jsonPrimitive?.booleanOrNull ?: legacyDialogue,
+                )
+            },
+            outcome = outcome,
+            resumeAtMs = entry["resumeAtMs"]?.jsonPrimitive?.longOrNull,
+            unfinished = unfinished,
+        )
+    }
 
     private fun encodeTask(task: SavedTask): JsonObject = buildJsonObject {
         put("id", task.id)
@@ -95,6 +110,7 @@ internal class TaskWorkspaceStore(private val secureStore: SecureStore) {
                     put("id", message.id)
                     put("role", message.role.name)
                     put("text", message.text)
+                    put("useAsContext", message.useAsContext)
                 })
             }
         })

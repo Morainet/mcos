@@ -12,7 +12,7 @@ adb install -r mcos-android/build/outputs/apk/debug/mcos-android-debug.apk
 adb shell am start -n com.morainet.mcos.android/.demo.MainActivity
 ```
 
-1. App 打开即进入对话。从输入区描述任务，点击发送按钮提交。首次提交时如果还未连接模型，App 会打开模型设置并保留草稿。
+1. App 打开即进入对话。从输入区提问或描述任务，点击发送按钮提交。首次提交时如果还未连接模型，App 会打开模型设置并保留草稿。追问会携带同一会话内近期的用户消息和已完成的文字回复。
 2. 点击输入区的 **+** 打开 **Quick tasks**，或从左上角打开工作区菜单。选择 **Export the latest completed inspection** 可试用巡检示例，在确认框核对并批准后，对话会显示经过核验的文件名和记录内容。
 3. 从菜单打开 **Task history** 可搜索、重命名和回看任务。历史保存在本机加密存储。有草稿或消息时，点击右上角的 **New task** 可开启新任务。等待审批或执行时需要先处理当前任务再切换，重启后中断的审批需要重新发起。
 4. 菜单中的 **Model settings** 用于配置模型。**Capabilities** 管理技能、MCP 和设备权限。App 默认使用浅色，可在菜单中切换 **Dark mode**。选择会保存在本机。

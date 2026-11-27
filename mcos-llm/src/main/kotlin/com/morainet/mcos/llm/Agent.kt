@@ -91,12 +91,22 @@ class McosAgent(
     private val clock: () -> Long = { System.currentTimeMillis() },
 ) : AgentBridge {
 
-    override fun runTurn(sessionId: String, userMessage: String): Flow<AgentTurnResult> = flow {
+    override fun runTurn(sessionId: String, userMessage: String): Flow<AgentTurnResult> =
+        runTurn(sessionId, userMessage, emptyList())
+
+    override fun runTurn(
+        sessionId: String,
+        userMessage: String,
+        history: List<ChatMessage>,
+    ): Flow<AgentTurnResult> = flow {
         sessions.begin(sessionId, userMessage)
-        driveTurn(sessionId, userMessage)
+        driveTurn(sessionId, userMessage, history)
     }
 
-    override fun resumeSuspended(sessionId: String): Flow<AgentTurnResult> = flow {
+    override fun resumeSuspended(sessionId: String): Flow<AgentTurnResult> =
+        resumeSuspended(sessionId, emptyList())
+
+    override fun resumeSuspended(sessionId: String, history: List<ChatMessage>): Flow<AgentTurnResult> = flow {
         // Keep the durable checkpoint until the resumed turn reaches a
         // terminal state. A crash or collector cancellation can then retry.
         val goal = sessions.claimSuspended(sessionId)
@@ -107,7 +117,7 @@ class McosAgent(
         var outcome: AgentTurnResult? = null
         try {
             // Re-enter the same loop over the retained goal + observations.
-            outcome = driveTurn(sessionId, goal)
+            outcome = driveTurn(sessionId, goal, history)
         } finally {
             sessions.finishSuspendedResume(
                 sessionId,
@@ -125,6 +135,7 @@ class McosAgent(
     private suspend fun kotlinx.coroutines.flow.FlowCollector<AgentTurnResult>.driveTurn(
         sessionId: String,
         userMessage: String,
+        history: List<ChatMessage>,
     ): AgentTurnResult {
         sessions.setActiveJob(sessionId, currentCoroutineContext().job)
         try {
@@ -140,7 +151,9 @@ class McosAgent(
                     // 1. Compile — folds this session's observations into the
                     //    prompt as extraContext (06 §11.1).
                     val context = sessions.observations(sessionId)
-                    val plan = planner.plan(userMessage, extraContext = context.ifBlank { null }) { delta ->
+                    val plan = planner.plan(
+                        userMessage, extraContext = context.ifBlank { null }, history = history,
+                    ) { delta ->
                         emit(AgentTurnResult.AnswerDelta(delta))
                     }
                     currentCoroutineContext().ensureActive()

@@ -28,6 +28,7 @@ import com.morainet.mcos.runtime.core.api.Source
 import com.morainet.mcos.llm.AgentBridge
 import com.morainet.mcos.llm.AgentSessionStore
 import com.morainet.mcos.llm.AgentTurnResult
+import com.morainet.mcos.llm.ChatMessage as LlmChatMessage
 import com.morainet.mcos.llm.ChatOrchestrator
 import com.morainet.mcos.llm.LlmConfig
 import com.morainet.mcos.llm.LlmPlanner
@@ -153,7 +154,12 @@ data class McosUiState(
 enum class ChatRole { USER, AGENT, SYSTEM }
 
 /** One conversation entry; [id] is monotonic per VM instance (stable lazy keys). */
-data class ChatMessage(val id: Long, val role: ChatRole, val text: String)
+data class ChatMessage(
+    val id: Long,
+    val role: ChatRole,
+    val text: String,
+    val useAsContext: Boolean = role == ChatRole.USER,
+)
 
 data class TaskHistoryEntry(val id: String, val title: String, val subtitle: String)
 
@@ -392,16 +398,18 @@ class McosViewModel : ViewModel() {
      * Presentation-only: everything logged via [log] still reaches the Tools
      * console unchanged.
      */
-    private fun say(role: ChatRole, text: String) {
+    private fun say(role: ChatRole, text: String, useAsContext: Boolean = role == ChatRole.USER) {
         _uiState.update { st ->
-            st.copy(transcript = (st.transcript + ChatMessage(nextMsgId++, role, text)).takeLast(MAX_LOG_LINES))
+            val message = ChatMessage(nextMsgId++, role, text, useAsContext)
+            st.copy(transcript = (st.transcript + message).takeLast(MAX_LOG_LINES))
         }
         rememberActiveTask()
     }
 
-    private fun finishReply(text: String) {
+    private fun finishReply(text: String, useAsContext: Boolean = true) {
         _uiState.update { state ->
-            val message = state.streamingReply?.copy(text = text) ?: ChatMessage(nextMsgId++, ChatRole.AGENT, text)
+            val message = state.streamingReply?.copy(text = text, useAsContext = useAsContext)
+                ?: ChatMessage(nextMsgId++, ChatRole.AGENT, text, useAsContext)
             state.copy(
                 transcript = (state.transcript + message).takeLast(MAX_LOG_LINES),
                 streamingReply = null,
@@ -409,6 +417,16 @@ class McosViewModel : ViewModel() {
         }
         rememberActiveTask()
     }
+
+    private fun List<ChatMessage>.dialogueHistory(): List<LlmChatMessage> =
+        mapNotNull { message ->
+            if (!message.useAsContext) return@mapNotNull null
+            when (message.role) {
+                ChatRole.USER -> LlmChatMessage("user", message.text)
+                ChatRole.AGENT -> LlmChatMessage("assistant", message.text)
+                ChatRole.SYSTEM -> null
+            }
+        }
 
     private var nextMsgId = 0L
 
@@ -1131,6 +1149,7 @@ class McosViewModel : ViewModel() {
         }
 
         val goal = s.nlText.trim()
+        val history = s.transcript.dialogueHistory()
         _events.value = emptyList()
         _uiState.update { it.copy(nlText = "", lastAgentOutcome = null) }
         say(ChatRole.USER, goal)
@@ -1138,7 +1157,7 @@ class McosViewModel : ViewModel() {
             loadPlugins()
             val bridge = agentBridgeOverride ?: bridgeFor(s.selectedVendorId, checkNotNull(config))
             var readOnlyPlan = false
-            bridge.runTurn(s.activeTaskId, goal).collect { result ->
+            bridge.runTurn(s.activeTaskId, goal, history).collect { result ->
                 if (result is AgentTurnResult.PlanReady && !result.needsConfirmation) {
                     _uiState.update { it.copy(streamingReply = null) }
                     readOnlyPlan = true
@@ -1169,7 +1188,7 @@ class McosViewModel : ViewModel() {
         val state = _uiState.value
         if (!taskCanSwitch() || state.taskResumeAtMs != null) return
         _uiState.update { it.copy(lastAgentOutcome = null) }
-        say(ChatRole.USER, InspectionTask.TITLE)
+        say(ChatRole.USER, InspectionTask.TITLE, useAsContext = false)
         launchAgentWork("Looking up completed inspections") {
             loadPlugins()
             val gateway = agentRuntime()
@@ -1314,7 +1333,7 @@ class McosViewModel : ViewModel() {
             val partial = _uiState.value.streamingReply
             if (partial != null && result !is AgentTurnResult.Answer) {
                 if (result is AgentTurnResult.Declined || result is AgentTurnResult.Refuse) {
-                    finishReply(partial.text)
+                    finishReply(partial.text, useAsContext = false)
                 } else {
                     _uiState.update { it.copy(streamingReply = null) }
                 }
@@ -1337,7 +1356,7 @@ class McosViewModel : ViewModel() {
             }
             is AgentTurnResult.Clarify -> {
                 log("[${now()}] ? ${result.headline}")
-                say(ChatRole.AGENT, result.headline)
+                say(ChatRole.AGENT, result.headline, useAsContext = true)
             }
             is AgentTurnResult.Answer -> finishReply(result.text)
             is AgentTurnResult.Refuse -> {
@@ -1380,7 +1399,9 @@ class McosViewModel : ViewModel() {
             } ?: return@launch
             launchAgentWork("Resuming the task") {
                 log("[${now()}] ↻ resuming suspended turn…")
-                bridge.resumeSuspended(state.activeTaskId).collect { handleAgentResult(it) }
+                val promptIndex = state.transcript.indexOfLast { it.role == ChatRole.USER }
+                val history = state.transcript.take(promptIndex.coerceAtLeast(0)).dialogueHistory()
+                bridge.resumeSuspended(state.activeTaskId, history).collect { handleAgentResult(it) }
             }
         }
     }

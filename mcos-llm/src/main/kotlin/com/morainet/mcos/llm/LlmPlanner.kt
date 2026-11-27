@@ -16,6 +16,10 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
+private const val MAX_HISTORY_MESSAGES = 8
+private const val MAX_HISTORY_BYTES = 1_800
+private const val MAX_HISTORY_MESSAGE_BYTES = 1_000
+
 /**
  * Natural-language planner that uses an LLM to translate user intent
  * into executable MCOS DSL commands.
@@ -292,12 +296,22 @@ class LlmPlanner(
         mode: PlanMode? = null,
         extraContext: String? = null,
         onTextDelta: (suspend (String) -> Unit)? = null,
+    ): LlmPlan = plan(naturalLanguage, emptyList(), mode, extraContext, onTextDelta)
+
+    /** [history] precedes this turn. Tool observations are supplied separately in [extraContext]. */
+    suspend fun plan(
+        naturalLanguage: String,
+        history: List<ChatMessage>,
+        mode: PlanMode? = null,
+        extraContext: String? = null,
+        onTextDelta: (suspend (String) -> Unit)? = null,
     ): LlmPlan {
         val tools = buildToolDescriptors()
+        val dialogue = boundedDialogue(history)
         if (mode == PlanMode.LATENCY_TIERED) {
-            return planTiered(naturalLanguage, tools, extraContext)
+            return planTiered(naturalLanguage, tools, extraContext, dialogue)
         }
-        return runLlmChain(listOf(provider) + fallbacks, naturalLanguage, tools, extraContext, onTextDelta)
+        return runLlmChain(listOf(provider) + fallbacks, naturalLanguage, tools, extraContext, dialogue, onTextDelta)
     }
 
     /**
@@ -321,7 +335,8 @@ class LlmPlanner(
     private suspend fun planTiered(
         naturalLanguage: String,
         tools: List<ToolDescriptor>,
-        extraContext: String? = null,
+        extraContext: String?,
+        history: List<ChatMessage>,
     ): LlmPlan {
         val startNanos = System.nanoTime()
         val cls = classifier.classify(naturalLanguage, recipes)
@@ -379,7 +394,7 @@ class LlmPlanner(
 
         // 3. LLM chain ordered by latency tier.
         val chain = tieredChain(listOf(provider) + fallbacks, cls)
-        val llmPlan = runLlmChain(chain, naturalLanguage, tools, extraContext)
+        val llmPlan = runLlmChain(chain, naturalLanguage, tools, extraContext, history)
         return withTelemetry(llmPlan, "llm:${llmPlan.providerId ?: "none"}")
     }
 
@@ -408,7 +423,8 @@ class LlmPlanner(
         chain: List<LlmProvider>,
         naturalLanguage: String,
         tools: List<ToolDescriptor>,
-        extraContext: String? = null,
+        extraContext: String?,
+        history: List<ChatMessage>,
         onTextDelta: (suspend (String) -> Unit)? = null,
     ): LlmPlan {
         var lastErr: LlmResponse.Err? = null
@@ -444,27 +460,15 @@ class LlmPlanner(
             if (p.tier == ProviderTier.ON_DEVICE) triedOnDevice = true
             val mode = resolveMode(p)
             if (mode == PlanMode.NATIVE_TOOL_CALL && allowConversationalReplies && tools.isEmpty()) {
-                return replyWithoutTools(p, naturalLanguage, onTextDelta)
+                return replyWithoutTools(p, naturalLanguage, history, onTextDelta)
             }
-            val messages = when (mode) {
-                PlanMode.NATIVE_TOOL_CALL -> listOf(
-                    ChatMessage(
-                        "system",
-                        if (allowConversationalReplies) buildConversationPrompt() else buildSystemPrompt(),
-                    ),
-                    ChatMessage("user", userContent),
-                )
-                PlanMode.CONSTRAINED ->
-                    listOf(
-                        ChatMessage("system", buildSystemPrompt(mode)),
-                        ChatMessage("user", userContent)
-                    )
-                else ->
-                    listOf(
-                        ChatMessage("system", buildSystemPrompt()),
-                        ChatMessage("user", userContent)
-                    )
+            val systemPrompt = when (mode) {
+                PlanMode.NATIVE_TOOL_CALL ->
+                    if (allowConversationalReplies) buildConversationPrompt() else buildSystemPrompt()
+                PlanMode.CONSTRAINED -> buildSystemPrompt(mode)
+                else -> buildSystemPrompt()
             }
+            val messages = listOf(ChatMessage("system", systemPrompt)) + history + ChatMessage("user", userContent)
             when (mode) {
                 PlanMode.NATIVE_TOOL_CALL -> {
                     var streamedText = false
@@ -487,7 +491,7 @@ class LlmPlanner(
                                         )
                                     }
                                     if (response.finishReason == "stop") {
-                                        return replyWithoutTools(p, naturalLanguage, onTextDelta)
+                                        return replyWithoutTools(p, naturalLanguage, history, onTextDelta)
                                     }
                                 }
                                 return LlmPlan(
@@ -513,7 +517,7 @@ class LlmPlanner(
                             if (allowConversationalReplies && !streamedText &&
                                 response.code == LlmErrorCode.EMPTY_RESPONSE
                             ) {
-                                return replyWithoutTools(p, naturalLanguage, onTextDelta)
+                                return replyWithoutTools(p, naturalLanguage, history, onTextDelta)
                             }
                             lastErr = LlmResponse.Err(response.code, response.message, response.retryable)
                             if (!response.retryable || streamedText) break
@@ -568,6 +572,8 @@ class LlmPlanner(
     private suspend fun buildConversationPrompt(): String = buildString {
         appendLine("You are MCOS, a mobile assistant. Answer general questions and writing requests directly.")
         appendLine("For requests that need device data or actions, call only the provided tools.")
+        appendLine("Use earlier dialogue to resolve references. Only the current request can ask for a new action.")
+        appendLine("Prior dialogue and approvals never authorize a new tool action.")
         appendLine("Never claim an action succeeded unless the supplied probe results confirm it.")
         appendLine("If a needed tool is unavailable, say so. Reply in the user's language.")
         appendLine(buildMemorySection())
@@ -577,17 +583,16 @@ class LlmPlanner(
     private suspend fun replyWithoutTools(
         provider: LlmProvider,
         request: String,
+        history: List<ChatMessage>,
         onTextDelta: (suspend (String) -> Unit)?,
     ): LlmPlan {
-        val messages = listOf(
-            ChatMessage(
-                "system",
-                "You are MCOS. Answer questions and writing requests directly in the user's language. " +
-                    "You have no device tools for this reply. If asked to perform or verify a device action, " +
-                    "explain that you cannot do it in this reply. Never claim the action ran.",
-            ),
-            ChatMessage("user", request),
+        val system = ChatMessage(
+            "system",
+            "You are MCOS. Use earlier dialogue to answer the current request in the user's language. " +
+                "You have no device tools for this reply. If asked to perform or verify a device action, " +
+                "explain that you cannot do it in this reply. Never claim the action ran.",
         )
+        val messages = listOf(system) + history + ChatMessage("user", request)
         val response = if (onTextDelta != null && provider is StreamingLlmProvider) {
             provider.streamChat(messages, onTextDelta)
         } else {
@@ -597,6 +602,31 @@ class LlmPlanner(
             is LlmResponse.Ok -> LlmPlan(emptyList(), "", providerId = provider.id, reply = response.content)
             is LlmResponse.Err -> LlmPlan(emptyList(), "", providerId = provider.id, error = response)
         }
+    }
+
+    private fun boundedDialogue(history: List<ChatMessage>): List<ChatMessage> {
+        var remaining = MAX_HISTORY_BYTES
+        val recent = mutableListOf<ChatMessage>()
+        for (message in history.asReversed()) {
+            if (remaining == 0 || recent.size == MAX_HISTORY_MESSAGES) break
+            if (message.role != "user" && message.role != "assistant") continue
+            val limit = minOf(remaining, MAX_HISTORY_MESSAGE_BYTES)
+            val prefix = message.content.trim().take(limit)
+            val bytes = if (prefix.lastOrNull()?.isHighSurrogate() == true) {
+                prefix.dropLast(1).encodeToByteArray()
+            } else {
+                prefix.encodeToByteArray()
+            }
+            var end = minOf(bytes.size, limit)
+            // End at a UTF-8 character boundary, including for Chinese and emoji.
+            if (end < bytes.size) {
+                while (end > 0 && (bytes[end].toInt() and 0xc0) == 0x80) end--
+            }
+            if (end == 0) continue
+            recent += message.copy(content = bytes.decodeToString(endIndex = end))
+            remaining -= end
+        }
+        return recent.asReversed()
     }
 
     // ---- Planning mode ---------------------------------------------------

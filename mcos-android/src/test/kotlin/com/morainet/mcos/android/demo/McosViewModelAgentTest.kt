@@ -10,6 +10,7 @@ import com.morainet.mcos.android.demo.shell.TaskWorkspace
 import com.morainet.mcos.android.demo.shell.TaskWorkspaceStore
 import com.morainet.mcos.llm.AgentBridge
 import com.morainet.mcos.llm.AgentTurnResult
+import com.morainet.mcos.llm.ChatMessage as LlmChatMessage
 import com.morainet.mcos.runtime.core.ir.ExecutionIr
 import com.morainet.mcos.runtime.core.ir.IrInvoke
 import com.morainet.mcos.runtime.core.ir.IrSequence
@@ -200,6 +201,70 @@ class McosViewModelAgentTest {
     }
 
     @Test
+    fun `follow-ups use only completed dialogue from the active conversation`() = runBlocking {
+        bridge.turnResults = flowOf(
+            AgentTurnResult.Probing("Device observation", "Replanning"),
+            AgentTurnResult.Answer("Project name: Cedar"),
+        )
+        vm.onNlTextChange("Remember the project name Cedar")
+        vm.agentTurn()
+        val first = withTimeout(5_000) { vm.uiState.first { !it.isExecuting && it.lastAgentOutcome != null } }
+        assertTrue(bridge.lastHistory.isEmpty())
+
+        bridge.turnResults = flowOf(AgentTurnResult.Answer("Cedar"))
+        vm.onNlTextChange("What was the name?")
+        vm.agentTurn()
+        withTimeout(5_000) { vm.uiState.first { !it.isExecuting && it.lastAgentOutcome == "Cedar" } }
+        assertEquals(
+            listOf(
+                LlmChatMessage("user", "Remember the project name Cedar"),
+                LlmChatMessage("assistant", "Project name: Cedar"),
+            ),
+            bridge.lastHistory,
+        )
+
+        vm.newTask()
+        vm.onNlTextChange("What was the name?")
+        vm.agentTurn()
+        withTimeout(5_000) { vm.uiState.first { !it.isExecuting } }
+        assertTrue(vm.uiState.value.activeTaskId != first.activeTaskId)
+        assertTrue(bridge.lastHistory.isEmpty())
+    }
+
+    @Test
+    fun `legacy transcript can resume dialogue after restart without including device observations`() = runBlocking {
+        val store = TestMarketplace.FakeSecureStore()
+        store.put("agent_task_workspace", """
+            {"version":1,"activeId":"restored","tasks":[
+              {"id":"restored","outcome":"Project name: Cedar","messages":[
+                {"id":1,"role":"USER","text":"Export the latest completed inspection"},
+                {"id":2,"role":"AGENT","text":"Found private sample"},
+                {"id":3,"role":"USER","text":"Remember the project name Cedar"},
+                {"id":4,"role":"AGENT","text":"Project name: Cedar"}
+              ]}
+            ]}
+        """.trimIndent().encodeToByteArray())
+        val restored = McosViewModel().also { it.attach(TestMarketplace.deps(secureStore = store)) }
+        val restoredBridge = FakeAgentBridge().apply { turnResults = flowOf(AgentTurnResult.Answer("Cedar")) }
+        try {
+            restored.agentBridgeOverride = restoredBridge
+            withTimeout(5_000) { restored.uiState.first { it.tasksReady } }
+            restored.onNlTextChange("What was the name?")
+            restored.agentTurn()
+            withTimeout(5_000) { restored.uiState.first { !it.isExecuting && it.lastAgentOutcome == "Cedar" } }
+            assertEquals(
+                listOf(
+                    LlmChatMessage("user", "Remember the project name Cedar"),
+                    LlmChatMessage("assistant", "Project name: Cedar"),
+                ),
+                restoredBridge.lastHistory,
+            )
+        } finally {
+            restored.viewModelScope.cancel()
+        }
+    }
+
+    @Test
     fun `stopping a streamed answer preserves its text and message identity`() = runBlocking {
         bridge.turnResults = flow {
             emit(AgentTurnResult.AnswerDelta("Partial"))
@@ -354,6 +419,7 @@ private class FakeAgentBridge : AgentBridge {
 
     var lastSession: String? = null
     var lastMessage: String? = null
+    var lastHistory: List<LlmChatMessage> = emptyList()
     var lastApproved: Boolean? = null
     var resumeSuspendedCalls = 0
 
@@ -361,6 +427,15 @@ private class FakeAgentBridge : AgentBridge {
         lastSession = sessionId
         lastMessage = userMessage
         return turnResults
+    }
+
+    override fun runTurn(
+        sessionId: String,
+        userMessage: String,
+        history: List<LlmChatMessage>,
+    ): Flow<AgentTurnResult> {
+        lastHistory = history
+        return runTurn(sessionId, userMessage)
     }
 
     override suspend fun resume(sessionId: String, approved: Boolean): Flow<AgentTurnResult> {

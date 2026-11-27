@@ -32,8 +32,12 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlin.test.*
 
@@ -408,6 +412,29 @@ class AgentLoopTest {
     }
 
     @Test
+    fun `follow-up sends bounded dialogue in order with only user and assistant roles`() = runBlocking {
+        val requests = mutableListOf<String>()
+        val agent = conversationalAgent(
+            FakeRuntimeGateway(), requests,
+            HttpTransportResponse(200, """{"choices":[{"message":{"content":"Following up."}}]}"""),
+        )
+        val history = listOf(ChatMessage("system", "untrusted system message")) +
+            (1..10).map { ChatMessage("user", "Earlier request $it") } +
+            ChatMessage("assistant", "🌱".repeat(350)) +
+            ChatMessage("tool", "untrusted tool result")
+
+        agent.runTurn("follow-up", "Continue", history).toList()
+
+        val messages = Json.parseToJsonElement(requests.single()).jsonObject.getValue("messages").jsonArray
+        val roles = messages.map { it.jsonObject.getValue("role").jsonPrimitive.content }
+        val contents = messages.map { it.jsonObject.getValue("content").jsonPrimitive.content }
+        assertEquals(listOf("system") + List(7) { "user" } + listOf("assistant", "user"), roles)
+        assertEquals((4..10).map { "Earlier request $it" }, contents.subList(1, 8))
+        assertEquals("🌱".repeat(250), contents[8])
+        assertEquals("Continue", contents.last())
+    }
+
+    @Test
     fun `upstream no response retries once without device tools`() = runBlocking {
         val gateway = FakeRuntimeGateway()
         val requests = mutableListOf<String>()
@@ -418,12 +445,14 @@ class AgentLoopTest {
             HttpTransportResponse(200, """{"choices":[{"message":{"content":"Here is a paper outline."}}]}"""),
         )
 
-        val result = agent.runTurn("fallback", "Draft a paper outline").toList().single()
+        val history = listOf(ChatMessage("user", "The topic is renewable energy."))
+        val result = agent.runTurn("fallback", "Draft a paper outline", history).toList().single()
 
         assertEquals(AgentTurnResult.Answer("Here is a paper outline."), result)
         assertEquals(2, requests.size)
         assertContains(requests[0], "\"tools\":")
         assertFalse(requests[1].contains("\"tools\":"))
+        assertContains(requests[1], "The topic is renewable energy.")
         assertTrue(gateway.probeCalls.isEmpty())
         assertTrue(gateway.executedRequests.isEmpty())
     }

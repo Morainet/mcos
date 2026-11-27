@@ -42,6 +42,10 @@ interface AgentBridge {
      */
     fun runTurn(sessionId: String, userMessage: String): Flow<AgentTurnResult>
 
+    /** [history] contains completed dialogue from this session, before [userMessage]. */
+    fun runTurn(sessionId: String, userMessage: String, history: List<ChatMessage>): Flow<AgentTurnResult> =
+        runTurn(sessionId, userMessage)
+
     /**
      * Resolve a plan previously surfaced as [AgentTurnResult.PlanReady].
      *
@@ -72,6 +76,10 @@ interface AgentBridge {
      * suspended) — never throws.
      */
     fun resumeSuspended(sessionId: String): Flow<AgentTurnResult>
+
+    /** The host supplies the same dialogue prefix when restoring a suspended turn. */
+    fun resumeSuspended(sessionId: String, history: List<ChatMessage>): Flow<AgentTurnResult> =
+        resumeSuspended(sessionId)
 }
 
 /**
