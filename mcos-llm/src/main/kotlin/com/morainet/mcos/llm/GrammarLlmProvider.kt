@@ -109,9 +109,9 @@ class GrammarLlmProvider(
         } catch (e: LlmTransportException) {
             LlmResponse.Err(e.code, e.message, e.retryable)
         } catch (e: ConnectException) {
-            LlmResponse.Err("LLM_CONNECT_ERROR", "Cannot reach LLM endpoint: ${e.message}", true)
+            LlmResponse.Err(LlmErrorCode.CONNECT_ERROR, "Cannot reach LLM endpoint: ${e.message}", true)
         } catch (e: IOException) {
-            LlmResponse.Err("LLM_NETWORK_ERROR", e.message ?: "Network error", true)
+            LlmResponse.Err(LlmErrorCode.NETWORK_ERROR, e.message ?: "Network error", true)
         } catch (e: Exception) {
             LlmResponse.Err("LLM_UNEXPECTED_ERROR", e.message ?: "Unexpected error", false)
         }

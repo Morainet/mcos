@@ -107,7 +107,7 @@ class JdkLlmHttpTransport : LlmHttpTransport {
         } catch (e: HttpTimeoutException) {
             // java.net.http-only exception: normalize so the provider never
             // references a class that does not exist on Android.
-            throw LlmTransportException("LLM_TIMEOUT", "LLM request timed out", true)
+            throw LlmTransportException(LlmErrorCode.TIMEOUT, "LLM request timed out", true)
         }
         // ConnectException / IOException propagate to the provider's catch clauses.
     }

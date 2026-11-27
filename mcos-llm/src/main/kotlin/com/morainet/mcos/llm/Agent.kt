@@ -51,8 +51,8 @@ import kotlinx.serialization.json.put
  *   run of commands whose resolved `sideEffectClass` is `read`
  *   (§11.3). Write/network/destructive steps — and unresolvable commands —
  *   stop the prefix and wait for explicit user approval.
- * - **Caps** (§11.2): [AgentCaps] budgets per turn; any cap exceeded →
- *   `Refuse("QUOTA", "agent_cap_exceeded")`, never silent truncation.
+ * - **Caps** (§11.2): [AgentCaps] budgets per turn; any cap exceeded returns
+ *   a `QUOTA` refusal, with a distinct reason for the time limit.
  * - **§14.1 drift guard**: a replan that introduces a destructive/network
  *   command absent from the previous plan forces a [AgentTurnResult.Clarify]
  *   even when the planner is confident.
@@ -166,15 +166,15 @@ class McosAgent(
                     }
                     plan.defer?.let { return@withTimeoutOrNull suspendTurn(sessionId, it) }
                     if (!plan.isSuccess) {
-                        if (plan.error?.code == LlmErrorCode.EMPTY_RESPONSE) {
-                            return@withTimeoutOrNull AgentTurnResult.Refuse(
-                                category = LlmErrorCode.EMPTY_RESPONSE,
-                                reason = plan.error.message,
-                            )
+                        val error = plan.error
+                        val category = when (error?.code) {
+                            LlmErrorCode.EMPTY_RESPONSE, LlmErrorCode.TIMEOUT, LlmErrorCode.CONNECT_ERROR,
+                            LlmErrorCode.NETWORK_ERROR, LlmErrorCode.STREAM_INTERRUPTED -> error.code
+                            else -> "COMPILE_FAILED"
                         }
                         return@withTimeoutOrNull AgentTurnResult.Refuse(
-                            category = "COMPILE_FAILED",
-                            reason = plan.error?.message ?: plan.thoughts ?: "planning failed",
+                            category = category,
+                            reason = error?.message ?: plan.thoughts ?: "planning failed",
                         )
                     }
 
@@ -279,7 +279,7 @@ class McosAgent(
             }
 
             // null ⇒ wall-clock cap exceeded; the loop never truncates silently.
-            val outcome = terminal ?: AgentTurnResult.Refuse("QUOTA", "agent_cap_exceeded")
+            val outcome = terminal ?: AgentTurnResult.Refuse("QUOTA", AgentTurnResult.Refuse.WALL_CLOCK_EXCEEDED)
             emit(outcome)
             return outcome
         } finally {

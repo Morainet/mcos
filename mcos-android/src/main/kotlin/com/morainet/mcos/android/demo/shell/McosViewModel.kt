@@ -20,6 +20,7 @@ import com.morainet.mcos.android.demo.skills.SkillStore
 import com.morainet.mcos.android.host.AndroidLlmHttpTransport
 import com.morainet.mcos.runtime.api.McosRuntime
 import com.morainet.mcos.runtime.core.api.ConfirmationDecision
+import com.morainet.mcos.runtime.core.api.ExecuteHandle
 import com.morainet.mcos.runtime.core.api.ExecuteRequest
 import com.morainet.mcos.runtime.core.api.Payload
 import com.morainet.mcos.runtime.core.api.RuntimeEvent
@@ -31,6 +32,7 @@ import com.morainet.mcos.llm.AgentTurnResult
 import com.morainet.mcos.llm.ChatMessage as LlmChatMessage
 import com.morainet.mcos.llm.ChatOrchestrator
 import com.morainet.mcos.llm.LlmConfig
+import com.morainet.mcos.llm.LlmErrorCode
 import com.morainet.mcos.llm.LlmPlanner
 import com.morainet.mcos.llm.LlmProbePolicy
 import com.morainet.mcos.llm.LlmProviderRegistry
@@ -81,6 +83,7 @@ private fun vendorModelKey(id: String) = "llm_vendor_${id}_model"
 private fun vendorEndpointKey(id: String) = "llm_vendor_${id}_endpoint"
 
 private const val DEFAULT_DSL = "hello.world(name=\"MCOS\")\ncamera.capture()"
+private const val SLOW_MODEL_RESPONSE_MS = 8_000L
 
 /**
  * Cap on retained console log lines. Bounds both memory and the per-append
@@ -110,9 +113,7 @@ data class McosUiState(
     /** LLM provider health (06 §17 V1 probing). */
     val providerHealth: List<ProviderHealth> = emptyList(),
     val probing: Boolean = false,
-    /** Agent 循环进行中（探测/重规划），驱动进度指示。 */
-    val agentWorking: Boolean = false,
-    val agentProgress: String? = null,
+    val agentProgress: AgentProgress? = null,
     val inspectionRecordId: String? = null,
     /** Agent 计划待审批（PlanReady 预览文本）— 驱动 Agent 审批对话框。 */
     val pendingAgentPlan: String? = null,
@@ -145,9 +146,25 @@ data class McosUiState(
     val taskHistoryError: String? = null,
     val taskResumeAtMs: Long? = null,
 ) {
+    val agentWorking: Boolean get() = agentProgress != null
+
     /** The currently selected vendor's editable settings. */
     val selectedVendor: LlmVendorUi
         get() = vendors.firstOrNull { it.vendor.id == selectedVendorId } ?: vendors.first()
+}
+
+enum class AgentProgress(val label: String?) {
+    WAITING_FOR_MODEL("Waiting for a reply…"),
+    SLOW_MODEL_RESPONSE("The model is taking longer than usual…"),
+    STREAMING_REPLY(null),
+    UPDATING_PLAN("Updating the plan"),
+    RUNNING_TASK("Running the task"),
+    FINDING_INSPECTION("Looking up completed inspections"),
+    PREPARING_EXPORT("Preparing export"),
+    AWAITING_APPROVAL("Waiting for your approval"),
+    VERIFYING_RESULT("Checking the result"),
+    FINISHING_ACTION("Finishing the action"),
+    RESUMING_TASK("Resuming the task"),
 }
 
 /** Speaker of one transcript entry — drives bubble styling in the chat view. */
@@ -159,6 +176,7 @@ data class ChatMessage(
     val role: ChatRole,
     val text: String,
     val useAsContext: Boolean = role == ChatRole.USER,
+    val retryOfUserMessageId: Long? = null,
 )
 
 data class TaskHistoryEntry(val id: String, val title: String, val subtitle: String)
@@ -351,8 +369,7 @@ class McosViewModel : ViewModel() {
             // Preserve an unreadable snapshot on disk. This launch can still run tasks in memory.
             _uiState.update { it.copy(taskHistoryError = "Saved task history could not be opened.") }
         }
-        showTask(taskWorkspace.tasks.first { it.id == taskWorkspace.activeId })
-        publishTaskWorkspace()
+        publishTaskWorkspace(activeTask = taskWorkspace.tasks.first { it.id == taskWorkspace.activeId })
     }
 
     /**
@@ -398,12 +415,18 @@ class McosViewModel : ViewModel() {
      * Presentation-only: everything logged via [log] still reaches the Tools
      * console unchanged.
      */
-    private fun say(role: ChatRole, text: String, useAsContext: Boolean = role == ChatRole.USER) {
+    private fun say(
+        role: ChatRole,
+        text: String,
+        useAsContext: Boolean = role == ChatRole.USER,
+        retryOfUserMessageId: Long? = null,
+    ): Long {
+        val message = ChatMessage(nextMsgId++, role, text, useAsContext, retryOfUserMessageId)
         _uiState.update { st ->
-            val message = ChatMessage(nextMsgId++, role, text, useAsContext)
             st.copy(transcript = (st.transcript + message).takeLast(MAX_LOG_LINES))
         }
         rememberActiveTask()
+        return message.id
     }
 
     private fun finishReply(text: String, useAsContext: Boolean = true) {
@@ -418,15 +441,17 @@ class McosViewModel : ViewModel() {
         rememberActiveTask()
     }
 
-    private fun List<ChatMessage>.dialogueHistory(): List<LlmChatMessage> =
-        mapNotNull { message ->
-            if (!message.useAsContext) return@mapNotNull null
+    private fun List<ChatMessage>.dialogueHistory(): List<LlmChatMessage> {
+        val interruptedRequestIds = mapNotNull { it.retryOfUserMessageId }.toSet()
+        return mapNotNull { message ->
+            if (!message.useAsContext || message.id in interruptedRequestIds) return@mapNotNull null
             when (message.role) {
                 ChatRole.USER -> LlmChatMessage("user", message.text)
                 ChatRole.AGENT -> LlmChatMessage("assistant", message.text)
                 ChatRole.SYSTEM -> null
             }
         }
+    }
 
     private var nextMsgId = 0L
 
@@ -451,8 +476,7 @@ class McosViewModel : ViewModel() {
             activeId = id,
             tasks = taskWorkspace.tasks.filter { it.id == id || it.visibleInHistory },
         )
-        showTask(task)
-        publishTaskWorkspace()
+        publishTaskWorkspace(activeTask = task)
         scheduleActiveTaskResume()
     }
 
@@ -473,15 +497,6 @@ class McosViewModel : ViewModel() {
         }
     }
 
-    private fun showTask(task: SavedTask) {
-        _uiState.update {
-            it.copy(
-                tasksReady = true, activeTaskId = task.id, nlText = task.draft, transcript = task.messages,
-                lastAgentOutcome = task.outcome, taskResumeAtMs = task.resumeAtMs, artifacts = emptyList(),
-            )
-        }
-    }
-
     private fun rememberActiveTask() {
         val state = _uiState.value
         if (!state.tasksReady) return
@@ -499,7 +514,7 @@ class McosViewModel : ViewModel() {
         publishTaskWorkspace()
     }
 
-    private fun publishTaskWorkspace() {
+    private fun publishTaskWorkspace(activeTask: SavedTask? = null) {
         val history = taskWorkspace.tasks.filter { it.visibleInHistory }.map { task ->
             TaskHistoryEntry(
                 task.id,
@@ -515,8 +530,17 @@ class McosViewModel : ViewModel() {
                 },
             )
         }
-        _uiState.update {
-            it.copy(taskHistory = history, taskSearchMatches = taskSearchResults(history, it.taskSearchQuery))
+        _uiState.update { state ->
+            val current = if (activeTask == null) state else state.copy(
+                tasksReady = true,
+                activeTaskId = activeTask.id,
+                nlText = activeTask.draft,
+                transcript = activeTask.messages,
+                lastAgentOutcome = activeTask.outcome,
+                taskResumeAtMs = activeTask.resumeAtMs,
+                artifacts = emptyList(),
+            )
+            current.copy(taskHistory = history, taskSearchMatches = taskSearchResults(history, current.taskSearchQuery))
         }
         taskSnapshots.value = taskWorkspace
     }
@@ -566,6 +590,18 @@ class McosViewModel : ViewModel() {
     fun onNlTextChange(value: String) {
         _uiState.update { it.copy(nlText = value) }
         rememberActiveTask()
+    }
+
+    fun restoreRequestForEditing(interruptionId: Long) {
+        val state = _uiState.value
+        if (!taskCanSwitch() || state.taskResumeAtMs != null || state.nlText.isNotEmpty()) return
+        val interruption = state.transcript.lastOrNull()?.takeIf {
+            it.id == interruptionId && it.role == ChatRole.SYSTEM
+        } ?: return
+        val request = state.transcript.firstOrNull {
+            it.id == interruption.retryOfUserMessageId && it.role == ChatRole.USER
+        } ?: return
+        onNlTextChange(request.text)
     }
 
     // ── multi-vendor LLM settings (06 §17 V1 probing) ───────────────────
@@ -938,6 +974,8 @@ class McosViewModel : ViewModel() {
                     is LoadResult.Failed ->
                         log("[WARN]   └─ failed: ${result.message}")
                 }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (e: Exception) {
                 log("[WARN]   └─ ${e.message}")
             }
@@ -1123,6 +1161,8 @@ class McosViewModel : ViewModel() {
     private var agentJob: Job? = null
     private var agentRunId: String? = null
     private var agentResumeJob: Job? = null
+    // Only a new natural-language turn can restore its request for editing, before it starts device work.
+    private var editableRequestId: Long? = null
 
     /**
      * Shared across every bridge rebuild so a suspended turn's session (06 §11.4)
@@ -1152,14 +1192,15 @@ class McosViewModel : ViewModel() {
         val history = s.transcript.dialogueHistory()
         _events.value = emptyList()
         _uiState.update { it.copy(nlText = "", lastAgentOutcome = null) }
-        say(ChatRole.USER, goal)
-        launchAgentWork("Planning the task") {
+        val userMessageId = say(ChatRole.USER, goal)
+        launchAgentWork(AgentProgress.WAITING_FOR_MODEL, requestId = userMessageId) {
             loadPlugins()
             val bridge = agentBridgeOverride ?: bridgeFor(s.selectedVendorId, checkNotNull(config))
             var readOnlyPlan = false
             bridge.runTurn(s.activeTaskId, goal, history).collect { result ->
                 if (result is AgentTurnResult.PlanReady && !result.needsConfirmation) {
-                    _uiState.update { it.copy(streamingReply = null) }
+                    editableRequestId = null
+                    _uiState.update { it.copy(streamingReply = null, agentProgress = AgentProgress.RUNNING_TASK) }
                     readOnlyPlan = true
                 } else {
                     handleAgentResult(result)
@@ -1178,7 +1219,7 @@ class McosViewModel : ViewModel() {
         if (state.pendingAgentPlan == null || state.isExecuting) return
         val bridge = agentBridgeOverride ?: agentBridge ?: return
         _uiState.update { it.copy(pendingAgentPlan = null) }
-        launchAgentWork("Running the approved plan") {
+        launchAgentWork(AgentProgress.RUNNING_TASK) {
             bridge.resume(state.activeTaskId, approved).collect { handleAgentResult(it) }
         }
     }
@@ -1189,7 +1230,7 @@ class McosViewModel : ViewModel() {
         if (!taskCanSwitch() || state.taskResumeAtMs != null) return
         _uiState.update { it.copy(lastAgentOutcome = null) }
         say(ChatRole.USER, InspectionTask.TITLE, useAsContext = false)
-        launchAgentWork("Looking up completed inspections") {
+        launchAgentWork(AgentProgress.FINDING_INSPECTION) {
             loadPlugins()
             val gateway = agentRuntime()
             val adbTool = deps().plugins.filterIsInstance<AdbInspectionPlugin>().firstOrNull()
@@ -1202,7 +1243,7 @@ class McosViewModel : ViewModel() {
                 }
             }
             val recordId = InspectionTask.latestCompleted(gateway)
-            _uiState.update { it.copy(inspectionRecordId = recordId, agentProgress = "Preparing export") }
+            _uiState.update { it.copy(inspectionRecordId = recordId, agentProgress = AgentProgress.PREPARING_EXPORT) }
             say(ChatRole.AGENT, "Found completed inspection $recordId.")
             val handle = gateway.execute(InspectionTask.request(recordId))
             var artifact: String? = null
@@ -1223,23 +1264,37 @@ class McosViewModel : ViewModel() {
         }
     }
 
-    private fun launchAgentWork(progress: String, work: suspend () -> Unit) {
-        _uiState.update { it.copy(isExecuting = true, agentWorking = true, agentProgress = progress, artifacts = emptyList()) }
+    private fun launchAgentWork(progress: AgentProgress, requestId: Long? = null, work: suspend () -> Unit) {
+        editableRequestId = requestId
+        _uiState.update { it.copy(isExecuting = true, agentProgress = progress, artifacts = emptyList()) }
         rememberActiveTask()
         agentJob = viewModelScope.launch {
+            val slowReply = if (progress == AgentProgress.WAITING_FOR_MODEL) launch {
+                delay(SLOW_MODEL_RESPONSE_MS)
+                _uiState.update {
+                    if (it.agentProgress == AgentProgress.WAITING_FOR_MODEL) {
+                        it.copy(agentProgress = AgentProgress.SLOW_MODEL_RESPONSE)
+                    } else it
+                }
+            } else null
             try {
                 work()
             } catch (cancelled: CancellationException) {
-                handleAgentResult(AgentTurnResult.Declined("Task stopped"))
+                handleAgentResult(
+                    AgentTurnResult.Declined("Task stopped"),
+                    stoppedByUser = cancelled is AgentStoppedByUser,
+                )
                 throw cancelled
             } catch (failure: Exception) {
                 handleAgentResult(AgentTurnResult.Refuse("TASK_FAILED", failure.message ?: "Task failed"))
             } finally {
+                slowReply?.cancel()
                 agentRunId?.let(runtime()::cancel)
                 agentRunId = null
+                editableRequestId = null
                 _uiState.update {
                     it.copy(
-                        isExecuting = false, agentWorking = false, agentProgress = null,
+                        isExecuting = false, agentProgress = null,
                         streamingReply = null,
                         pendingConfirmation = null, inspectionRecordId = null,
                     )
@@ -1252,17 +1307,27 @@ class McosViewModel : ViewModel() {
     private fun agentRuntime(): RuntimeGateway {
         val kernel = runtime()
         return object : RuntimeGateway by kernel {
-            override suspend fun execute(request: ExecuteRequest) =
-                kernel.execute(request).also { agentRunId = it.runId }
+            override suspend fun execute(request: ExecuteRequest): ExecuteHandle {
+                editableRequestId = null
+                return kernel.execute(request).also { agentRunId = it.runId }
+            }
+
+            override suspend fun executeProbe(steps: List<Command>): List<CommandResult> {
+                editableRequestId = null
+                return kernel.executeProbe(steps)
+            }
 
             override fun observe(runId: String) = kernel.observe(runId).onEach { event ->
                 log(event.toLogLine(now()))
                 when (event) {
                     is RuntimeEvent.ConfirmationNeeded -> _uiState.update {
-                        it.copy(pendingConfirmation = event, agentProgress = "Waiting for your approval")
+                        it.copy(pendingConfirmation = event, agentProgress = AgentProgress.AWAITING_APPROVAL)
                     }
                     is RuntimeEvent.ArtifactEmitted -> _uiState.update {
-                        it.copy(artifacts = it.artifacts + (event.type to event.uri), agentProgress = "Checking the result")
+                        it.copy(
+                            artifacts = it.artifacts + (event.type to event.uri),
+                            agentProgress = AgentProgress.VERIFYING_RESULT,
+                        )
                     }
                     is RuntimeEvent.RunSucceeded, is RuntimeEvent.RunFailed, is RuntimeEvent.RunCancelled -> {
                         if (agentRunId == runId) agentRunId = null
@@ -1277,8 +1342,10 @@ class McosViewModel : ViewModel() {
     /** User cancel always wins (06 §11.2) — abort the active turn. */
     fun cancelAgentTurn() {
         val runId = agentRunId
-        if (runId == null) agentJob?.cancel() else runtime().cancel(runId)
+        if (runId == null) agentJob?.cancel(AgentStoppedByUser()) else runtime().cancel(runId)
     }
+
+    private class AgentStoppedByUser : CancellationException("Task stopped")
 
     /** Lazily build (and cache per vendor+config) the real [McosAgent]. */
     private fun bridgeFor(vendorId: String, config: LlmConfig): AgentBridge {
@@ -1311,25 +1378,30 @@ class McosViewModel : ViewModel() {
     }
 
     /** Surface one streamed Agent state on the console (and dialogs). */
-    private fun handleAgentResult(result: AgentTurnResult) {
+    private fun handleAgentResult(result: AgentTurnResult, stoppedByUser: Boolean = false) {
         if (result is AgentTurnResult.AnswerDelta) {
             _uiState.update { state ->
                 val reply = state.streamingReply ?: ChatMessage(nextMsgId++, ChatRole.AGENT, "")
-                state.copy(streamingReply = reply.copy(text = reply.text + result.text), agentProgress = "Generating reply")
+                state.copy(
+                    streamingReply = reply.copy(text = reply.text + result.text),
+                    agentProgress = AgentProgress.STREAMING_REPLY,
+                )
             }
             return
         }
         // Non-terminal progress: log the detail, don't touch the outcome line.
         if (result is AgentTurnResult.Probing) {
-            _uiState.update { it.copy(agentProgress = "Checking device capabilities", streamingReply = null) }
+            editableRequestId = null
+            _uiState.update { it.copy(agentProgress = AgentProgress.UPDATING_PLAN, streamingReply = null) }
             say(ChatRole.AGENT, result.observation)
             log("[${now()}] ⌖ probe: ${result.observation.replace("\n", " | ").take(120)}")
             log("[${now()}] ↻ ${result.nextAction}")
             return
         }
-        // Terminal states carry a self-contained headline: record it verbatim
-        // as the turn outcome, then log any state-specific detail below it.
+        // Terminal states carry a self-contained outcome for the task history.
+        val requestId = editableRequestId
         if (result is AgentTurnResult.TerminalResult) {
+            editableRequestId = null
             val partial = _uiState.value.streamingReply
             if (partial != null && result !is AgentTurnResult.Answer) {
                 if (result is AgentTurnResult.Declined || result is AgentTurnResult.Refuse) {
@@ -1340,7 +1412,9 @@ class McosViewModel : ViewModel() {
             }
             _uiState.update {
                 it.copy(
-                    lastAgentOutcome = result.headline,
+                    lastAgentOutcome = if (stoppedByUser && result is AgentTurnResult.Declined) {
+                        result.reason
+                    } else result.headline,
                     taskResumeAtMs = (result as? AgentTurnResult.Suspended)?.resumeAtEpochMs,
                 )
             }
@@ -1361,11 +1435,27 @@ class McosViewModel : ViewModel() {
             is AgentTurnResult.Answer -> finishReply(result.text)
             is AgentTurnResult.Refuse -> {
                 log("[ERROR] ${result.headline}")
-                say(ChatRole.SYSTEM, result.headline)
+                val recoveryMessage = when (result.category) {
+                    "QUOTA" -> "The request took too long.".takeIf {
+                        result.reason == AgentTurnResult.Refuse.WALL_CLOCK_EXCEEDED
+                    }
+                    LlmErrorCode.TIMEOUT -> "The model took too long to respond."
+                    LlmErrorCode.CONNECT_ERROR, LlmErrorCode.NETWORK_ERROR ->
+                        "Couldn’t reach the model. Check your connection and model endpoint."
+                    LlmErrorCode.STREAM_INTERRUPTED -> "The model response was interrupted."
+                    LlmErrorCode.EMPTY_RESPONSE -> "The model returned an empty response."
+                    else -> null
+                }
+                say(
+                    ChatRole.SYSTEM,
+                    recoveryMessage ?: result.headline,
+                    retryOfUserMessageId = requestId.takeIf { recoveryMessage != null },
+                )
             }
             is AgentTurnResult.Declined -> {
                 log("[${now()}] ✗ ${result.headline}")
-                say(ChatRole.SYSTEM, "✗ ${result.headline}")
+                val message = if (stoppedByUser) result.reason else "✗ ${result.headline}"
+                say(ChatRole.SYSTEM, message, retryOfUserMessageId = requestId.takeIf { stoppedByUser })
             }
             is AgentTurnResult.Done -> {
                 log("[${now()}] ✓ ${result.headline}")
@@ -1397,7 +1487,7 @@ class McosViewModel : ViewModel() {
             val bridge = agentBridgeOverride ?: agentBridge ?: selectedLlmConfig()?.let {
                 bridgeFor(uiState.value.selectedVendorId, it)
             } ?: return@launch
-            launchAgentWork("Resuming the task") {
+            launchAgentWork(AgentProgress.RESUMING_TASK) {
                 log("[${now()}] ↻ resuming suspended turn…")
                 val promptIndex = state.transcript.indexOfLast { it.role == ChatRole.USER }
                 val history = state.transcript.take(promptIndex.coerceAtLeast(0)).dialogueHistory()
@@ -1427,7 +1517,7 @@ class McosViewModel : ViewModel() {
     fun respondConfirmation(approved: Boolean) {
         val confirmation = _uiState.value.pendingConfirmation ?: return
         _uiState.update {
-            val progress = if (it.agentWorking) "Finishing the action" else it.agentProgress
+            val progress = if (it.agentWorking) AgentProgress.FINISHING_ACTION else null
             it.copy(pendingConfirmation = null, agentProgress = progress)
         }
         viewModelScope.launch {

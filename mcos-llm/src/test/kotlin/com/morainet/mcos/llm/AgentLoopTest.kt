@@ -262,7 +262,7 @@ class AgentLoopTest {
     }
 
     @Test
-    fun `A8-exceeding maxWallClockMs refuses with QUOTA`() = runBlocking {
+    fun `A8-exceeding maxWallClockMs preserves QUOTA with a timeout reason`() = runBlocking {
         val provider = FakeConstrainedProvider(
             listOf("""{"type":"invoke","command":"photo.search"}"""),
             delayMs = 5_000,
@@ -278,7 +278,7 @@ class AgentLoopTest {
         val terminal = results.single() as AgentTurnResult.Refuse
 
         assertEquals("QUOTA", terminal.category)
-        assertEquals("agent_cap_exceeded", terminal.reason)
+        assertEquals(AgentTurnResult.Refuse.WALL_CLOCK_EXCEEDED, terminal.reason)
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -453,6 +453,28 @@ class AgentLoopTest {
         assertContains(requests[0], "\"tools\":")
         assertFalse(requests[1].contains("\"tools\":"))
         assertContains(requests[1], "The topic is renewable energy.")
+        assertTrue(gateway.probeCalls.isEmpty())
+        assertTrue(gateway.executedRequests.isEmpty())
+    }
+
+    @Test
+    fun `model transport timeout reaches the host without executing a command`() = runBlocking {
+        val transport = object : LlmHttpTransport {
+            override suspend fun postJson(
+                url: String,
+                apiKey: String,
+                body: String,
+                connectTimeoutMs: Long,
+                requestTimeoutMs: Long,
+            ): HttpTransportResponse = throw LlmTransportException(LlmErrorCode.TIMEOUT, "Request timed out")
+        }
+        val provider = OpenAiLlmProvider(LlmConfig(apiKey = "test"), transport)
+        val gateway = FakeRuntimeGateway()
+        val agent = McosAgent(LlmPlanner(provider, registry), gateway, registry)
+
+        val result = agent.runTurn("timeout", "Check the weather").toList().single()
+
+        assertEquals(AgentTurnResult.Refuse(LlmErrorCode.TIMEOUT, "Request timed out"), result)
         assertTrue(gateway.probeCalls.isEmpty())
         assertTrue(gateway.executedRequests.isEmpty())
     }

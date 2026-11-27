@@ -24,7 +24,6 @@ import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
@@ -45,9 +44,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
@@ -55,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import com.morainet.mcos.android.demo.McosRadius
 import com.morainet.mcos.android.demo.McosSpace
 import com.morainet.mcos.android.demo.R
+import com.morainet.mcos.android.demo.shell.AgentProgress
 import com.morainet.mcos.android.demo.shell.McosUiState
 import com.morainet.mcos.android.demo.shell.McosViewModel
 
@@ -68,6 +66,11 @@ internal fun AgentPage(
 ) {
     val canStart = canSwitch && ui.taskResumeAtMs == null
     val canRun = canStart && ui.nlText.isNotBlank()
+    val inlineProgress = when (ui.agentProgress) {
+        AgentProgress.WAITING_FOR_MODEL, AgentProgress.SLOW_MODEL_RESPONSE ->
+            ui.agentProgress.label.takeIf { ui.transcript.isNotEmpty() }
+        else -> null
+    }
     var quickTasksOpen by rememberSaveable { mutableStateOf(false) }
     val focus = LocalFocusManager.current
     val submit: () -> Unit = {
@@ -112,11 +115,21 @@ internal fun AgentPage(
                     TaskConversation(
                         messages = ui.transcript + listOfNotNull(ui.streamingReply),
                         outcome = ui.lastAgentOutcome,
+                        inlineProgress = inlineProgress,
+                        canRestoreRequest = canStart && ui.nlText.isEmpty(),
+                        onRestoreRequest = vm::restoreRequestForEditing,
                         modifier = feed,
                     )
                 }
             }
-            TaskProgress(ui)
+            if (inlineProgress == null) {
+                val progress = ui.agentProgress?.label
+                if (progress != null) {
+                    TaskProgress(progress)
+                } else if (!ui.agentWorking && ui.taskResumeAtMs != null) {
+                    TaskProgress("Waiting to resume", spinning = false)
+                }
+            }
             TaskComposer(
                 text = ui.nlText,
                 enabled = ui.tasksReady,
@@ -271,26 +284,5 @@ private fun TaskComposer(
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun TaskProgress(ui: McosUiState) {
-    val message = when {
-        ui.agentWorking -> ui.agentProgress ?: "Working"
-        ui.taskResumeAtMs != null -> "Waiting to resume"
-        else -> return
-    }
-    Row(
-        Modifier.fillMaxWidth().padding(McosSpace.lg).semantics { liveRegion = LiveRegionMode.Polite },
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(McosSpace.md),
-    ) {
-        if (ui.agentWorking) CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
-        Text(
-            message,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            style = MaterialTheme.typography.labelMedium,
-        )
     }
 }

@@ -46,7 +46,7 @@ internal class OpenAiStream {
 
     fun result(): ToolCallResponse.Ok {
         if (!finished && finishReason == null) {
-            throw LlmTransportException("LLM_STREAM_INTERRUPTED", "The model response ended unexpectedly.", true)
+            throw LlmTransportException(LlmErrorCode.STREAM_INTERRUPTED, "The model response ended unexpectedly.", true)
         }
         if (tools.isNotEmpty() && finishReason != "tool_calls" && finishReason != "stop") {
             throw LlmTransportException("LLM_PARSE_ERROR", "The model did not finish its tool request.", false)

@@ -2,6 +2,7 @@ package com.morainet.mcos.android.demo
 
 import androidx.lifecycle.viewModelScope
 import com.morainet.mcos.android.demo.records.RecordExportPlugin
+import com.morainet.mcos.android.demo.shell.AgentProgress
 import com.morainet.mcos.android.demo.shell.ChatMessage
 import com.morainet.mcos.android.demo.shell.ChatRole
 import com.morainet.mcos.android.demo.shell.McosViewModel
@@ -11,20 +12,24 @@ import com.morainet.mcos.android.demo.shell.TaskWorkspaceStore
 import com.morainet.mcos.llm.AgentBridge
 import com.morainet.mcos.llm.AgentTurnResult
 import com.morainet.mcos.llm.ChatMessage as LlmChatMessage
+import com.morainet.mcos.llm.LlmErrorCode
 import com.morainet.mcos.runtime.core.ir.ExecutionIr
 import com.morainet.mcos.runtime.core.ir.IrInvoke
 import com.morainet.mcos.runtime.core.ir.IrSequence
 import java.nio.file.Files
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.awaitCancellation
-import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.job
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -80,8 +85,8 @@ class McosViewModelAgentTest {
     }
 
     @After
-    fun tearDown() {
-        vm.viewModelScope.cancel()
+    fun tearDown() = runBlocking {
+        vm.viewModelScope.coroutineContext.job.cancelAndJoin()
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -134,7 +139,7 @@ class McosViewModelAgentTest {
             assertEquals("Second result", restarted.uiState.value.lastAgentOutcome)
             assertTrue(restarted.uiState.value.transcript.none { it.text.contains("First") })
         } finally {
-            restarted.viewModelScope.cancel()
+            restarted.viewModelScope.coroutineContext.job.cancelAndJoin()
         }
     }
 
@@ -153,7 +158,7 @@ class McosViewModelAgentTest {
             assertTrue(restored.lastAgentOutcome.orEmpty().startsWith("Task interrupted"))
             assertEquals(listOf(5L, 6L), restored.transcript.map { it.id })
         } finally {
-            restarted.viewModelScope.cancel()
+            restarted.viewModelScope.coroutineContext.job.cancelAndJoin()
         }
     }
 
@@ -232,6 +237,64 @@ class McosViewModelAgentTest {
     }
 
     @Test
+    fun `timed out request can be restored after restart and sent only by the user`() = runBlocking {
+        bridge.turnResults = flowOf(AgentTurnResult.Refuse("QUOTA", AgentTurnResult.Refuse.WALL_CLOCK_EXCEEDED))
+        startAgentTurn("Draft a plan\nfor this week")
+        val failed = withTimeout(5_000) { vm.uiState.first { !it.isExecuting && it.lastAgentOutcome != null } }
+        val failure = failed.transcript.last()
+        assertEquals("The request took too long.", failure.text)
+        assertEquals(failed.transcript.first().id, failure.retryOfUserMessageId)
+
+        val store = TaskWorkspaceStore(secureStore)
+        withTimeout(5_000) {
+            while (store.load()?.tasks?.single()?.let { !it.unfinished && it.messages.lastOrNull() == failure } != true) {
+                delay(20)
+            }
+        }
+        val restarted = McosViewModel().also { it.attach(TestMarketplace.deps(secureStore = secureStore)) }
+        val restartedBridge = FakeAgentBridge().apply { turnResults = flowOf(AgentTurnResult.Answer("A plan")) }
+        try {
+            restarted.agentBridgeOverride = restartedBridge
+            withTimeout(5_000) { restarted.uiState.first { it.tasksReady } }
+            restarted.onNlTextChange("New draft")
+            restarted.restoreRequestForEditing(failure.id)
+            assertEquals("New draft", restarted.uiState.value.nlText)
+
+            restarted.onNlTextChange("")
+            restarted.restoreRequestForEditing(failure.id)
+            assertEquals("Draft a plan\nfor this week", restarted.uiState.value.nlText)
+            assertEquals(failed.transcript, restarted.uiState.value.transcript)
+            assertNull(restartedBridge.lastMessage)
+
+            restarted.onNlTextChange("Draft a plan for Monday")
+            restarted.agentTurn()
+            withTimeout(5_000) { restarted.uiState.first { !it.isExecuting && it.lastAgentOutcome == "A plan" } }
+            assertEquals("Draft a plan for Monday", restartedBridge.lastMessage)
+            assertTrue(restartedBridge.lastHistory.isEmpty())
+            restarted.restoreRequestForEditing(failure.id)
+            assertEquals("", restarted.uiState.value.nlText)
+        } finally {
+            restarted.viewModelScope.coroutineContext.job.cancelAndJoin()
+        }
+    }
+
+    @Test
+    fun `a model failure during replanning does not offer to retry the whole task`() = runBlocking {
+        bridge.turnResults = flowOf(
+            AgentTurnResult.Probing("Device observation", "Replanning"),
+            AgentTurnResult.Refuse(LlmErrorCode.NETWORK_ERROR, "Test connection failure"),
+        )
+        startAgentTurn("Check the device")
+        val failed = withTimeout(5_000) { vm.uiState.first { !it.isExecuting && it.lastAgentOutcome != null } }
+        val failure = failed.transcript.last()
+        assertTrue(failure.text.startsWith("Couldn’t reach the model"))
+        assertNull(failure.retryOfUserMessageId)
+
+        vm.restoreRequestForEditing(failure.id)
+        assertEquals("", vm.uiState.value.nlText)
+    }
+
+    @Test
     fun `legacy transcript can resume dialogue after restart without including device observations`() = runBlocking {
         val store = TestMarketplace.FakeSecureStore()
         store.put("agent_task_workspace", """
@@ -260,19 +323,80 @@ class McosViewModelAgentTest {
                 restoredBridge.lastHistory,
             )
         } finally {
-            restored.viewModelScope.cancel()
+            restored.viewModelScope.coroutineContext.job.cancelAndJoin()
         }
     }
 
     @Test
-    fun `stopping a streamed answer preserves its text and message identity`() = runBlocking {
+    fun `slow model feedback gives way to the first streamed text and clears when the turn completes`() = runBlocking {
+        val firstToken = CompletableDeferred<Unit>()
+        val completeReply = CompletableDeferred<Unit>()
+        bridge.turnResults = flow {
+            firstToken.await()
+            emit(AgentTurnResult.AnswerDelta("A short"))
+            completeReply.await()
+            emit(AgentTurnResult.Answer("A short answer"))
+        }
+
+        startAgentTurn("Write an answer")
+        assertEquals(AgentProgress.WAITING_FOR_MODEL, vm.uiState.value.agentProgress)
+        assertEquals(listOf(ChatRole.USER), vm.uiState.value.transcript.map { it.role })
+
+        mainDispatcher.scheduler.advanceTimeBy(8_001)
+        assertEquals(AgentProgress.SLOW_MODEL_RESPONSE, vm.uiState.value.agentProgress)
+
+        firstToken.complete(Unit)
+        val streaming = withTimeout(5_000) { vm.uiState.first { it.streamingReply != null } }
+        assertEquals(AgentProgress.STREAMING_REPLY, streaming.agentProgress)
+        assertTrue(streaming.agentWorking)
+
+        completeReply.complete(Unit)
+        val completed = withTimeout(5_000) { vm.uiState.first { !it.isExecuting } }
+        assertNull(completed.agentProgress)
+        assertEquals(listOf("Write an answer", "A short answer"), completed.transcript.map { it.text })
+        assertEquals(streaming.streamingReply?.id, completed.transcript.last().id)
+    }
+
+    @Test
+    fun `stopping before the first token clears the wait and cancels the slow response reminder`() = runBlocking {
+        val modelEntered = CompletableDeferred<Unit>()
+        bridge.turnResults = flow {
+            modelEntered.complete(Unit)
+            awaitCancellation()
+        }
+
+        startAgentTurn("Wait for a reply")
+        withTimeout(5_000) { modelEntered.await() }
+        assertEquals(AgentProgress.WAITING_FOR_MODEL, vm.uiState.value.agentProgress)
+
+        vm.cancelAgentTurn()
+        withTimeout(5_000) { vm.uiState.first { !it.isExecuting } }
+        mainDispatcher.scheduler.advanceTimeBy(8_001)
+
+        assertNull(vm.uiState.value.agentProgress)
+        assertNull(vm.uiState.value.streamingReply)
+        assertEquals(listOf(ChatRole.USER, ChatRole.SYSTEM), vm.uiState.value.transcript.map { it.role })
+        val transcript = vm.uiState.value.transcript
+        assertEquals("Task stopped", transcript.last().text)
+        assertEquals("Task stopped", vm.uiState.value.lastAgentOutcome)
+        assertEquals(transcript.first().id, transcript.last().retryOfUserMessageId)
+        vm.restoreRequestForEditing(transcript.last().id)
+        assertEquals("Wait for a reply", vm.uiState.value.nlText)
+        assertEquals(transcript, vm.uiState.value.transcript)
+    }
+
+    @Test
+    fun `stopping a streamed answer preserves partial text and retries with completed context`() = runBlocking {
+        bridge.turnResults = flowOf(AgentTurnResult.Answer("Topic saved"))
+        startAgentTurn("Remember the topic")
+        withTimeout(5_000) { vm.uiState.first { !it.isExecuting && it.lastAgentOutcome == "Topic saved" } }
+
         bridge.turnResults = flow {
             emit(AgentTurnResult.AnswerDelta("Partial"))
             emit(AgentTurnResult.AnswerDelta(" answer"))
             awaitCancellation()
         }
-        vm.onNlTextChange("Write an answer")
-        vm.agentTurn()
+        startAgentTurn("Write an answer")
         val partial = withTimeout(5_000) {
             vm.uiState.first { it.streamingReply?.text == "Partial answer" }.streamingReply
         }
@@ -281,8 +405,43 @@ class McosViewModelAgentTest {
         val stopped = withTimeout(5_000) { vm.uiState.first { !it.isExecuting } }
 
         assertNull(stopped.streamingReply)
-        assertEquals(listOf(partial), stopped.transcript.filter { it.role == ChatRole.AGENT })
-        assertTrue(stopped.transcript.any { it.text.contains("Task stopped") })
+        assertEquals(partial, stopped.transcript[stopped.transcript.lastIndex - 1])
+        assertTrue(stopped.transcript.last().text.contains("Task stopped"))
+        vm.restoreRequestForEditing(stopped.transcript.last().id)
+        assertEquals("Write an answer", vm.uiState.value.nlText)
+        assertEquals(stopped.transcript, vm.uiState.value.transcript)
+
+        bridge.turnResults = flowOf(AgentTurnResult.Answer("A short answer"))
+        startAgentTurn("Write a shorter answer")
+        withTimeout(5_000) { vm.uiState.first { !it.isExecuting && it.lastAgentOutcome == "A short answer" } }
+        assertEquals("Write a shorter answer", bridge.lastMessage)
+        assertEquals(
+            listOf(LlmChatMessage("user", "Remember the topic"), LlmChatMessage("assistant", "Topic saved")),
+            bridge.lastHistory,
+        )
+    }
+
+    @Test
+    fun `stopping after a device observation leaves no retry entry even if text started`() = runBlocking {
+        bridge.turnResults = flow {
+            emit(AgentTurnResult.Probing("Device observation", "Updating the plan"))
+            emit(AgentTurnResult.AnswerDelta("Partial answer"))
+            awaitCancellation()
+        }
+        startAgentTurn("Check the device")
+        withTimeout(5_000) { vm.uiState.first { it.streamingReply != null } }
+
+        vm.cancelAgentTurn()
+        val stopped = withTimeout(5_000) { vm.uiState.first { !it.isExecuting } }
+        assertNull(stopped.transcript.last().retryOfUserMessageId)
+    }
+
+    @Test
+    fun `a cancellation from the bridge does not count as a user stop`() = runBlocking {
+        bridge.turnResults = flow { throw CancellationException("Bridge cancelled") }
+        startAgentTurn("Write an answer")
+        val stopped = withTimeout(5_000) { vm.uiState.first { !it.isExecuting && it.lastAgentOutcome != null } }
+        assertNull(stopped.transcript.last().retryOfUserMessageId)
     }
 
     @Test
@@ -402,9 +561,7 @@ class McosViewModelAgentTest {
 
     // ─── Helpers ─────────────────────────────────────────────────────────
 
-    /** Fill the model key and goal, then start a turn. */
     private fun startAgentTurn(goal: String) {
-        vm.onVendorKeyChange("openai", "sk-test-key")
         vm.onNlTextChange(goal)
         vm.agentTurn()
     }

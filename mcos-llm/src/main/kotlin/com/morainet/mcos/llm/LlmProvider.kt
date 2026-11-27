@@ -217,6 +217,10 @@ enum class ProviderTier {
  */
 object LlmErrorCode {
     const val EMPTY_RESPONSE = "LLM_EMPTY_RESPONSE"
+    const val TIMEOUT = "LLM_TIMEOUT"
+    const val CONNECT_ERROR = "LLM_CONNECT_ERROR"
+    const val NETWORK_ERROR = "LLM_NETWORK_ERROR"
+    const val STREAM_INTERRUPTED = "LLM_STREAM_INTERRUPTED"
 
     /**
      * Provider cannot handle the request with its current capabilities

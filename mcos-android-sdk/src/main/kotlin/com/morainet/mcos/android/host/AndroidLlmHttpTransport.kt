@@ -1,6 +1,7 @@
 package com.morainet.mcos.android.host
 
 import com.morainet.mcos.llm.HttpTransportResponse
+import com.morainet.mcos.llm.LlmErrorCode
 import com.morainet.mcos.llm.LlmStreamFrame
 import com.morainet.mcos.llm.LlmTransportException
 import com.morainet.mcos.llm.StreamingLlmHttpTransport
@@ -80,7 +81,7 @@ class AndroidLlmHttpTransport : StreamingLlmHttpTransport {
             } catch (e: IOException) {
                 currentCoroutineContext().ensureActive()
                 if (e is InterruptedIOException) {
-                    throw LlmTransportException("LLM_TIMEOUT", "LLM request timed out", true)
+                    throw LlmTransportException(LlmErrorCode.TIMEOUT, "LLM request timed out", true)
                 }
                 throw e
             } finally {
@@ -129,7 +130,7 @@ class AndroidLlmHttpTransport : StreamingLlmHttpTransport {
             val text = stream?.bufferedReader()?.use { it.readText() } ?: ""
             HttpTransportResponse(statusCode = status, body = text)
         } catch (e: SocketTimeoutException) {
-            throw LlmTransportException("LLM_TIMEOUT", "LLM request timed out", true)
+            throw LlmTransportException(LlmErrorCode.TIMEOUT, "LLM request timed out", true)
         } finally {
             conn.disconnect()
         }

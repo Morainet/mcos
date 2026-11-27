@@ -21,11 +21,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -34,6 +36,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.morainet.mcos.android.demo.McosRadius
 import com.morainet.mcos.android.demo.McosSpace
@@ -45,6 +50,9 @@ import kotlinx.coroutines.launch
 internal fun TaskConversation(
     messages: List<ChatMessage>,
     outcome: String?,
+    inlineProgress: String?,
+    canRestoreRequest: Boolean,
+    onRestoreRequest: (Long) -> Unit,
     modifier: Modifier,
 ) {
     val latest = messages.last()
@@ -66,7 +74,13 @@ internal fun TaskConversation(
             verticalArrangement = Arrangement.spacedBy(McosSpace.xxl, Alignment.Top),
         ) {
             // Index zero anchors the bottom even while the last message grows.
-            item(key = "conversation-footer") { Spacer(Modifier.height(1.dp)) }
+            item(key = "conversation-footer") {
+                if (inlineProgress == null) {
+                    Spacer(Modifier.height(1.dp))
+                } else {
+                    TaskProgress(inlineProgress)
+                }
+            }
             itemsIndexed(messages.asReversed(), key = { _, message -> message.id }) { index, message ->
                 val result = outcome?.takeIf {
                     index == 0 && message.role == ChatRole.AGENT && message.text == "✓ $it"
@@ -75,7 +89,11 @@ internal fun TaskConversation(
                     TaskResult(result)
                 } else {
                     val previous = messages.getOrNull(messages.lastIndex - index - 1)
-                    TaskMessage(message, showAgentLabel = previous?.role != ChatRole.AGENT)
+                    val editRetry: (() -> Unit)? =
+                        if (index == 0 && canRestoreRequest && message.retryOfUserMessageId != null) {
+                            { onRestoreRequest(message.id) }
+                        } else null
+                    TaskMessage(message, showAgentLabel = previous?.role != ChatRole.AGENT, onEditRetry = editRetry)
                 }
             }
         }
@@ -92,7 +110,23 @@ internal fun TaskConversation(
 }
 
 @Composable
-private fun TaskMessage(message: ChatMessage, showAgentLabel: Boolean) {
+internal fun TaskProgress(message: String, spinning: Boolean = true) {
+    Row(
+        Modifier.fillMaxWidth().padding(McosSpace.lg).semantics { liveRegion = LiveRegionMode.Polite },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(McosSpace.md),
+    ) {
+        if (spinning) CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+        Text(
+            message,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.labelMedium,
+        )
+    }
+}
+
+@Composable
+private fun TaskMessage(message: ChatMessage, showAgentLabel: Boolean, onEditRetry: (() -> Unit)?) {
     when (message.role) {
         ChatRole.USER -> Box(
             Modifier.fillMaxWidth().padding(start = 40.dp),
@@ -142,8 +176,13 @@ private fun TaskMessage(message: ChatMessage, showAgentLabel: Boolean) {
                 horizontalArrangement = Arrangement.spacedBy(McosSpace.md),
             ) {
                 Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(16.dp))
-                SelectionContainer {
-                    Text(message.text, style = MaterialTheme.typography.bodySmall)
+                Column {
+                    SelectionContainer {
+                        Text(message.text, style = MaterialTheme.typography.bodySmall)
+                    }
+                    if (onEditRetry != null) {
+                        TextButton(onClick = onEditRetry) { Text("Edit and retry") }
+                    }
                 }
             }
         }

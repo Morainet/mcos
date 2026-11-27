@@ -180,6 +180,7 @@ class McosViewModelTest {
     @Test
     fun chatWithoutApiKeyWarnsAndDoesNotExecute() = runBlocking {
         vm.attach(buildDeps(FakeSecureStore()))
+        withTimeout(5_000) { vm.uiState.first { it.tasksReady } }
         vm.onNlTextChange("take a photo")
         vm.chat()
 

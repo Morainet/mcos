@@ -89,6 +89,7 @@ internal class TaskWorkspaceStore(private val secureStore: SecureStore) {
                     role = role,
                     text = text,
                     useAsContext = message["useAsContext"]?.jsonPrimitive?.booleanOrNull ?: legacyDialogue,
+                    retryOfUserMessageId = message["retryOfUserMessageId"]?.jsonPrimitive?.longOrNull,
                 )
             },
             outcome = outcome,
@@ -111,6 +112,7 @@ internal class TaskWorkspaceStore(private val secureStore: SecureStore) {
                     put("role", message.role.name)
                     put("text", message.text)
                     put("useAsContext", message.useAsContext)
+                    message.retryOfUserMessageId?.let { put("retryOfUserMessageId", it) }
                 })
             }
         })

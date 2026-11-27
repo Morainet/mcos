@@ -158,13 +158,18 @@ sealed class AgentTurnResult {
     /**
      * The loop declined. `category` is machine-readable:
      * `QUOTA` (agent cap exceeded), `POLICY` (planner refusal),
-     * `COMPILE_FAILED` (no provider produced a plan),
+     * `COMPILE_FAILED` (no provider produced a plan), standard model transport
+     * or empty response codes from [LlmErrorCode],
      * `EXECUTION_FAILED` / `EXECUTION_TIMEOUT` (post-approval runtime errors).
      * The [headline] pairs the human [reason] with the category so it reads
      * on its own (e.g. `"Refused (QUOTA): agent_cap_exceeded"`).
      */
     data class Refuse(val category: String, val reason: String) : AgentTurnResult(), TerminalResult {
         override val headline: String get() = "Refused ($category): $reason"
+
+        companion object {
+            const val WALL_CLOCK_EXCEEDED = "agent_wall_clock_exceeded"
+        }
     }
 
     /** The approved plan executed to completion; [summary] is the self-contained headline. */
@@ -199,7 +204,8 @@ sealed class AgentTurnResult {
 
 /**
  * Per-turn Agent caps (06 §11.2). Exceeding any cap terminates the turn with
- * `Refuse("QUOTA", "agent_cap_exceeded")` — the loop never silently truncates.
+ * a `QUOTA` refusal. The reason is `agent_cap_exceeded` for probe and replan
+ * limits and [AgentTurnResult.Refuse.WALL_CLOCK_EXCEEDED] for the time limit.
  *
  * The budget is consumed across replans *within one turn* (compile → probe →
  * compile counts against the same budget; a new [AgentBridge.runTurn] resets
