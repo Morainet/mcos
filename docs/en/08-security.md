@@ -478,6 +478,8 @@ This keeps the Stage 6 hot path at <1 ms (pure in-memory set difference) while p
 
 ## 6. Confirmation UX Requirements
 
+Register pending response state before publishing `ConfirmationNeeded`, so synchronous hosts and fast collectors can answer immediately. Remove pending state after completion or cancellation.
+
 ### 6.0 Normative `ConfirmationPrompt` Type
 
 `ConfirmationPrompt` is carried by `RuntimeEvent.ConfirmationNeeded` ([01 §11.5](./01-architecture.md)). It was referenced there but undefined — this section is the normative definition.

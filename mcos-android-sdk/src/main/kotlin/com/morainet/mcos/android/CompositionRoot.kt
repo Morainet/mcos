@@ -51,6 +51,8 @@ import com.morainet.mcos.sdk.McosPlugin
 import com.morainet.mcos.sdk.SecureStore
 import android.util.Base64
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.security.SecureRandom
@@ -145,6 +147,32 @@ class MarketplaceDeps(
  * construction logic).
  */
 object CompositionRoot {
+
+    /**
+     * Minimal process-lifetime host for app-owned capabilities. Interactive
+     * platform bridges are unattached; use the full host or supply services to
+     * EmbeddedRuntime.create when Activity-bound capabilities are needed.
+     */
+    suspend fun createEmbedded(context: Context, plugins: List<McosPlugin>): EmbeddedRuntime =
+        withContext(Dispatchers.IO) {
+            val appContext = context.applicationContext
+            val secureStore = AndroidSecureStore(appContext)
+            val auditLog = FileAuditLog(
+                file = File(appContext.filesDir, "embedded/audit.jsonl"),
+                hmacKey = deriveAuditHmacKey(persistedSeed(secureStore, AUDIT_HMAC_SEED_KEY)),
+                cipher = AesGcmAuditCipher(deriveAuditCipherKey(persistedSeed(secureStore, AUDIT_AES_SEED_KEY))),
+            ).apply { start() }
+            try {
+                EmbeddedRuntime.create(
+                    hostServices = AndroidHostServices(appContext, ActivityResultBridge(), RuntimePermissionBridge()),
+                    plugins = plugins,
+                    auditLog = auditLog,
+                )
+            } catch (failure: Throwable) {
+                auditLog.stop()
+                throw failure
+            }
+        }
 
     /** SecureStore key holding the device-bound audit export-signature seed. */
     private const val AUDIT_HMAC_SEED_KEY = "audit_hmac_seed"

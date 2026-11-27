@@ -479,6 +479,8 @@ data class AuthStamp(
 
 ## 6. 确认 UX 要求
 
+确认请求必须先注册等待状态，再发布 `ConfirmationNeeded`；同步宿主或快速事件订阅者的立即响应必须被接受。响应完成或请求取消后清理等待状态。
+
 ### 6.0 规范性 `ConfirmationPrompt` 类型
 
 `ConfirmationPrompt` 由 `RuntimeEvent.ConfirmationNeeded`（[01 §11.5](./01-architecture.md)）承载。它在那里被引用但未定义——本节是其规范性定义。

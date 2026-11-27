@@ -1,5 +1,8 @@
 # MCOS 系统架构
 
+> **近期架构入口：** [架构收敛与开发边界](./13-architecture-convergence.md)——宿主 SDK 定位、当前依赖与后续拆分顺序。
+
+
 > **语言:** [English](../en/01-architecture.md) · 中文（当前）
 > **Status:** Draft
 > **Version:** 0.1.0
