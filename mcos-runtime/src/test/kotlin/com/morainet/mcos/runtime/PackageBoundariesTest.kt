@@ -94,6 +94,7 @@ class PackageBoundariesTest {
      * register here deliberately.
      */
     private val packageRules = listOf(
+        "com.morainet.mcos.sample.embedded" to "mcos-sample-embedded",
         "com.morainet.mcos.sdk" to "mcos-sdk",
         "com.morainet.mcos.security" to "mcos-security",
         "com.morainet.mcos.runtime.core" to "mcos-runtime-core",

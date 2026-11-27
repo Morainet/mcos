@@ -80,28 +80,22 @@ internal class ConfirmationCoordinator(
         result: CommandResult.Err,
         timeoutOverrideMs: Long? = null,
     ): ConfirmationDecision {
-        val sideEffectClass = (result.details?.get("sideEffectClass") as? JsonPrimitive)?.content
-        eventBus.publish(
-            runId,
-            RuntimeEvent.ConfirmationNeeded(
-                runId = runId,
-                commandId = cmd.id,
-                reason = result.message,
-                sideEffectClass = sideEffectClass,
-            )
-        )
-        return awaitConfirmation(runId, cmd.id, timeoutOverrideMs)
-    }
-
-    private suspend fun awaitConfirmation(
-        runId: String,
-        commandId: String,
-        timeoutOverrideMs: Long? = null,
-    ): ConfirmationDecision {
-        val key = confirmationKey(runId, commandId)
+        val key = confirmationKey(runId, cmd.id)
         val deferred = CompletableDeferred<ConfirmationDecision>()
+        // Make the request answerable before publishing it. A synchronous host
+        // or fast collector may respond from inside publish().
         pendingConfirmations[key] = deferred
         try {
+            val sideEffectClass = (result.details["sideEffectClass"] as? JsonPrimitive)?.content
+            eventBus.publish(
+                runId,
+                RuntimeEvent.ConfirmationNeeded(
+                    runId = runId,
+                    commandId = cmd.id,
+                    reason = result.message,
+                    sideEffectClass = sideEffectClass,
+                ),
+            )
             return withTimeoutOrNull(timeoutOverrideMs ?: timeoutMs) { deferred.await() }
                 ?: ConfirmationDecision.Reject
         } finally {

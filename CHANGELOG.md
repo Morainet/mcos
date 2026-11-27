@@ -10,6 +10,12 @@ for the Command Protocol and Runtime API. See [docs/en/02-command-protocol.md](.
 
 ## [Unreleased]
 
+### Embedded host product flow (2026-11-27)
+
+- Add `CompositionRoot.createEmbedded` / `EmbeddedRuntime` for trusted app-shipped commands, with shared runtime security and fail-closed audit, without initializing marketplace/planner services. Host service injection now retains Builder-owned security and invocation limits.
+- Fix a confirmation race: register the pending response before publishing `ConfirmationNeeded`, so immediate host responses cannot be lost. Add a synchronous-response regression.
+- Add an independent Android record-export app: preview, approve/reject, real private file output, explicit failure/cancellation and audit. Add JVM integration regressions and bilingual integration instructions. Artifact dependency reduction remains pending.
+
 ### Architecture convergence — embedded Android runtime (2026-11-10)
 
 - Establish the near-term host SDK scope and document current module coupling separately from the planned refactoring sequence (EN/ZH).

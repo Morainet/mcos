@@ -87,6 +87,8 @@ Example utterances and their compiled commands:
 
 ## Quick Start
 
+Start with the [independent record-export host](./docs/en/14-embedded-host.md): one app-owned command, preview, confirmation, a real output file and audit, with no model key or marketplace configuration. The complete demo remains available for advanced integrations.
+
 ### Android host app
 
 ```kotlin

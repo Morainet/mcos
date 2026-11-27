@@ -156,7 +156,7 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Unit tests + assemble debug APK
-        run: timeout -k 60s 25m ./gradlew :mcos-android-sdk:testDebugUnitTest :mcos-android:testDebugUnitTest :mcos-android:assembleDebug --console=plain --no-daemon
+        run: timeout -k 60s 25m ./gradlew :mcos-android-sdk:testDebugUnitTest :mcos-android:testDebugUnitTest :mcos-android:assembleDebug :mcos-sample-embedded:testDebugUnitTest :mcos-sample-embedded:assembleDebug --console=plain --no-daemon
 
       # Exercises the publication task graph (maven-publish convention, BOM,
       # AAR release variant) on every PR so config drift fails here, not at

@@ -913,6 +913,7 @@ class McosRuntime internal constructor(
         private var registry: CommandRegistry? = null
         private var permissionKernel: PermissionKernel? = null
         private var executor: Executor? = null
+        private var hostServices: HostServices? = null
         private var memory: MemoryStore = MemoryStore()
         private var episodicMemory: EpisodicMemory = EpisodicMemory()
         private var eventBus: EventBus = TypedEventBus()
@@ -988,6 +989,14 @@ class McosRuntime internal constructor(
          * executor's SecurityConfig.
          */
         fun withExecutor(executor: Executor) = apply { this.executor = executor }
+
+        /**
+         * Supply platform services while retaining the builder-owned security,
+         * signer, invocation limiter and live configuration. An explicitly
+         * supplied Executor takes precedence and owns its services.
+         */
+        fun withHostServices(services: HostServices) = apply { this.hostServices = services }
+
         fun withMemory(memory: MemoryStore) = apply { this.memory = memory }
         fun withEpisodicMemory(episodicMemory: EpisodicMemory) = apply { this.episodicMemory = episodicMemory }
         fun withEventBus(eventBus: EventBus) = apply { this.eventBus = eventBus }
@@ -1173,7 +1182,7 @@ class McosRuntime internal constructor(
                 // sys.event.emit (03 §11 demo event source) works out of the
                 // box. Hosts injecting their own Executor attach (or omit)
                 // the capability on their own HostServices.
-                object : HostServices by StubHostServices(memory) {
+                hostServices ?: object : HostServices by StubHostServices(memory) {
                     override val events = object : EventPublisher {
                         override suspend fun publish(type: String, payload: JsonObject) {
                             eventBus.publishEvent(

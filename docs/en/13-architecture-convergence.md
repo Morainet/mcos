@@ -4,6 +4,8 @@
 
 ## 1. Product scope
 
+The long-term direction is an open, embeddable, extensible and interoperable command runtime. Android is the first product acceptance platform; the host task flow validates that direction, and additional platforms follow independent host demand.
+
 MCOS is a secure command runtime embedded in Android applications. Its demo app demonstrates that natural language or preset tasks can reliably invoke phone capabilities.
 
 The primary users are Android developers and AI product teams. Hosts register commands; the runtime owns argument validation, authorization, confirmation, execution, cancellation, and audit. Natural-language planning is optional; preset tasks execute directly.
@@ -55,3 +57,7 @@ Items 2–5 are pending. Marketplace decoupling affects public Builder/installer
 - Route command schemas, permission decisions, and execution through the same runtime path.
 - Preserve security, conformance, and versioning constraints; verify observable behavior when separating responsibilities.
 - Distinguish implemented, verified, and planned work; specification coverage alone does not establish a usable scenario.
+
+## 6. Base host task flow (2026-11-27)
+
+`CompositionRoot.createEmbedded` and the independent `mcos-sample-embedded` host now cover record export, preview, confirmation, file output and audit. Item 2 runtime assembly is implemented; Gradle dependency/artifact reduction remains pending. See the [independent host guide](./14-embedded-host.md).

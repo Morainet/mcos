@@ -131,3 +131,9 @@ sh gradlew :mcos-android-sdk:connectedDebugAndroidTest
 - WiFi SSID 无定位权限时诚实降级 null。
 - `TrustAnchors` 携带运营方真实签名钥（私钥离线保管，从未入库）；指纹与公钥由
   `TrustAnchorsConsistencyTest` 钉死，发布守卫拒绝占位钥出仓。
+
+## 基础宿主接入
+
+随 App 发布的自定义能力可用 `CompositionRoot.createEmbedded(context, plugins)` 创建基础运行时，无需初始化市场或模型。该方法是 suspend 函数，应用应在进程级协程创建一次；完整源码和确认/结果处理见[独立宿主指南](../docs/zh/14-embedded-host.md)。
+
+需要自定义平台能力时，`McosRuntime.Builder.withHostServices` 保留 Builder 管理的权限、签名器、限流和运行时配置，避免仅为注入平台服务而手工构造 Executor。已有 `withExecutor` 显式注入仍优先。
