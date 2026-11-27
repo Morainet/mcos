@@ -50,6 +50,3 @@ include(":plugins:mcos-plugin-devicefixture")
 // gate reader (McosPackage) lives in :mcos-runtime-core, so this module never
 // needs the Android toolchain; JavaExec tasks drive the CLI.
 include(":mcos-conformance")
-
-// Independent host integration sample; not published.
-include(":mcos-sample-embedded")

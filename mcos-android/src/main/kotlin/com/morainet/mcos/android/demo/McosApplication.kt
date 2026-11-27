@@ -1,10 +1,14 @@
 package com.morainet.mcos.android.demo
 
 import android.app.Application
+import android.content.pm.ApplicationInfo
 import com.morainet.mcos.android.AppDeps
 import com.morainet.mcos.android.CompositionRoot
 import com.morainet.mcos.android.McosHostApp
 import com.morainet.mcos.android.RuntimeBootstrap
+import com.morainet.mcos.android.demo.device.AdbInspectionPlugin
+import com.morainet.mcos.android.demo.records.RecordExportPlugin
+import java.io.File
 
 /**
  * Owns the process-lifetime [AppDeps] (durable schedule hosting, 10 §6). Built
@@ -29,7 +33,16 @@ class McosApplication : Application(), McosHostApp {
 
     override fun onCreate() {
         super.onCreate()
-        deps = CompositionRoot.create(this)
+        val builtIns = CompositionRoot.defaultBuiltIns() + RecordExportPlugin(File(filesDir, "record-exports"))
+        val debugTools = if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+            listOf(AdbInspectionPlugin(File(filesDir, "agent-adb")))
+        } else {
+            emptyList()
+        }
+        deps = CompositionRoot.create(
+            this,
+            builtIns = builtIns + debugTools,
+        )
         RuntimeBootstrap.ensureRehydrated(deps)
     }
 }

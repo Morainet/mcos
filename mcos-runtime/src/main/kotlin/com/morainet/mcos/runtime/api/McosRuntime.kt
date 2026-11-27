@@ -735,11 +735,15 @@ class McosRuntime internal constructor(
                                 }
                             }
 
-                            is ConfirmationDecision.Reject -> {
-                                val rejection = "Confirmation rejected for '${cmd.id}'"
-                                eventBus.publish(runId, RuntimeEvent.StepFailed(runId, index, cmd.id, rejection))
+                            ConfirmationDecision.Reject, null -> {
+                                val reason = if (decision == null) {
+                                    "Confirmation timed out for '${cmd.id}'"
+                                } else {
+                                    "Confirmation rejected for '${cmd.id}'"
+                                }
+                                eventBus.publish(runId, RuntimeEvent.StepFailed(runId, index, cmd.id, reason))
                                 summarize(runId, commands, payload, EpisodicOutcome.FAILED)
-                                eventBus.publish(runId, RuntimeEvent.RunFailed(runId, rejection))
+                                eventBus.publish(runId, RuntimeEvent.RunFailed(runId, reason))
                                 return
                             }
                         }

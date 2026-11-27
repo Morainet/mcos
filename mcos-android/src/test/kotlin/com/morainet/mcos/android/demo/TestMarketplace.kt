@@ -35,6 +35,7 @@ import com.morainet.mcos.security.PluginTrustGate
 import com.morainet.mcos.security.PublisherKey
 import com.morainet.mcos.security.permission.DefaultPermissionKernel
 import com.morainet.mcos.sdk.HostServices
+import com.morainet.mcos.sdk.McosPlugin
 import com.morainet.mcos.sdk.SecureStore
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.serialization.builtins.ListSerializer
@@ -251,6 +252,7 @@ object TestMarketplace {
         keyPair: KeyPair = keyPair(),
         permissionKernel: DefaultPermissionKernel = DefaultPermissionKernel(),
         hostServices: HostServices = StubHostServices(InMemoryFacade()),
+        plugins: List<McosPlugin> = listOf(HelloPlugin()),
     ): AppDeps {
         val registry = CommandRegistry()
         val keyStore = InMemoryPublisherKeyStore().apply { put(pubKey(keyPair)) }
@@ -280,7 +282,7 @@ object TestMarketplace {
             runtime = runtime,
             hostServices = hostServices,
             registry = registry,
-            plugins = listOf(HelloPlugin()),
+            plugins = plugins,
             resultBridge = ActivityResultBridge(),
             // No prompter attached — commands degrade honestly, same as a
             // headless run.

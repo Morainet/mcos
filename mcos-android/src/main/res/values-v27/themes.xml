@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.McosShell.Starting" parent="Base.Theme.McosShell.Starting">
+        <item name="android:navigationBarColor">@color/mcos_splash_bg</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+</resources>

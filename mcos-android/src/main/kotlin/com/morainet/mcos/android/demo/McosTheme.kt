@@ -19,19 +19,16 @@ import androidx.compose.ui.unit.sp
  * system" guideline: centralized tokens, no hardcoded values).
  *
  * Semantic accents (not just Material roles):
- * - [accent]  violet — primary CTA, "run", selection
+ * - [accent]  forest green — primary CTA, "run", selection
  * - [info]    cyan — AI / info / run-event markers
  * - [warn]    amber — elevated permissions / warnings
  * - [danger]  red — errors / destructive actions
  * - [success] teal — success / healthy provider
  */
 object McosColor {
-    // Surfaces — neutral light (mainstream chat-app base): near-white page,
-    // white cards, one iOS-like system gray for wells. The violet lives in
-    // the accent, not the wash.
-    val bg = Color(0xFFF7F7FA)
+    val bg = Color(0xFFF2F5F0)
     val surface = Color(0xFFFFFFFF)
-    val surfaceAlt = Color(0xFFF2F2F7)
+    val surfaceAlt = Color(0xFFE9EFEA)
     val console = Color(0xFF17141F)
     val consoleDim = Color(0xFF241F31)
 
@@ -43,18 +40,17 @@ object McosColor {
     val consoleWarn = Color(0xFFFBBF24)
     val consoleDanger = Color(0xFFF87171)
     val consoleSuccess = Color(0xFF2DD4BF)
-    val border = Color(0xFFE5E5EA)
-    val borderSoft = Color(0xFFEFEFF4)
+    val border = Color(0xFFD4E0D7)
+    val borderSoft = Color(0xFFE4EBE5)
 
-    // Text — deep indigo on light, never pure black.
-    val fg = Color(0xFF1E1B4B)
-    val fgMuted = Color(0xFF6E6A8F)
-    val fgDim = Color(0xFF9C98B8)
+    val fg = Color(0xFF172721)
+    val fgMuted = Color(0xFF486058)
+    val fgDim = Color(0xFF5F756C)
 
     // Semantic accents.
-    val accent = Color(0xFF7C3AED)
-    val accentDeep = Color(0xFF5B21B6)
-    val accentSoft = Color(0xFFEDE9FE)
+    val accent = Color(0xFF1C624B)
+    val accentDeep = Color(0xFF16382D)
+    val accentSoft = Color(0xFFDCEEE2)
     val onAccent = Color(0xFFFFFFFF)
     val info = Color(0xFF0891B2)
     val warn = Color(0xFFB45309)
@@ -129,6 +125,7 @@ fun McosTheme(content: @Composable () -> Unit) {
             surfaceVariant = McosColor.surfaceAlt,
             onSurfaceVariant = McosColor.fgMuted,
             outline = McosColor.border,
+            outlineVariant = McosColor.borderSoft,
             error = McosColor.danger,
             onError = McosColor.onDanger,
         ),

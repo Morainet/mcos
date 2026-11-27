@@ -9,4 +9,14 @@
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>
+
+    <style name="Theme.McosShell.Starting" parent="Base.Theme.McosShell.Starting" />
+
+    <style name="Base.Theme.McosShell.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/mcos_splash_bg</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/mcos_splash_logo</item>
+        <item name="postSplashScreenTheme">@style/Theme.McosShell</item>
+        <item name="android:statusBarColor">@color/mcos_splash_bg</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
 </resources>

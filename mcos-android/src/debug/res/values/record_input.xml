@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="record_id" type="id" />
+    <string name="record_id_label">Record ID</string>
+    <string name="record_id_required">Enter a record ID</string>
+    <string name="export_entered_record">Preview and export entered record</string>
+    <string name="find_latest_record">Find latest completed record</string>
+    <string name="export_located_record">Preview and export located record</string>
+    <string name="latest_record_result">Latest completed record: %1$s\nLookup: %2$s</string>
+    <string name="latest_record_failure">Record lookup failed: %1$s</string>
+    <string name="export_confirmation_message">Export record %1$s to this app’s private storage.\nRun: %2$s</string>
+</resources>

@@ -95,7 +95,7 @@ class McosRuntimeConfirmationTest {
 
         val failed = awaitEvent(events) { it is RuntimeEvent.RunFailed }
         assertNotNull(failed, "run should fail after rejection")
-        assertTrue((failed as RuntimeEvent.RunFailed).error.contains("rejected", ignoreCase = true))
+        assertEquals("Confirmation rejected for 'test.write'", (failed as RuntimeEvent.RunFailed).error)
         assertTrue(events.any { it is RuntimeEvent.StepFailed }, "should emit StepFailed")
 
         stopObserving()
@@ -119,7 +119,10 @@ class McosRuntimeConfirmationTest {
         assertNotNull(awaitEvent(events) { it is RuntimeEvent.ConfirmationNeeded })
         // Do not answer — let the confirmation timeout elapse.
         val failed = awaitEvent(events) { it is RuntimeEvent.RunFailed }
-        assertTrue(failed != null, "timeout should reject the run")
+        assertEquals("Confirmation timed out for 'test.write'", assertIs<RuntimeEvent.RunFailed>(failed).error)
+        assertTrue(events.any {
+            it is RuntimeEvent.StepFailed && it.error == failed.error
+        })
 
         stopObserving()
     }

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<animated-vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/mcos_splash_logo">
+    <target android:name="mark_body" android:animation="@animator/mcos_splash_mark" />
+    <target android:name="mark_fold" android:animation="@animator/mcos_splash_fold" />
+</animated-vector>

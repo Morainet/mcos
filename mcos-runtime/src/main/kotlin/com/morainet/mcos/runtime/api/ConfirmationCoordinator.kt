@@ -21,8 +21,8 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * Commands whose side-effect class requires confirmation return
  * CONFIRMATION_REQUIRED. The run suspends on a deferred until the host answers
- * via [respond] (or the timeout elapses, which is treated as a reject); an
- * approved command is retried with the signed, run-scoped [AuthStamp] from
+ * via [respond] or the timeout elapses. Only an approved command is
+ * retried with the signed, run-scoped [AuthStamp] from
  * [mintAuthStamp] so the permission kernel is bypassed for exactly that
  * command/run.
  *
@@ -30,8 +30,7 @@ import java.util.concurrent.ConcurrentHashMap
  * @param signer Signs the retry stamp minted after an approval.
  * @param registry Resolves command descriptors so the minted stamp covers
  *   exactly the permissions the confirmed command requires.
- * @param timeoutMs How long a run stays suspended before the request is
- *   treated as rejected (08-security.md §6.3).
+ * @param timeoutMs How long a run stays suspended awaiting a decision.
  */
 internal class ConfirmationCoordinator(
     private val eventBus: EventBus,
@@ -66,12 +65,13 @@ internal class ConfirmationCoordinator(
     /**
      * Publish the [RuntimeEvent.ConfirmationNeeded] notification and suspend
      * the run until the host answers via [respond] or the confirmation
-     * timeout elapses (timeout ⇒ reject).
+     * timeout elapses.
      *
      * @param timeoutOverrideMs per-call timeout override. Background
      *        event-triggered runs pass the longer §6.4.1 budget (the user is
      *        not looking at the screen); defaults to the configured
      *        [timeoutMs].
+     * @return The host's decision, or null if the request timed out.
      */
     suspend fun requestConfirmation(
         runId: String,
@@ -79,7 +79,7 @@ internal class ConfirmationCoordinator(
         cmd: Command,
         result: CommandResult.Err,
         timeoutOverrideMs: Long? = null,
-    ): ConfirmationDecision {
+    ): ConfirmationDecision? {
         val key = confirmationKey(runId, cmd.id)
         val deferred = CompletableDeferred<ConfirmationDecision>()
         // Make the request answerable before publishing it. A synchronous host
@@ -97,7 +97,6 @@ internal class ConfirmationCoordinator(
                 ),
             )
             return withTimeoutOrNull(timeoutOverrideMs ?: timeoutMs) { deferred.await() }
-                ?: ConfirmationDecision.Reject
         } finally {
             pendingConfirmations.remove(key)
         }

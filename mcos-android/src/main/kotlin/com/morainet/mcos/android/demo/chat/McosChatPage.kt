@@ -1,473 +1,308 @@
 package com.morainet.mcos.android.demo.chat
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.ArrowUpward
-import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Battery6Bar
-import androidx.compose.material.icons.filled.Brightness6
-import androidx.compose.material.icons.filled.PhotoCamera
-import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.res.colorResource
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.morainet.mcos.android.demo.McosColor
-import com.morainet.mcos.android.demo.McosRadius
-import com.morainet.mcos.android.demo.McosSpace
+import com.morainet.mcos.android.demo.R
+import com.morainet.mcos.android.demo.records.InspectionTask
 import com.morainet.mcos.android.demo.shell.ChatMessage
 import com.morainet.mcos.android.demo.shell.ChatRole
 import com.morainet.mcos.android.demo.shell.McosUiState
 import com.morainet.mcos.android.demo.shell.McosViewModel
 
-/**
- * Main conversation page (主对话页) — the mainstream assistant-app layout:
- * a quiet header that only appears when something needs attention, a
- * transcript (user bubbles right / assistant as plain text, ChatGPT-style /
- * system notices centered), a greeting-with-suggestion-cards empty state,
- * and a pill composer docked above the nav bar. The raw console stays on
- * the Tools page.
- */
 @Composable
-internal fun ChatPage(
-    vm: McosViewModel,
-    ui: McosUiState,
-) {
-    val send: () -> Unit = { if (ui.agentMode) vm.agentTurn() else vm.chat() }
+internal fun AgentPage(vm: McosViewModel, ui: McosUiState, onConnectModel: () -> Unit) {
+    val canSwitch = ui.tasksReady && !ui.isExecuting && ui.pendingAgentPlan == null && ui.pendingConfirmation == null
+    val canStart = canSwitch && ui.taskResumeAtMs == null
+    var historyOpen by rememberSaveable { mutableStateOf(false) }
+    val focus = LocalFocusManager.current
+    BackHandler(historyOpen) { historyOpen = false }
 
-    // NOTE: no imePadding here — the shell Scaffold's safeDrawing insets
-    // already lift this column above the IME; adding imePadding again would
-    // double the offset and open a gap between the composer and the keyboard.
-    Column(Modifier.fillMaxSize()) {
-        // Status surfaces only when it needs attention — a ready system is
-        // invisible (mainstream behavior).
-        StatusNotice(ui = ui)
-
-        Transcript(
-            ui = ui,
-            onSuggestion = { vm.onNlTextChange(it) },
-            modifier = Modifier.fillMaxWidth().weight(1f),
-        )
-
-        if (ui.agentWorking) {
-            AgentStrip(onCancel = { vm.cancelAgentTurn() })
-        }
-
-        Composer(
-            ui = ui,
-            onTextChange = { vm.onNlTextChange(it) },
-            onAgentModeChange = { vm.onAgentModeChange(it) },
-            send = send,
-        )
-    }
-}
-
-// ── Transcript ──────────────────────────────────────────────────────────────
-
-@Composable
-private fun Transcript(
-    ui: McosUiState,
-    onSuggestion: (String) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val listState = rememberLazyListState()
-    LaunchedEffect(ui.transcript.size, ui.isExecuting) {
-        if (ui.transcript.isNotEmpty()) listState.animateScrollToItem(ui.transcript.size - 1)
-    }
-    LazyColumn(
-        modifier = modifier,
-        state = listState,
-        contentPadding = PaddingValues(horizontal = McosSpace.xl, vertical = McosSpace.lg),
-        verticalArrangement = Arrangement.spacedBy(McosSpace.lg),
-    ) {
-        if (ui.transcript.isEmpty()) {
-            item { Greeting(onSuggestion = onSuggestion) }
-        }
-        items(ui.transcript, key = { it.id }) { message ->
-            when (message.role) {
-                ChatRole.USER -> UserBubble(message.text)
-                ChatRole.AGENT -> AgentText(message.text)
-                ChatRole.SYSTEM -> SystemLine(message.text)
-            }
-        }
-        if (ui.isExecuting && ui.transcript.isNotEmpty()) {
-            item { TypingRow(agent = ui.agentMode) }
-        }
-    }
-}
-
-/** Empty state: avatar, one-line greeting, tappable suggestion cards (icon + title + subtitle). */
-@Composable
-private fun Greeting(onSuggestion: (String) -> Unit) {
-    Column(Modifier.fillMaxWidth()) {
-        Column(
-            Modifier.fillMaxWidth().padding(top = 28.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Box(
-                Modifier
-                    .size(60.dp)
-                    .background(MaterialTheme.colorScheme.primary, CircleShape),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    Icons.Default.AutoAwesome,
-                    contentDescription = null,
-                    tint = McosColor.onAccent,
-                    modifier = Modifier.size(30.dp),
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+        Column(Modifier.widthIn(max = 660.dp).fillMaxSize()) {
+            if (historyOpen) {
+                TaskLibraryPage(
+                    ui = ui, canSwitch = canSwitch,
+                    onBack = { historyOpen = false },
+                    onSearch = vm::searchTaskHistory,
+                    onRename = vm::renameTask,
+                    onNewTask = {
+                        vm.newTask()
+                        historyOpen = false
+                    },
+                    onOpenTask = { id ->
+                        vm.selectTask(id)
+                        historyOpen = false
+                    },
                 )
-            }
-            Spacer(Modifier.height(McosSpace.xl))
-            Text(
-                "How can I help you today?",
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onBackground,
-            )
-            Spacer(Modifier.height(10.dp))
-            Text(
-                "Ask anything, or run a command — I'll compile it to verified DSL.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = McosColor.fgMuted,
-                textAlign = TextAlign.Center,
-            )
-            Spacer(Modifier.height(28.dp))
-        }
-        Column(
-            Modifier.padding(horizontal = McosSpace.lg),
-            verticalArrangement = Arrangement.spacedBy(McosSpace.md),
-        ) {
-            suggestionCards().forEach { card ->
-                SuggestionCard(card = card, onClick = { onSuggestion(card.prompt) })
-            }
-        }
-    }
-}
-
-private data class Suggestion(val icon: ImageVector, val tint: Color, val title: String, val subtitle: String, val prompt: String)
-
-private fun suggestionCards(): List<Suggestion> = listOf(
-    Suggestion(
-        icon = Icons.Default.PhotoCamera, tint = Color(0xFFE91E63),
-        title = "Take a photo", subtitle = "camera.capture()",
-        prompt = "take a photo",
-    ),
-    Suggestion(
-        icon = Icons.Default.Battery6Bar, tint = Color(0xFF43A047),
-        title = "Check battery", subtitle = "Battery level and charging state",
-        prompt = "what's my battery level?",
-    ),
-    Suggestion(
-        icon = Icons.Default.Brightness6, tint = Color(0xFFFFB300),
-        title = "Dim the screen", subtitle = "Set brightness to 30%",
-        prompt = "set brightness to 30%",
-    ),
-    Suggestion(
-        icon = Icons.Default.QrCodeScanner, tint = Color(0xFF1E88E5),
-        title = "Scan a QR code", subtitle = "camera.scan()",
-        prompt = "scan this QR code",
-    ),
-)
-
-@Composable
-private fun SuggestionCard(card: Suggestion, onClick: () -> Unit) {
-    Surface(
-        shape = RoundedCornerShape(McosRadius.lg),
-        color = MaterialTheme.colorScheme.surface,
-        border = androidx.compose.foundation.BorderStroke(1.dp, McosColor.borderSoft),
-        modifier = Modifier.fillMaxWidth().clickable { onClick() },
-    ) {
-        Row(
-            Modifier.padding(horizontal = McosSpace.xl, vertical = McosSpace.lg),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                Modifier
-                    .size(42.dp)
-                    .background(card.tint.copy(alpha = 0.12f), RoundedCornerShape(McosRadius.md)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(card.icon, contentDescription = null, tint = card.tint, modifier = Modifier.size(22.dp))
-            }
-            Spacer(Modifier.width(McosSpace.xl))
-            Column {
-                Text(
-                    card.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 15.sp,
-                    color = MaterialTheme.colorScheme.onSurface,
+            } else {
+                val submit: () -> Unit = {
+                    if (canStart && ui.nlText.isNotBlank()) {
+                        focus.clearFocus()
+                        if (ui.selectedVendor.usable) vm.agentTurn() else onConnectModel()
+                    }
+                }
+                val runSample: () -> Unit = {
+                    focus.clearFocus()
+                    vm.runInspectionTask()
+                }
+                WorkspaceHeader(
+                    model = if (ui.selectedVendor.usable) ui.selectedVendor.vendor.name else "Connect model",
+                    onConnectModel = onConnectModel,
+                    onOpenHistory = {
+                        focus.clearFocus()
+                        vm.searchTaskHistory("")
+                        historyOpen = true
+                    },
                 )
-                Text(
-                    card.subtitle,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = McosColor.fgMuted,
-                )
+                ui.taskHistoryError?.let { message ->
+                    Text(message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
+                if (ui.transcript.isEmpty()) {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth().weight(1f),
+                        contentPadding = PaddingValues(top = 14.dp, bottom = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp),
+                    ) {
+                        item { WorkspaceIntroduction() }
+                        item { TaskComposer(ui, canStart, onTextChange = vm::onNlTextChange, onRun = submit) }
+                        item { InspectionShortcut(enabled = canStart, onRun = runSample) }
+                        val recent = ui.taskHistory.filterNot { it.id == ui.activeTaskId }.take(2)
+                        if (recent.isNotEmpty()) {
+                            item { Text("Recent tasks", style = MaterialTheme.typography.titleMedium) }
+                            items(recent, key = { it.id }) { entry ->
+                                TaskHistoryRow(entry, current = false, enabled = canSwitch, onOpen = {
+                                    focus.clearFocus()
+                                    vm.selectTask(entry.id)
+                                })
+                            }
+                        }
+                    }
+                } else {
+                    val list = key(ui.activeTaskId) { rememberLazyListState(ui.transcript.lastIndex) }
+                    LaunchedEffect(ui.activeTaskId, ui.transcript.last().id) {
+                        list.animateScrollToItem(ui.transcript.lastIndex)
+                    }
+                    LazyColumn(
+                        state = list,
+                        modifier = Modifier.fillMaxWidth().weight(1f),
+                        contentPadding = PaddingValues(vertical = 14.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        items(ui.transcript, key = { it.id }) { message -> TaskMessage(message) }
+                    }
+                    TaskProgress(ui, onStop = vm::cancelAgentTurn)
+                    TaskComposer(ui, canStart, onTextChange = vm::onNlTextChange, onRun = submit, onSample = runSample)
+                }
             }
         }
     }
 }
 
-// ── Messages ────────────────────────────────────────────────────────────────
-
 @Composable
-private fun UserBubble(text: String) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-        Surface(
-            shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomStart = 20.dp, bottomEnd = 6.dp),
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.widthIn(max = 300.dp),
-        ) {
-            Text(
-                text,
-                color = McosColor.onAccent,
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-            )
-        }
-    }
-}
-
-/** Assistant output is plain text on the page background — no bubble (mainstream). */
-@Composable
-private fun AgentText(text: String) {
-    val isMono = text.contains("\n")
-    Text(
-        text,
-        style = if (isMono) {
-            MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
-        } else {
-            MaterialTheme.typography.bodyMedium
-        },
-        color = MaterialTheme.colorScheme.onSurface,
-        modifier = Modifier.widthIn(max = 320.dp),
-    )
-}
-
-@Composable
-private fun SystemLine(text: String) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-        Text(
-            text,
-            style = MaterialTheme.typography.labelSmall,
-            color = McosColor.fgDim,
-            textAlign = TextAlign.Center,
-        )
-    }
-}
-
-@Composable
-private fun TypingRow(agent: Boolean) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        CircularProgressIndicator(
-            Modifier.size(14.dp), strokeWidth = 2.dp,
-            color = MaterialTheme.colorScheme.primary,
-        )
-        Spacer(Modifier.width(McosSpace.md))
-        Text(
-            if (agent) "probing…" else "thinking…",
-            style = MaterialTheme.typography.labelSmall,
-            color = McosColor.fgMuted,
-        )
-    }
-}
-
-// ── Status / agent strip / composer ─────────────────────────────────────────
-
-/** Quiet by default: renders only when the vendor needs attention. */
-@Composable
-private fun StatusNotice(ui: McosUiState) {
-    val selected = ui.selectedVendor
-    val health = ui.providerHealth.firstOrNull { it.providerId == selected.vendor.id }
-    val notice: Pair<Color, String>? = when {
-        ui.probing -> McosColor.info to "checking ${selected.vendor.name}…"
-        health?.healthy == true -> null // healthy → invisible
-        !selected.usable -> McosColor.warn to "Add an API key in Settings to chat"
-        health != null && !health.healthy ->
-            McosColor.danger to "${selected.vendor.name} is down (${health.errorCode ?: "unreachable"})"
-        else -> null
-    }
-    val (color, text) = notice ?: return
+private fun WorkspaceHeader(model: String, onConnectModel: () -> Unit, onOpenHistory: () -> Unit) {
     Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = McosSpace.xl, vertical = McosSpace.sm),
+        Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Box(Modifier.size(7.dp).background(color, CircleShape))
-        Spacer(Modifier.width(McosSpace.md))
-        Text(
-            text,
-            style = MaterialTheme.typography.labelSmall,
-            color = McosColor.fgMuted,
-        )
+        Box(
+            Modifier.size(40.dp).background(colorResource(R.color.mcos_launcher_background), RoundedCornerShape(12.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_launcher_foreground),
+                contentDescription = null,
+                modifier = Modifier.size(40.dp),
+                tint = Color.Unspecified,
+            )
+        }
+        Text("MCOS", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        TextButton(onClick = onConnectModel) {
+            Text(model, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 136.dp))
+        }
+        IconButton(onClick = onOpenHistory) {
+            Icon(Icons.Default.History, contentDescription = "Task history")
+        }
     }
 }
 
 @Composable
-private fun AgentStrip(onCancel: () -> Unit) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = McosSpace.xl, vertical = McosSpace.xs)
-            .background(McosColor.surfaceAlt, RoundedCornerShape(McosRadius.pill))
-            .padding(horizontal = McosSpace.lg, vertical = McosSpace.sm),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(Modifier.size(6.dp).background(MaterialTheme.colorScheme.secondary, CircleShape))
-        Spacer(Modifier.width(McosSpace.sm))
-        Text(
-            "agent: probing → replanning…",
-            style = MaterialTheme.typography.labelSmall,
-            color = McosColor.fgMuted,
-        )
-        Spacer(Modifier.weight(1f))
-        Text(
-            "CANCEL",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.clickable { onCancel() }.padding(horizontal = McosSpace.md, vertical = McosSpace.xs),
-        )
+private fun WorkspaceIntroduction() {
+    Surface(shape = RoundedCornerShape(24.dp), color = McosColor.accentDeep, contentColor = McosColor.onAccent) {
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text("What should MCOS do?", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            Text(
+                "Give the agent a goal. It will ask before sensitive actions.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = McosColor.onAccent.copy(alpha = .82f),
+            )
+        }
     }
 }
 
-/**
- * Composer: one soft-filled pill (no border, mainstream) holding the Agent
- * toggle (left), the field, and the circular send (right, arrow-up).
- */
 @Composable
-private fun Composer(
+private fun TaskComposer(
     ui: McosUiState,
+    canStart: Boolean,
     onTextChange: (String) -> Unit,
-    onAgentModeChange: (Boolean) -> Unit,
-    send: () -> Unit,
+    onRun: () -> Unit,
+    onSample: (() -> Unit)? = null,
 ) {
-    val enabled = !ui.isExecuting && ui.nlText.isNotBlank() && ui.selectedVendor.usable
     Surface(
-        shape = RoundedCornerShape(24.dp),
-        color = McosColor.surfaceAlt,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = McosSpace.lg, vertical = McosSpace.md),
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp),
+        border = BorderStroke(1.dp, McosColor.border),
+        color = MaterialTheme.colorScheme.surface,
     ) {
-        Row(
-            Modifier.padding(4.dp),
-            verticalAlignment = Alignment.Bottom,
-        ) {
-            // Agent mode toggle (06 §11) lives in the composer — one tap from
-            // the text it applies to.
-            Box(
-                Modifier
-                    .size(40.dp)
-                    .background(
-                        if (ui.agentMode) McosColor.accentSoft else Color.Transparent,
-                        CircleShape,
-                    )
-                    .clickable { onAgentModeChange(!ui.agentMode) },
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    Icons.Default.AutoAwesome,
-                    contentDescription = "Agent mode",
-                    tint = if (ui.agentMode) MaterialTheme.colorScheme.primary else McosColor.fgDim,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             BasicTextField(
                 value = ui.nlText,
                 onValueChange = onTextChange,
-                modifier = Modifier.weight(1f),
-                textStyle = MaterialTheme.typography.bodyMedium.copy(
-                    fontSize = 15.sp,
-                    color = MaterialTheme.colorScheme.onSurface,
-                ),
+                enabled = ui.tasksReady,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp)
+                    .semantics { contentDescription = "Describe a task" },
                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
+                maxLines = 4,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(onSend = { send() }),
-                maxLines = 5,
-                decorationBox = { innerField ->
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 40.dp)
-                            .padding(horizontal = 10.dp),
-                        contentAlignment = Alignment.CenterStart,
-                    ) {
-                        // Placeholder fades once there is text to show.
-                        if (ui.nlText.isEmpty()) {
-                            Text(
-                                "Message MCOS…",
-                                style = MaterialTheme.typography.bodyMedium.copy(
-                                    fontSize = 15.sp, color = McosColor.fgDim,
-                                ),
-                            )
-                        }
-                        innerField()
+                keyboardActions = KeyboardActions(onSend = { onRun() }),
+                decorationBox = { field ->
+                    Box(Modifier.fillMaxWidth().padding(8.dp)) {
+                        if (ui.nlText.isEmpty()) Text(
+                            "Describe a task", style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        field()
                     }
                 },
             )
-            Box(
-                Modifier
-                    .size(40.dp)
-                    .background(
-                        if (enabled) MaterialTheme.colorScheme.primary else McosColor.border,
-                        CircleShape,
-                    )
-                    .clickable(enabled = enabled) { send() },
-                contentAlignment = Alignment.Center,
-            ) {
-                if (ui.isExecuting) {
-                    CircularProgressIndicator(
-                        Modifier.size(16.dp), strokeWidth = 2.dp,
-                        color = McosColor.onAccent,
-                    )
-                } else {
-                    Icon(
-                        Icons.Default.ArrowUpward,
-                        contentDescription = if (ui.agentMode) "Run agent" else "Send",
-                        tint = McosColor.onAccent,
-                        modifier = Modifier.size(20.dp),
-                    )
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                if (onSample != null && canStart) TextButton(onClick = onSample) { Text("Try sample") }
+                Button(
+                    onClick = onRun,
+                    enabled = canStart && ui.nlText.isNotBlank(),
+                    contentPadding = PaddingValues(start = 14.dp, end = 16.dp),
+                ) {
+                    Icon(Icons.Default.ArrowUpward, contentDescription = null, modifier = Modifier.size(17.dp))
+                    Text("Run task", Modifier.padding(start = 6.dp))
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun InspectionShortcut(enabled: Boolean, onRun: () -> Unit) {
+    Surface(
+        onClick = onRun, enabled = enabled, shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, McosColor.border),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Box(Modifier.size(40.dp).background(McosColor.accentSoft, RoundedCornerShape(10.dp)),
+                contentAlignment = Alignment.Center) {
+                Icon(Icons.Default.Description, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(InspectionTask.TITLE, style = MaterialTheme.typography.titleSmall)
+                Text("Sample task · runs on this phone", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, modifier = Modifier.size(19.dp))
+        }
+    }
+}
+
+@Composable
+private fun TaskProgress(ui: McosUiState, onStop: () -> Unit) {
+    if (ui.agentWorking) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+            Text(ui.agentProgress.orEmpty(), Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
+            TextButton(onClick = onStop) { Text("Stop") }
+        }
+    } else if (ui.taskResumeAtMs != null) {
+        Text("Waiting to resume", Modifier.padding(6.dp), style = MaterialTheme.typography.labelMedium)
+    }
+}
+
+@Composable
+private fun TaskMessage(message: ChatMessage) {
+    val user = message.role == ChatRole.USER
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = if (user) Arrangement.End else Arrangement.Start) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(if (user) .88f else 1f),
+            color = if (user) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(18.dp),
+        ) {
+            SelectionContainer {
+                Text(
+                    message.text, modifier = Modifier.padding(horizontal = 16.dp, vertical = 13.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (user) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                )
             }
         }
     }

@@ -6,6 +6,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.morainet.mcos.android.AppDeps
 import com.morainet.mcos.android.CompositionRoot
 import com.morainet.mcos.android.demo.shell.MCOSApp
@@ -20,6 +21,7 @@ import com.morainet.mcos.android.demo.shell.MCOSApp
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        val splashScreen = installSplashScreen()
         // Draw behind the status/navigation bars (full-screen immersive). The
         // shell is a fixed light theme, so both bars use dark icons over a
         // transparent scrim; the Compose layer insets its content via the
@@ -29,6 +31,7 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT),
         )
         super.onCreate(savedInstanceState)
+        splashScreen.setOnExitAnimationListener { splash -> splash.animateToWorkspace() }
         setContent {
             MCOSApp((application as McosApplication).deps)
         }

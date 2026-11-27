@@ -9,13 +9,15 @@
     <application
         android:name=".McosApplication"
         android:allowBackup="true"
-        android:icon="@drawable/ic_launcher"
-        android:label="MCOS Shell"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
+        android:label="MCOS"
         android:supportsRtl="true"
         android:theme="@style/Theme.McosShell">
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:theme="@style/Theme.McosShell.Starting"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

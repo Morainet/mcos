@@ -12,6 +12,8 @@ import com.morainet.mcos.android.McpServerBridge
 import com.morainet.mcos.android.McpServerController
 import com.morainet.mcos.android.McpServerRecord
 import com.morainet.mcos.android.SkippedBridgedTool
+import com.morainet.mcos.android.demo.device.AdbInspectionPlugin
+import com.morainet.mcos.android.demo.records.InspectionTask
 import com.morainet.mcos.android.demo.settings.LlmVendor
 import com.morainet.mcos.android.demo.settings.LlmVendors
 import com.morainet.mcos.android.demo.skills.SkillStore
@@ -21,6 +23,7 @@ import com.morainet.mcos.runtime.core.api.ConfirmationDecision
 import com.morainet.mcos.runtime.core.api.ExecuteRequest
 import com.morainet.mcos.runtime.core.api.Payload
 import com.morainet.mcos.runtime.core.api.RuntimeEvent
+import com.morainet.mcos.runtime.core.api.RuntimeGateway
 import com.morainet.mcos.runtime.core.api.Source
 import com.morainet.mcos.llm.AgentBridge
 import com.morainet.mcos.llm.AgentSessionStore
@@ -37,19 +40,29 @@ import com.morainet.mcos.llm.Skill
 import com.morainet.mcos.plugin.mcp.McpAdapter
 import com.morainet.mcos.plugin.mcp.McpServerConfig
 import com.morainet.mcos.runtime.core.ir.ExecutionIr
+import com.morainet.mcos.runtime.core.executor.Command
 import com.morainet.mcos.runtime.core.ir.IrInvoke
 import com.morainet.mcos.runtime.core.plugin.LoadResult
 import com.morainet.mcos.sdk.SecureStore
+import com.morainet.mcos.sdk.CommandResult
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonObject
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.UUID
 
 /**
  * Legacy single-key store (pre multi-vendor). Migrated once on [attach] into
@@ -95,10 +108,10 @@ data class McosUiState(
     /** LLM provider health (06 §17 V1 probing). */
     val providerHealth: List<ProviderHealth> = emptyList(),
     val probing: Boolean = false,
-    /** Agent 模式开关（06 §11 多轮循环）：发送键走 probe → replan 循环。 */
-    val agentMode: Boolean = false,
     /** Agent 循环进行中（探测/重规划），驱动进度指示。 */
     val agentWorking: Boolean = false,
+    val agentProgress: String? = null,
+    val inspectionRecordId: String? = null,
     /** Agent 计划待审批（PlanReady 预览文本）— 驱动 Agent 审批对话框。 */
     val pendingAgentPlan: String? = null,
     /**
@@ -121,6 +134,13 @@ data class McosUiState(
     val skillImportText: String = "",
     /** Typed conversation transcript — the chat page's primary view (presentation only). */
     val transcript: List<ChatMessage> = emptyList(),
+    val tasksReady: Boolean = false,
+    val activeTaskId: String = FIRST_TASK_ID,
+    val taskHistory: List<TaskHistoryEntry> = emptyList(),
+    val taskSearchQuery: String = "",
+    val taskSearchMatches: List<TaskHistoryEntry>? = null,
+    val taskHistoryError: String? = null,
+    val taskResumeAtMs: Long? = null,
 ) {
     /** The currently selected vendor's editable settings. */
     val selectedVendor: LlmVendorUi
@@ -132,6 +152,8 @@ enum class ChatRole { USER, AGENT, SYSTEM }
 
 /** One conversation entry; [id] is monotonic per VM instance (stable lazy keys). */
 data class ChatMessage(val id: Long, val role: ChatRole, val text: String)
+
+data class TaskHistoryEntry(val id: String, val title: String, val subtitle: String)
 
 /**
  * Editable UI state for one LLM vendor: the [vendor] preset plus the user's
@@ -215,6 +237,8 @@ class McosViewModel : ViewModel() {
 
     private var deps: AppDeps? = null
     private var persistedKeyLoaded = false
+    private var taskWorkspace = TaskWorkspace()
+    private val taskSnapshots = MutableStateFlow<TaskWorkspace?>(null)
 
     /**
      * Imported skill packages (prompt-level augmentation). Rebuilt on [attach]
@@ -271,25 +295,56 @@ class McosViewModel : ViewModel() {
             persistedKeyLoaded = true
             viewModelScope.launch {
                 restoreVendors(deps.secureStore)
-                restoreMcpServers()
                 restoreSkills()
-                restoreSuspendedAgentTurns(sessions)
+                restoreTaskWorkspace(TaskWorkspaceStore(deps.secureStore), sessions)
+                restoreMcpServers()
+                scheduleActiveTaskResume()
             }
         }
     }
 
-    /**
-     * Rehydrate suspended agent sessions from SecureStore and, for any whose
-     * resume time has already passed while the process was dead, re-enter the
-     * loop now (06 §11.4). A future-dated resume is left for its scheduled
-     * wake-up. Runs after the bridge can be built (needs an LLM config).
-     */
-    private suspend fun restoreSuspendedAgentTurns(sessions: AgentSessionStore) {
-        val restored = sessions.restore()
-        if (restored.isEmpty()) return
-        log("[${now()}] restored ${restored.size} suspended agent turn(s)")
-        // The demo keeps one session id ("main"); resume it immediately if present.
-        if (agentSessionId in restored) scheduleAgentResume(System.currentTimeMillis())
+    private suspend fun restoreTaskWorkspace(store: TaskWorkspaceStore, sessions: AgentSessionStore) {
+        try {
+            val (saved, suspendedIds) = withContext(Dispatchers.IO) { store.load() to sessions.restore().toSet() }
+            val base = saved ?: TaskWorkspace()
+            nextMsgId = (base.tasks.flatMap { it.messages }.maxOfOrNull { it.id } ?: -1L) + 1
+            taskWorkspace = base.copy(tasks = base.tasks.map { task ->
+                val resumeAt = if (task.id in suspendedIds) {
+                    task.resumeAtMs ?: if (saved == null && task.id == FIRST_TASK_ID) System.currentTimeMillis() else null
+                } else {
+                    null
+                }
+                val interrupted = (task.unfinished || task.resumeAtMs != null) && resumeAt == null
+                if (interrupted) {
+                    val message = "Task interrupted. Review the last result before running it again."
+                    task.copy(
+                        messages = (task.messages + ChatMessage(nextMsgId++, ChatRole.SYSTEM, message)).takeLast(MAX_LOG_LINES),
+                        outcome = message, resumeAtMs = null, unfinished = false,
+                    )
+                } else {
+                    task.copy(resumeAtMs = resumeAt, unfinished = false)
+                }
+            })
+            viewModelScope.launch {
+                taskSnapshots.filterNotNull().collect { snapshot ->
+                    try {
+                        withContext(Dispatchers.IO) { store.save(snapshot) }
+                        _uiState.update { it.copy(taskHistoryError = null) }
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failure: Exception) {
+                        _uiState.update { it.copy(taskHistoryError = "Task history could not be saved.") }
+                    }
+                }
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            // Preserve an unreadable snapshot on disk. This launch can still run tasks in memory.
+            _uiState.update { it.copy(taskHistoryError = "Saved task history could not be opened.") }
+        }
+        showTask(taskWorkspace.tasks.first { it.id == taskWorkspace.activeId })
+        publishTaskWorkspace()
     }
 
     /**
@@ -339,9 +394,110 @@ class McosViewModel : ViewModel() {
         _uiState.update { st ->
             st.copy(transcript = (st.transcript + ChatMessage(nextMsgId++, role, text)).takeLast(MAX_LOG_LINES))
         }
+        rememberActiveTask()
     }
 
     private var nextMsgId = 0L
+
+    private fun taskCanSwitch(): Boolean = _uiState.value.let {
+        it.tasksReady && !it.isExecuting && it.pendingAgentPlan == null && it.pendingConfirmation == null
+    }
+
+    fun newTask() {
+        if (!taskCanSwitch()) return
+        val active = taskWorkspace.tasks.first { it.id == taskWorkspace.activeId }
+        if (!active.visibleInHistory) return
+        val task = SavedTask(UUID.randomUUID().toString())
+        taskWorkspace = taskWorkspace.withTask(task)
+        selectTask(task.id)
+    }
+
+    fun selectTask(id: String) {
+        if (!taskCanSwitch() || id == taskWorkspace.activeId) return
+        val task = taskWorkspace.tasks.firstOrNull { it.id == id } ?: return
+        agentResumeJob?.cancel()
+        taskWorkspace = taskWorkspace.copy(
+            activeId = id,
+            tasks = taskWorkspace.tasks.filter { it.id == id || it.visibleInHistory },
+        )
+        showTask(task)
+        publishTaskWorkspace()
+        scheduleActiveTaskResume()
+    }
+
+    fun renameTask(id: String, title: String) {
+        val newTitle = title.trim().replace('\n', ' ').replace('\r', ' ')
+        if (!taskCanSwitch() || newTitle.isBlank() || newTitle.length > TASK_TITLE_LIMIT) return
+        val task = taskWorkspace.tasks.firstOrNull { it.id == id && it.visibleInHistory } ?: return
+        if (task.title == newTitle) return
+        taskWorkspace = taskWorkspace.copy(tasks = taskWorkspace.tasks.map {
+            if (it.id == id) it.copy(title = newTitle) else it
+        })
+        publishTaskWorkspace()
+    }
+
+    fun searchTaskHistory(query: String) {
+        _uiState.update {
+            it.copy(taskSearchQuery = query, taskSearchMatches = taskSearchResults(it.taskHistory, query))
+        }
+    }
+
+    private fun showTask(task: SavedTask) {
+        _uiState.update {
+            it.copy(
+                tasksReady = true, activeTaskId = task.id, nlText = task.draft, transcript = task.messages,
+                lastAgentOutcome = task.outcome, taskResumeAtMs = task.resumeAtMs, artifacts = emptyList(),
+            )
+        }
+    }
+
+    private fun rememberActiveTask() {
+        val state = _uiState.value
+        if (!state.tasksReady) return
+        val previous = taskWorkspace.tasks.first { it.id == taskWorkspace.activeId }
+        val title = previous.title.ifBlank {
+            state.transcript.firstOrNull { it.role == ChatRole.USER }?.text?.lineSequence()?.firstOrNull()
+                ?.take(TASK_TITLE_LIMIT).orEmpty()
+        }
+        val current = previous.copy(
+            title = title, draft = state.nlText, messages = state.transcript, outcome = state.lastAgentOutcome,
+            resumeAtMs = state.taskResumeAtMs, unfinished = state.agentWorking || state.pendingAgentPlan != null,
+        )
+        if (current == previous) return
+        taskWorkspace = taskWorkspace.withTask(current)
+        publishTaskWorkspace()
+    }
+
+    private fun publishTaskWorkspace() {
+        val history = taskWorkspace.tasks.filter { it.visibleInHistory }.map { task ->
+            TaskHistoryEntry(
+                task.id,
+                task.title.ifBlank {
+                    task.draft.trim().lineSequence().first().take(TASK_TITLE_LIMIT).ifBlank { "Untitled task" }
+                },
+                when {
+                    task.resumeAtMs != null -> "Waiting to resume"
+                    task.unfinished -> "In progress"
+                    task.outcome != null -> task.outcome.lineSequence().first()
+                    task.messages.isEmpty() -> "Draft"
+                    else -> ""
+                },
+            )
+        }
+        _uiState.update {
+            it.copy(taskHistory = history, taskSearchMatches = taskSearchResults(history, it.taskSearchQuery))
+        }
+        taskSnapshots.value = taskWorkspace
+    }
+
+    private fun taskSearchResults(history: List<TaskHistoryEntry>, query: String): List<TaskHistoryEntry>? {
+        val term = query.trim()
+        if (term.isEmpty()) return null
+        val matchingIds = taskWorkspace.tasks.asSequence()
+            .filter { it.visibleInHistory && it.matches(term) }
+            .map { it.id }.toSet()
+        return history.filter { it.id in matchingIds || it.title.contains(term, ignoreCase = true) }
+    }
 
     // ── input handlers ─────────────────────────────────────────────────
 
@@ -378,6 +534,7 @@ class McosViewModel : ViewModel() {
 
     fun onNlTextChange(value: String) {
         _uiState.update { it.copy(nlText = value) }
+        rememberActiveTask()
     }
 
     // ── multi-vendor LLM settings (06 §17 V1 probing) ───────────────────
@@ -719,7 +876,6 @@ class McosViewModel : ViewModel() {
 
     fun clearLog() {
         _events.value = emptyList()
-        _uiState.update { it.copy(transcript = emptyList()) }
     }
 
     // ── plugin loading (idempotent) ─────────────────────────────────────
@@ -929,16 +1085,12 @@ class McosViewModel : ViewModel() {
 
     // ── Agent loop (06-agent.md §11 multi-turn) ────────────────────────
 
-    /**
-     * Single demo-shell conversation id. The Agent loop keeps its
-     * observation log and pending plan per session; one continuous
-     * conversation is the right scope for the shell.
-     */
-    private val agentSessionId = "main"
-
     /** Built on first agent turn; rebuilt if the selected vendor/config changes. */
     private var agentBridge: AgentBridge? = null
     private var agentBridgeKey: String? = null
+    private var agentJob: Job? = null
+    private var agentRunId: String? = null
+    private var agentResumeJob: Job? = null
 
     /**
      * Shared across every bridge rebuild so a suspended turn's session (06 §11.4)
@@ -953,39 +1105,33 @@ class McosViewModel : ViewModel() {
      */
     internal var agentBridgeOverride: AgentBridge? = null
 
-    fun onAgentModeChange(enabled: Boolean) {
-        _uiState.update { it.copy(agentMode = enabled) }
-    }
-
     /** Start an Agent turn for the current NL input (probe → replan loop). */
     fun agentTurn() {
         val s = _uiState.value
-        if (s.isExecuting || s.nlText.isBlank()) return
-        _uiState.update { it.copy(isExecuting = true, agentWorking = true) }
-        _events.value = emptyList()
+        if (!taskCanSwitch() || s.taskResumeAtMs != null || s.nlText.isBlank()) return
 
         val config = selectedLlmConfig()
         if (config == null && agentBridgeOverride == null) {
-            val hint = "Set an LLM API key in Settings first."
-            log("[WARN] $hint")
-            say(ChatRole.SYSTEM, hint)
-            _uiState.update { it.copy(isExecuting = false, agentWorking = false) }
+            say(ChatRole.SYSTEM, "Connect a model in Settings to run your own tasks.")
             return
         }
-        say(ChatRole.USER, s.nlText.trim())
 
-        viewModelScope.launch {
-            try {
-                loadPlugins()
-
-                val bridge = agentBridgeOverride ?: bridgeFor(s.selectedVendorId, config!!)
-                log("[${now()}] Agent turn: “${s.nlText.take(60)}”…")
-                bridge.runTurn(agentSessionId, s.nlText).collect { handleAgentResult(it) }
-            } catch (e: Exception) {
-                log("[ERROR] ${e.javaClass.simpleName}: ${e.message}")
-            } finally {
-                _uiState.update { it.copy(isExecuting = false, agentWorking = false) }
+        val goal = s.nlText.trim()
+        _events.value = emptyList()
+        _uiState.update { it.copy(nlText = "", lastAgentOutcome = null) }
+        say(ChatRole.USER, goal)
+        launchAgentWork("Planning the task") {
+            loadPlugins()
+            val bridge = agentBridgeOverride ?: bridgeFor(s.selectedVendorId, checkNotNull(config))
+            var readOnlyPlan = false
+            bridge.runTurn(s.activeTaskId, goal).collect { result ->
+                if (result is AgentTurnResult.PlanReady && !result.needsConfirmation) {
+                    readOnlyPlan = true
+                } else {
+                    handleAgentResult(result)
+                }
             }
+            if (readOnlyPlan) bridge.resume(s.activeTaskId, true).collect { handleAgentResult(it) }
         }
     }
 
@@ -994,29 +1140,109 @@ class McosViewModel : ViewModel() {
      * turn: approve executes it through the kernel, deny declines.
      */
     fun resumeAgentTurn(approved: Boolean) {
-        if (_uiState.value.pendingAgentPlan == null) return
-        _uiState.update { it.copy(pendingAgentPlan = null, isExecuting = true, agentWorking = true) }
-        val bridge = agentBridgeOverride ?: agentBridge
-        if (bridge == null) {
-            _uiState.update { it.copy(isExecuting = false, agentWorking = false) }
-            return
+        val state = _uiState.value
+        if (state.pendingAgentPlan == null || state.isExecuting) return
+        val bridge = agentBridgeOverride ?: agentBridge ?: return
+        _uiState.update { it.copy(pendingAgentPlan = null) }
+        launchAgentWork("Running the approved plan") {
+            bridge.resume(state.activeTaskId, approved).collect { handleAgentResult(it) }
         }
-        viewModelScope.launch {
+    }
+
+    /** A first task users can finish before connecting a model. */
+    fun runInspectionTask() {
+        val state = _uiState.value
+        if (!taskCanSwitch() || state.taskResumeAtMs != null) return
+        _uiState.update { it.copy(lastAgentOutcome = null) }
+        say(ChatRole.USER, InspectionTask.TITLE)
+        launchAgentWork("Looking up completed inspections") {
+            loadPlugins()
+            val gateway = agentRuntime()
+            val adbTool = deps().plugins.filterIsInstance<AdbInspectionPlugin>().firstOrNull()
+            if (adbTool?.connected() == true) {
+                val result = gateway.executeProbe(listOf(Command(AdbInspectionPlugin.COMMAND, JsonObject(emptyMap()))))
+                when (val probe = result.singleOrNull()) {
+                    is CommandResult.Ok -> say(ChatRole.AGENT, "Checked the connected phone screen.")
+                    is CommandResult.Err -> log("[WARN] ADB observation: ${probe.message}")
+                    null -> Unit
+                }
+            }
+            val recordId = InspectionTask.latestCompleted(gateway)
+            _uiState.update { it.copy(inspectionRecordId = recordId, agentProgress = "Preparing export") }
+            say(ChatRole.AGENT, "Found completed inspection $recordId.")
+            val handle = gateway.execute(InspectionTask.request(recordId))
+            var artifact: String? = null
+            var outcome: AgentTurnResult? = null
+            gateway.observe(handle.runId).collect { event ->
+                when (event) {
+                    is RuntimeEvent.ArtifactEmitted -> artifact = event.uri
+                    is RuntimeEvent.RunFailed -> outcome = AgentTurnResult.Refuse("EXPORT_FAILED", event.error)
+                    is RuntimeEvent.RunCancelled -> outcome = AgentTurnResult.Declined("Task stopped")
+                    is RuntimeEvent.RunSucceeded -> {
+                        val verified = InspectionTask.verify(recordId, checkNotNull(artifact))
+                        outcome = AgentTurnResult.Done("Export verified\n$verified")
+                    }
+                    else -> Unit
+                }
+            }
+            handleAgentResult(checkNotNull(outcome) { "The export did not report a result." })
+        }
+    }
+
+    private fun launchAgentWork(progress: String, work: suspend () -> Unit) {
+        _uiState.update { it.copy(isExecuting = true, agentWorking = true, agentProgress = progress, artifacts = emptyList()) }
+        rememberActiveTask()
+        agentJob = viewModelScope.launch {
             try {
-                bridge.resume(agentSessionId, approved).collect { handleAgentResult(it) }
-            } catch (e: Exception) {
-                log("[ERROR] ${e.javaClass.simpleName}: ${e.message}")
+                work()
+            } catch (cancelled: CancellationException) {
+                handleAgentResult(AgentTurnResult.Declined("Task stopped"))
+                throw cancelled
+            } catch (failure: Exception) {
+                handleAgentResult(AgentTurnResult.Refuse("TASK_FAILED", failure.message ?: "Task failed"))
             } finally {
-                _uiState.update { it.copy(isExecuting = false, agentWorking = false) }
+                agentRunId?.let(runtime()::cancel)
+                agentRunId = null
+                _uiState.update {
+                    it.copy(
+                        isExecuting = false, agentWorking = false, agentProgress = null,
+                        pendingConfirmation = null, inspectionRecordId = null,
+                    )
+                }
+                rememberActiveTask()
+            }
+        }
+    }
+
+    private fun agentRuntime(): RuntimeGateway {
+        val kernel = runtime()
+        return object : RuntimeGateway by kernel {
+            override suspend fun execute(request: ExecuteRequest) =
+                kernel.execute(request).also { agentRunId = it.runId }
+
+            override fun observe(runId: String) = kernel.observe(runId).onEach { event ->
+                log(event.toLogLine(now()))
+                when (event) {
+                    is RuntimeEvent.ConfirmationNeeded -> _uiState.update {
+                        it.copy(pendingConfirmation = event, agentProgress = "Waiting for your approval")
+                    }
+                    is RuntimeEvent.ArtifactEmitted -> _uiState.update {
+                        it.copy(artifacts = it.artifacts + (event.type to event.uri), agentProgress = "Checking the result")
+                    }
+                    is RuntimeEvent.RunSucceeded, is RuntimeEvent.RunFailed, is RuntimeEvent.RunCancelled -> {
+                        if (agentRunId == runId) agentRunId = null
+                        _uiState.update { it.copy(pendingConfirmation = null) }
+                    }
+                    else -> Unit
+                }
             }
         }
     }
 
     /** User cancel always wins (06 §11.2) — abort the active turn. */
     fun cancelAgentTurn() {
-        viewModelScope.launch {
-            (agentBridgeOverride ?: agentBridge)?.cancel(agentSessionId)
-        }
+        val runId = agentRunId
+        if (runId == null) agentJob?.cancel() else runtime().cancel(runId)
     }
 
     /** Lazily build (and cache per vendor+config) the real [McosAgent]. */
@@ -1034,10 +1260,11 @@ class McosViewModel : ViewModel() {
                 registry = deps().registry,
                 skills = cachedSkills,
             ),
-            runtime = runtime(),
+            runtime = agentRuntime(),
             registry = deps().registry,
             injectionDetector = PromptInjectionDetector(),
             eventBus = deps().eventBus,
+            eventTimeoutMs = 90_000L,
             sessions = agentSessions
                 ?: AgentSessionStore(SecureStoreAgentSuspension(deps().secureStore))
                     .also { agentSessions = it },
@@ -1051,6 +1278,8 @@ class McosViewModel : ViewModel() {
     private fun handleAgentResult(result: AgentTurnResult) {
         // Non-terminal progress: log the detail, don't touch the outcome line.
         if (result is AgentTurnResult.Probing) {
+            _uiState.update { it.copy(agentProgress = "Checking device capabilities") }
+            say(ChatRole.AGENT, result.observation)
             log("[${now()}] ⌖ probe: ${result.observation.replace("\n", " | ").take(120)}")
             log("[${now()}] ↻ ${result.nextAction}")
             return
@@ -1058,7 +1287,12 @@ class McosViewModel : ViewModel() {
         // Terminal states carry a self-contained headline: record it verbatim
         // as the turn outcome, then log any state-specific detail below it.
         if (result is AgentTurnResult.TerminalResult) {
-            _uiState.update { it.copy(lastAgentOutcome = result.headline) }
+            _uiState.update {
+                it.copy(
+                    lastAgentOutcome = result.headline,
+                    taskResumeAtMs = (result as? AgentTurnResult.Suspended)?.resumeAtEpochMs,
+                )
+            }
         }
         when (result) {
             is AgentTurnResult.Probing -> Unit // handled above
@@ -1088,30 +1322,32 @@ class McosViewModel : ViewModel() {
             is AgentTurnResult.Suspended -> {
                 log("[${now()}] ⏸ ${result.headline}")
                 say(ChatRole.SYSTEM, "⏸ ${result.headline}")
-                scheduleAgentResume(result.resumeAtEpochMs)
+                scheduleActiveTaskResume()
             }
         }
     }
 
-    /**
-     * Demo-scope resume of a suspended turn (06 §11.4): wait until the agent's
-     * chosen wall-clock time, then re-enter the loop via [AgentBridge.resumeSuspended].
-     * A production host would arm a `WakeScheduler` alarm so the resume survives
-     * process death; the foreground demo simply delays within [viewModelScope].
-     */
-    private fun scheduleAgentResume(resumeAtEpochMs: Long) {
-        val bridge = agentBridgeOverride ?: agentBridge ?: return
-        viewModelScope.launch {
+    /** A suspended task can resume in its own workspace after it is selected and due. */
+    private fun scheduleActiveTaskResume() {
+        agentResumeJob?.cancel()
+        val state = _uiState.value
+        val resumeAtEpochMs = state.taskResumeAtMs ?: return
+        agentResumeJob = viewModelScope.launch {
             val waitMs = (resumeAtEpochMs - System.currentTimeMillis()).coerceAtLeast(0L)
-            if (waitMs > 0) kotlinx.coroutines.delay(waitMs)
-            _uiState.update { it.copy(isExecuting = true, agentWorking = true) }
-            try {
+            if (waitMs > 0) delay(waitMs)
+            uiState.first {
+                it.activeTaskId != state.activeTaskId ||
+                    (!it.isExecuting && it.pendingAgentPlan == null && it.pendingConfirmation == null)
+            }
+            if (uiState.value.activeTaskId != state.activeTaskId || uiState.value.taskResumeAtMs != resumeAtEpochMs) {
+                return@launch
+            }
+            val bridge = agentBridgeOverride ?: agentBridge ?: selectedLlmConfig()?.let {
+                bridgeFor(uiState.value.selectedVendorId, it)
+            } ?: return@launch
+            launchAgentWork("Resuming the task") {
                 log("[${now()}] ↻ resuming suspended turn…")
-                bridge.resumeSuspended(agentSessionId).collect { handleAgentResult(it) }
-            } catch (e: Exception) {
-                log("[ERROR] ${e.javaClass.simpleName}: ${e.message}")
-            } finally {
-                _uiState.update { it.copy(isExecuting = false, agentWorking = false) }
+                bridge.resumeSuspended(state.activeTaskId).collect { handleAgentResult(it) }
             }
         }
     }
@@ -1136,7 +1372,10 @@ class McosViewModel : ViewModel() {
      */
     fun respondConfirmation(approved: Boolean) {
         val confirmation = _uiState.value.pendingConfirmation ?: return
-        _uiState.update { it.copy(pendingConfirmation = null) }
+        _uiState.update {
+            val progress = if (it.agentWorking) "Finishing the action" else it.agentProgress
+            it.copy(pendingConfirmation = null, agentProgress = progress)
+        }
         viewModelScope.launch {
             runtime().respondConfirmation(
                 confirmation.runId,

@@ -105,14 +105,14 @@ class ConfirmationCoordinatorTest {
     // ─── request / respond round-trips ──────────────────────────────────
 
     @Test
-    fun `C1-requestConfirmation publishes ConfirmationNeeded then times out into Reject`() = runBlocking {
+    fun `C1-requestConfirmation publishes ConfirmationNeeded and returns no decision on timeout`() = runBlocking {
         val bus = RecordingBus()
         val coordinator = ConfirmationCoordinator(bus, HmacAuthStampSigner(), registry, timeoutMs = 100)
 
         val decision = coordinator.requestConfirmation("run-1", 0, command(), confirmationError())
 
-        // Unanswered ⇒ the timeout is treated as a rejection (§6.3).
-        assertIs<ConfirmationDecision.Reject>(decision)
+        assertNull(decision)
+        assertFalse(coordinator.respond("run-1", "test.write", ConfirmationDecision.Approve()))
         val event = bus.runEvents.singleOrNull()?.second
         val needed = assertIs<RuntimeEvent.ConfirmationNeeded>(event)
         assertEquals("run-1", needed.runId)
@@ -153,7 +153,7 @@ class ConfirmationCoordinatorTest {
                 delay(10)
             }
         }
-        pending.await()
+        assertEquals(ConfirmationDecision.Reject, pending.await())
 
         assertFalse(coordinator.respond("run-3", "test.write", ConfirmationDecision.Reject))
     }

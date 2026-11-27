@@ -23,7 +23,7 @@ import java.io.File
  * module owns its `com.morainet.mcos.<module>.*` namespace; the third test
  * pins that mapping (01-architecture.md §3.1).
  *
- * The test walks every module's `src/main` and `src/test` Kotlin sources from
+ * The test walks every module's main, debug, and unit-test Kotlin sources from
  * the repository root (located by walking up from the working directory to
  * `settings.gradle.kts`), so it needs no Gradle wiring and fails on any new
  * cross-module package.
@@ -94,7 +94,6 @@ class PackageBoundariesTest {
      * register here deliberately.
      */
     private val packageRules = listOf(
-        "com.morainet.mcos.sample.embedded" to "mcos-sample-embedded",
         "com.morainet.mcos.sdk" to "mcos-sdk",
         "com.morainet.mcos.security" to "mcos-security",
         "com.morainet.mcos.runtime.core" to "mcos-runtime-core",
@@ -127,13 +126,13 @@ class PackageBoundariesTest {
         return checkNotNull(dir) { "settings.gradle.kts not found above ${File(".").absoluteFile}" }
     }
 
-    /** Kotlin sources of every module's main and test source sets. */
+    /** Kotlin sources of every module's main, debug, and unit-test source sets. */
     private fun sourceRoots(root: File): List<File> {
         val moduleDirs = root.listFiles { f: File -> f.isDirectory && f.name.startsWith("mcos-") }
             .orEmpty()
             .toList() + (File(root, "plugins").listFiles { f: File -> f.isDirectory }.orEmpty().toList())
         return moduleDirs.flatMap { dir ->
-            listOf(File(dir, "src/main/kotlin"), File(dir, "src/test/kotlin"))
+            listOf("main", "debug", "test", "testDebug").map { sourceSet -> File(dir, "src/$sourceSet/kotlin") }
         }.filter { it.isDirectory }
             .flatMap { it.walkTopDown().filter { file -> file.extension == "kt" }.toList() }
     }

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="mcos_mark_body_path" translatable="false">M25,75 V35 Q25,31 29,31 H34 Q37,31 40,35 L54,52 L68,35 Q71,31 75,31 H79 Q83,31 83,35 V75 Q83,78 80,78 H73 Q70,78 70,75 V51 L56,68 Q54,70 52,68 L38,51 V75 Q38,78 35,78 H28 Q25,78 25,75 Z</string>
+    <string name="mcos_mark_fold_path" translatable="false">M54,52 L68,35 Q71,31 75,31 H78 L70,51 L56,68 Q54,70 52,68 L48,63 Z</string>
+    <string name="mcos_splash_folded_body_path" translatable="false">M25,75 V35 Q25,31 29,31 H34 Q37,31 40,35 L54,52 L68,48 Q71,44 75,44 H79 Q83,44 83,48 V75 Q83,78 80,78 H73 Q70,78 70,75 V61 L56,68 Q54,70 52,68 L38,51 V75 Q38,78 35,78 H28 Q25,78 25,75 Z</string>
+    <string name="mcos_splash_folded_accent_path" translatable="false">M54,52 L68,48 Q71,44 75,44 H75 L70,61 L56,68 Q54,70 52,68 L48,63 Z</string>
+</resources>

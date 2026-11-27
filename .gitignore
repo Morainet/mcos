@@ -26,6 +26,9 @@ Thumbs.db
 *.class
 .kotlin/
 
+# Python CLI
+__pycache__/
+
 # Build logs
 build-test-*.log
 *.log
