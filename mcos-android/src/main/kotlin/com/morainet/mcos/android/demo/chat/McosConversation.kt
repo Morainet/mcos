@@ -171,10 +171,10 @@ private fun TaskMessage(message: ChatMessage, showAgentLabel: Boolean, onEditRet
                 )
             }
             SelectionContainer {
-                MarkdownReply(message.text)
+                MarkdownReply(message.text, canCopyCode = message.useAsContext)
             }
             if (message.useAsContext && message.text.isNotBlank()) {
-                CopyReplyButton(message.text)
+                CopyToClipboardButton(message.text, label = "Copy reply")
             }
         }
         ChatRole.SYSTEM -> Surface(
@@ -202,7 +202,7 @@ private fun TaskMessage(message: ChatMessage, showAgentLabel: Boolean, onEditRet
 }
 
 @Composable
-private fun CopyReplyButton(text: String) {
+internal fun CopyToClipboardButton(text: String, label: String) {
     val clipboard = LocalClipboardManager.current
     var copied by remember(text) { mutableStateOf(false) }
     LaunchedEffect(copied) {
@@ -224,7 +224,7 @@ private fun CopyReplyButton(text: String) {
     ) {
         Icon(
             imageVector = if (copied) Icons.Default.Check else Icons.Outlined.ContentCopy,
-            contentDescription = "Copy reply",
+            contentDescription = label,
             tint = if (copied) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.size(18.dp),
         )

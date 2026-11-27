@@ -3,6 +3,7 @@ package com.morainet.mcos.android.demo.chat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,6 +17,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
@@ -28,6 +30,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
@@ -59,13 +62,13 @@ import org.commonmark.parser.Parser
 private val markdownParser = Parser.builder().extensions(listOf(TablesExtension.create())).build()
 
 @Composable
-internal fun MarkdownReply(text: String) {
+internal fun MarkdownReply(text: String, canCopyCode: Boolean) {
     val document = remember(text) { markdownParser.parse(text) }
-    MarkdownBlocks(document)
+    MarkdownBlocks(document, canCopyCode)
 }
 
 @Composable
-private fun MarkdownBlocks(parent: Node) {
+private fun MarkdownBlocks(parent: Node, canCopyCode: Boolean) {
     Column(verticalArrangement = Arrangement.spacedBy(McosSpace.lg)) {
         parent.children().forEach { block ->
             when (block) {
@@ -79,15 +82,19 @@ private fun MarkdownBlocks(parent: Node) {
                     }
                     InlineText(block, style)
                 }
-                is ListBlock -> MarkdownList(block)
+                is ListBlock -> MarkdownList(block, canCopyCode)
                 is BlockQuote -> Surface(
                     color = MaterialTheme.colorScheme.surfaceVariant,
                     shape = RoundedCornerShape(McosRadius.sm),
                 ) {
-                    Column(Modifier.fillMaxWidth().padding(McosSpace.lg)) { MarkdownBlocks(block) }
+                    Column(Modifier.fillMaxWidth().padding(McosSpace.lg)) { MarkdownBlocks(block, canCopyCode) }
                 }
-                is FencedCodeBlock -> CodeBlock(block.literal)
-                is IndentedCodeBlock -> CodeBlock(block.literal)
+                is FencedCodeBlock -> CodeBlock(
+                    code = block.literal,
+                    canCopy = canCopyCode,
+                    language = block.info.orEmpty().takeWhile { !it.isWhitespace() },
+                )
+                is IndentedCodeBlock -> CodeBlock(block.literal, canCopy = canCopyCode)
                 is TableBlock -> MarkdownTable(block)
                 is ThematicBreak -> HorizontalDivider()
                 is HtmlBlock -> Text(block.literal.trimEnd(), style = MaterialTheme.typography.bodyLarge)
@@ -97,31 +104,54 @@ private fun MarkdownBlocks(parent: Node) {
 }
 
 @Composable
-private fun MarkdownList(list: ListBlock) {
+private fun MarkdownList(list: ListBlock, canCopyCode: Boolean) {
     val start = (list as? OrderedList)?.markerStartNumber
     Column(verticalArrangement = Arrangement.spacedBy(McosSpace.xs)) {
         list.children().forEachIndexed { index, item ->
             Row(horizontalArrangement = Arrangement.spacedBy(McosSpace.md)) {
                 Text(if (start == null) "•" else "${start + index}.", style = MaterialTheme.typography.bodyLarge)
-                Column(Modifier.weight(1f)) { MarkdownBlocks(item) }
+                Column(Modifier.weight(1f)) { MarkdownBlocks(item, canCopyCode) }
             }
         }
     }
 }
 
 @Composable
-private fun CodeBlock(code: String) {
+private fun CodeBlock(code: String, canCopy: Boolean, language: String = "") {
+    val palette = MaterialTheme.colorScheme
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(McosRadius.md),
-        color = MaterialTheme.colorScheme.surfaceVariant,
+        color = palette.surfaceVariant,
     ) {
-        Text(
-            code.trimEnd('\n'),
-            modifier = Modifier.horizontalScroll(rememberScrollState()).padding(McosSpace.lg),
-            style = MaterialTheme.typography.bodyMedium,
-            fontFamily = FontFamily.Monospace,
-        )
+        Column {
+            if (canCopy && code.isNotBlank()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(start = McosSpace.lg),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(Modifier.weight(1f)) {
+                        if (language.isNotEmpty()) {
+                            Text(
+                                language,
+                                color = palette.onSurfaceVariant,
+                                style = MaterialTheme.typography.labelMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                    CopyToClipboardButton(code, label = "Copy code")
+                }
+                HorizontalDivider(color = palette.outlineVariant)
+            }
+            Text(
+                code.trimEnd('\n'),
+                modifier = Modifier.horizontalScroll(rememberScrollState()).padding(McosSpace.lg),
+                style = MaterialTheme.typography.bodyMedium,
+                fontFamily = FontFamily.Monospace,
+            )
+        }
     }
 }
 
